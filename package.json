@@ -1,5 +1,5 @@
 {
-  "name": "pocket-loop-lab",
+  "name": "clikit",
   "private": true,
   "description": "Development tooling only. The page itself has no build step and no runtime dependencies. Jobs run through the Makefile.",
   "devDependencies": {

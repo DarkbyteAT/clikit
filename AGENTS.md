@@ -233,6 +233,25 @@ simulated it adds `headless.progression`, four functions over its own state: `cr
 then plays it with the greedy, random and saver policies (or your own) and reports time to each purchase and unlock,
 currency over time, when the player runs out of new things, dead stretches and runaway growth. `new game` scaffolds one.
 
+## Version control and worktrees
+
+The project is the Git repository `clikit` (a kit of well-scoped pieces that click together). `main` is
+the integration branch and is always releasable.
+
+- **One piece of work, one branch, one worktree.** `make worktree NAME=<branch>` gives you a private
+  checkout under `../worktrees/<branch>`. Edit, test and smoke there; nobody else's half-written file
+  can break your page, and yours cannot break theirs.
+- **Small commits that say why.** Commit each coherent step. A kit change and the game change that
+  needs it are separate commits, kit first.
+- **Land through the gate.** `make land NAME=<branch>` runs the tests in the worktree, merges into
+  `main` and removes the worktree. If `main` moved, merge `main` into your branch first and re-check.
+- **Shared files conflict; keep edits to them small.** `index.html` script tags, `tools/test-kit.js`,
+  `DECISIONS.md` and `METRICS.md` are appended to by everyone. Add your lines; never reorder others'.
+- **Demos run from any commit.** A release is built from a commit on `main` and tagged; a demo of
+  unfinished work is published from its own worktree to its own page, never over the main page.
+- Agents that started before the repository existed finish in the main checkout; all new work starts
+  in a worktree.
+
 ## Working alongside other agents
 
 - Several agents edit this tree at once. Make small targeted edits, re-read the region just before you edit

@@ -30,7 +30,7 @@
    * A level between empty and full.
    * @param {{value: number|Object, label?: string, color?: string|Object, tone?: 'good'|'warn'|'bad', class?: string}} props
    *   `value` is a fraction 0..1 (clamped); `color` is a CSS colour for the fill; `tone` picks a semantic colour instead
-   * @example html`<${Meter} label="Heat" value=${heat} tone=${'warn'} />`
+   * @example html`<${Meter} label="Heat" value=${heat} tone="warn" />`
    */
   const Meter = ({ value, label, color, tone, class: className }) => html`<${Bar} role="meter" value=${value} label=${label} color=${color} tone=${tone} className=${className} />`;
 

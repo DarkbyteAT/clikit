@@ -368,3 +368,16 @@ machine at load 20 to 40, so only the ratios mean anything.
 - Renderer: three.js 0.147 classic scripts (works on the hosted page today) vs current three.js as ES modules vs
   Babylon.js or PlayCanvas (more built in, heavier).
 - Physics: cannon.js 0.6.2 (unmaintained; a mid-step removal bug is worked around in `kit/bodies.js`) vs cannon-es vs Rapier.
+
+## Version control: Git, one worktree per piece of work
+
+- **Need:** a dozen agents editing one directory broke each other's page loads and tests at random
+  instants (reported by six agents), and there was no history to bisect or roll back.
+- **Options:** (a) keep one shared tree plus frozen-copy releases: zero setup, but only protects
+  publishing, not development; (b) a copy of the tree per agent with manual merging: isolation, no
+  history, merges by hand; (c) Git with a branch and worktree per piece of work: isolation, history,
+  three-way merges, cheap (a worktree shares the object store; this tree is about 5 MB tracked).
+- **Chosen:** (c). `make worktree` / `make land` make it the easy path. Cost: conflicts in the few
+  append-only shared files, handled by keeping those edits small.
+- **Follow-up this enables:** one test file per module and script tags generated from the directory
+  listing (`make tags FIX=1`) would remove most of the remaining conflicts.

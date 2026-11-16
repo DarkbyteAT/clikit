@@ -4,7 +4,7 @@ RUN  := $(shell command -v bun >/dev/null 2>&1 && echo bun || echo node)
 GAME ?= menu
 SECS ?= 8
 
-.PHONY: help test smoke check lint docs sheet bench release clean new-game new-module remove-game play skins gallery sim types tags format metrics setup
+.PHONY: help test smoke check lint docs sheet bench release clean new-game new-module remove-game play skins gallery sim types tags format metrics setup worktree land worktrees
 
 help: ## List every target
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-11s %s\n", $$1, $$2}'
@@ -71,3 +71,21 @@ release: ## Freeze the tree, verify the frozen copy, stage what passes in ../rel
 
 clean: ## Remove generated screenshots and the staged release
 	@rm -rf shots/*.png ../release
+
+# --- Version control: one branch and one worktree per piece of work -------------------------------
+WORKTREES := $(abspath ../worktrees)
+
+worktree: ## Start a piece of work in its own checkout: make worktree NAME=miner-depth
+	@test -n "$(NAME)" || { echo "usage: make worktree NAME=<branch>"; exit 2; }
+	@git worktree add -q "$(WORKTREES)/$(NAME)" -b "$(NAME)" main
+	@ln -sfn "$(CURDIR)/node_modules" "$(WORKTREES)/$(NAME)/node_modules"
+	@echo "$(WORKTREES)/$(NAME)  (branch $(NAME), from main)"
+
+worktrees: ## List the checkouts and their branches
+	@git worktree list
+
+land: ## Merge a finished branch into main after its checks pass there: make land NAME=miner-depth
+	@test -n "$(NAME)" || { echo "usage: make land NAME=<branch>"; exit 2; }
+	@$(MAKE) -C "$(WORKTREES)/$(NAME)" test
+	@git merge --no-ff --no-edit "$(NAME)"
+	@git worktree remove "$(WORKTREES)/$(NAME)" && git branch -d "$(NAME)"
