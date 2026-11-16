@@ -4,7 +4,8 @@
  *
  * Owns:  the band lookup, the light value and the ordered-dither tables the shaders mirror (`bandOf`, `lightOf`,
  *        `edgesFor`, `bayerAt`); the grid
- *        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`);
+ *        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); how big a texel is where a thing is drawn and
+ *        what a stamp does about it (`texelSlope`, `texelWorldAt`, `stampGrowth`); smooth outline normals (`weldNormals`);
  *        the lights and how kinds of surface answer them (`LIGHTING`, `RESPONSES`); and the presets and knobs
  *        (`PRESETS`, `KNOBS`, `settings`).
  * Does not own: colour (kit/palette.js: ramps, tones and the packed atlas), textures, materials or passes
@@ -163,6 +164,46 @@
    * @returns {number} whole pixels per texel, 1 or more
    */
   const texelScale = (bufferHeight, rows) => (rows > 0 ? Math.max(1, Math.round(bufferHeight / rows)) : 1);
+
+  /**
+   * How fast a texel grows with distance under a perspective camera: world units one target texel covers per
+   * unit of depth in front of the lens. An orthographic camera has one texel size (`slope` 0); a perspective one
+   * has none of its own, only this slope, so anything sized in texels asks at the depth it is drawn.
+   * @param {number} fieldOfView the camera's vertical angle, radians
+   * @param {number} rows the target's height in texels
+   * @returns {number} world units per texel per unit of depth
+   * @example Kit.look.texelSlope(Math.PI / 2, 400) * 10 // 0.05: at 10 m a texel of a 400-row picture is 5 cm
+   */
+  const texelSlope = (fieldOfView, rows) => (2 * Math.tan(fieldOfView / 2)) / rows;
+
+  /**
+   * The world size of a target texel at a depth: what the stamp shader (kit/look-toon.js `stampGrowth`) measures a layer in.
+   * @param {number} texelWorld the size under an orthographic camera; 0 under a perspective one
+   * @param {number} slope `texelSlope` under a perspective camera; 0 under an orthographic one
+   * @param {number} depth world units in front of the camera
+   * @returns {number} world units; 0 when unknown (both zero) or at the lens
+   */
+  const texelWorldAt = (texelWorld, slope, depth) => texelWorld + slope * Math.max(0, depth);
+
+  /** A stamp layer below its least size is grown about its centre, but never by more than this: a face must not swallow the head. */
+  const STAMP_MOST_GROWTH = 2.5;
+
+  /**
+   * How much a stamp layer (an eye, a glint, a mouth) is scaled about its centre so it survives a small sprite:
+   * the rule the stamp shader runs per vertex, kept here so it can be tested. A positive `sizeRule` is a least
+   * size in texels (the layer is grown until its smaller side covers that many, up to `STAMP_MOST_GROWTH`); a
+   * negative one drops the layer below that size (0: it collapses to its centre); 0 leaves it alone.
+   * @param {number} halfExtent the layer's smaller half extent, world units (after the model's scale)
+   * @param {number} sizeRule texels: positive a least size, negative a size to vanish under
+   * @param {number} texelWorld world units a texel covers where the layer is (`texelWorldAt`); 0 when unknown
+   * @returns {number} the scale about the centre: 0, or 1..`STAMP_MOST_GROWTH`
+   * @example Kit.look.stampGrowth(0.01, 2, 0.02) // 2: a 2 cm eye on 2 cm texels is one texel, and is grown to two
+   */
+  const stampGrowth = (halfExtent, sizeRule, texelWorld) => {
+    const texels = (2 * halfExtent) / Math.max(texelWorld, 1e-9);
+    if (sizeRule < 0) return texelWorld > 0 && texels < -sizeRule ? 0 : 1;
+    return Math.min(STAMP_MOST_GROWTH, Math.max(1, sizeRule / Math.max(texels, 1e-5)));
+  };
 
   /**
    * How much of a look's dither a frame draws, by the world size of a texel. Dither trades resolution for an
@@ -342,5 +383,5 @@
     return { ...merged, preset: presetId, isIndexed: merged.outline === 'ink' || merged.pixelRows > 0 };
   };
 
-  Kit.look = { MAX_EDGES, BAND_EDGES, LIGHTING, RESPONSES, DITHER_TEXEL_FADE, ditherAt, lightOf, BAYER_4, PRESETS, KNOBS, bandOf, edgesFor, bayerAt, snapToTexel, stepYaw, texelScale, weldNormals, settings };
+  Kit.look = { MAX_EDGES, BAND_EDGES, LIGHTING, RESPONSES, DITHER_TEXEL_FADE, ditherAt, texelSlope, texelWorldAt, STAMP_MOST_GROWTH, stampGrowth, lightOf, BAYER_4, PRESETS, KNOBS, bandOf, edgesFor, bayerAt, snapToTexel, stepYaw, texelScale, weldNormals, settings };
 })();

@@ -28,8 +28,6 @@
   const DITHER_CELLS_PER_UNIT = 48;
   /** Gamma used when a look is drawn into the kit's linear HDR chain; it mirrors the 1 / 2.2 in kit/post.js. */
   const DISPLAY_GAMMA = 2.2;
-  /** A stamp layer smaller than its least size is grown towards it, by at most this factor (a glint may double, a face may not balloon). */
-  const STAMP_MOST_GROWTH = 2.5;
   /**
    * How far each later layer of a stamp is pulled toward the camera, in normalised device depth (the whole depth
    * range is 2). Layers lie on a curved surface as flat polygons a fraction of a millimetre apart, so a large
@@ -320,12 +318,21 @@
       // the white of an eye three texels wide is noise, and the iris alone reads better.
       attribute vec4 stampPaint;
       attribute vec4 stampCentre;
-      uniform float uTexelWorld;   // world size of one target texel; 0 when unknown (a perspective camera)
+      uniform float uTexelWorld;   // world size of one target texel under an orthographic camera; 0 under a perspective one
+      uniform float uTexelSlope;   // world size of one target texel per unit of depth under a perspective camera; 0 otherwise
       varying vec3 vStampPaint;
+      // Kit.look.stampGrowth (look-settings.js) is this rule in JavaScript, with Kit.look.texelWorldAt.
       float stampGrowth() {
-        float texels = 2.0 * stampCentre.w / max(uTexelWorld, 1e-9);   // the smaller side, in target texels
-        if (stampPaint.z < 0.0) return uTexelWorld > 0.0 && texels < -stampPaint.z ? 0.0 : 1.0;
-        return clamp(stampPaint.z / max(texels, 1e-5), 1.0, ${STAMP_MOST_GROWTH.toFixed(1)});
+        vec4 centre = vec4(stampCentre.xyz, 1.0);
+        #ifdef USE_INSTANCING
+          centre = instanceMatrix * centre;
+        #endif
+        // A texel's size where this layer is: one size under an orthographic camera, growing with depth under a perspective one.
+        float texelWorld = uTexelWorld + uTexelSlope * max(0.0, -(modelViewMatrix * centre).z);
+        // The layer's size is authored in the mesh's own units; a scaled figure's layers are that much bigger.
+        float texels = 2.0 * stampCentre.w * length(modelViewMatrix[0].xyz) / max(texelWorld, 1e-9);   // the smaller side, in target texels
+        if (stampPaint.z < 0.0) return texelWorld > 0.0 && texels < -stampPaint.z ? 0.0 : 1.0;
+        return clamp(stampPaint.z / max(texels, 1e-5), 1.0, ${Kit.look.STAMP_MOST_GROWTH.toFixed(1)});
       }
     #endif
     #ifdef LOOK_RESPONSE_SHARE
@@ -688,6 +695,7 @@
       uViewport: { value: new THREE.Vector2(1, 1) },
       uInkWidth: { value: 1 },
       uTexelWorld: { value: 0 },
+      uTexelSlope: { value: 0 },
     };
     const noAnchor = { value: new THREE.Vector2(0, 0) };
     /** @type {DressedMesh[]} */
