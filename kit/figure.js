@@ -33,6 +33,8 @@
   const MATRIX_TEXELS = 4;
   /** Bones that may move one vertex of a sculpted surface. */
   const SKIN_OWNERS = 4;
+  /** Numbers per vertex of a sculpted surface's paint (its ramp slot and its ink group). */
+  const SURFACE_PAINT = 2;
   const QUATERNION = 4;
   /** Floats per vertex of a stamp's paint and of its centre (kit/figure-shapes.js `stamps`). */
   const STAMP_PAINT = 4;
@@ -283,13 +285,13 @@
     /** The surfaces were sculpted for an earlier bake and are being bent to this one by the skeleton (see `setBake`). */
     let isStale = false;
 
-    /** Takes the sculpted surfaces down. */
+    /** Takes the sculpted surface down. */
     const removeSkin = () => {
       if (!skin) return;
-      skin.meshes.forEach(({ mesh, dressed, layer }) => {
+      skin.meshes.forEach(({ mesh, dressed, surface }) => {
         root.remove(mesh);
         view.shading.undress(dressed);
-        releaseSkinGeometry(layer);
+        releaseSkinGeometry(surface);
       });
       skin.bones.forEach((bone) => root.remove(bone));
       skin.skeleton.dispose();
@@ -305,18 +307,17 @@
       });
       const inverses = bones.map((_bone, index) => new THREE.Matrix4().fromArray(sculpted.matrices, index * MATRIX).invert());
       const skeleton = new THREE.Skeleton(bones, inverses);
-      const meshes = sculpted.layers.map((layer) => {
-        const mesh = new THREE.SkinnedMesh(acquireSkinGeometry(layer));
-        mesh.name = layer.id;
+      // Every layer in one mesh (kit/figure-sculpt.js `SculptSurface`): a figure is one skinned draw, and its hull.
+      const meshes = [sculpted.surface].filter((surface) => surface.indices.length > 0).map((surface) => {
+        const mesh = new THREE.SkinnedMesh(acquireSkinGeometry(surface));
+        mesh.name = 'sculpted';
         // The bones move the surface anywhere; its rest bounds say nothing about where it is drawn.
         mesh.frustumCulled = false;
         root.add(mesh);
         mesh.bind(skeleton, new THREE.Matrix4());
-        // A body surface is a head and a body in one mesh: each vertex says how much of a face's light it takes.
-        const faceLight = layer.faceShare ? { response: 'face', responseShare: true } : {};
-        const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, anchor, ...faceLight });
+        const dressed = view.shading.dress(mesh, { ...surfacePart(block), anchor });
         materialsCreated += MATERIALS_PER_DRESS;
-        return { mesh, dressed, layer };
+        return { mesh, dressed, surface };
       });
       skin = { ...sculpted, bones, skeleton, meshes, scratch: Kit.body.createPose(shown.plan) };
       isStale = false;
@@ -483,11 +484,17 @@
     return scratch;
   };
 
-  /** @type {WeakMap<Object, {geometry: THREE.BufferGeometry, users: number}>} one geometry per sculpted layer, shared by every figure showing it */
+  /**
+   * What a sculpted surface is to the look: every vertex names its own paint (its ramp slot from the figure's
+   * block, and its ink group), and how much of a face's light it takes (a body surface is a head and a body in one).
+   */
+  const surfacePart = (block) => ({ ramp: block.offset, blockRow: block.offset, vertexPaint: true, inkGroup: 1, response: 'face', responseShare: true });
+
+  /** @type {WeakMap<Object, {geometry: THREE.BufferGeometry, users: number}>} one geometry per sculpted surface, shared by every figure showing it */
   const skinGeometries = new WeakMap();
   /**
-   * The geometry of a sculpted layer (kit/figure-sculpt.js `SculptLayer`). Equal bakes share their layers, so
-   * figures of one look share one upload.
+   * The geometry of a sculpted surface (kit/figure-sculpt.js `SculptSurface`). Equal bakes share their surface,
+   * so figures of one look share one upload.
    */
   const acquireSkinGeometry = (layer) => {
     const known = skinGeometries.get(layer);
@@ -501,6 +508,7 @@
     geometry.setAttribute('skinIndex', new THREE.BufferAttribute(layer.owners, SKIN_OWNERS));
     geometry.setAttribute('skinWeight', new THREE.BufferAttribute(layer.weights, SKIN_OWNERS));
     if (layer.faceShare) geometry.setAttribute('responseShare', new THREE.BufferAttribute(layer.faceShare, 1));
+    if (layer.paint) geometry.setAttribute('vertexPaint', new THREE.BufferAttribute(layer.paint, SURFACE_PAINT));
     geometry.setIndex(new THREE.BufferAttribute(layer.indices, 1));
     skinGeometries.set(layer, { geometry, users: 1 });
     return geometry;
@@ -585,12 +593,11 @@
     const boneTexture = sculpted ? new THREE.DataTexture(boneData, boneCount * MATRIX_TEXELS, count, THREE.RGBAFormat, THREE.FloatType) : null;
     const inverses = sculpted ? new Float32Array(boneCount * MATRIX) : null;
     if (sculpted) for (let bone = 0; bone < boneCount; bone++) new THREE.Matrix4().fromArray(sculpted.matrices, bone * MATRIX).invert().toArray(inverses, bone * MATRIX);
-    const skins = (sculpted ? sculpted.layers : []).map((layer) => {
+    const skins = (sculpted ? [sculpted.surface] : []).map((layer) => {
       const mesh = new THREE.InstancedMesh(acquireSkinGeometry(layer), undefined, count);
       mesh.frustumCulled = false;
       root.add(mesh);
-      const faceLight = layer.faceShare ? { response: 'face', responseShare: true } : {};
-      const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, crowdBones: boneTexture, ...faceLight });
+      const dressed = view.shading.dress(mesh, { ...surfacePart(block), crowdBones: boneTexture });
       return { layer, mesh, dressed };
     });
     const locals = Array.from({ length: count }, () => Kit.rig.copy(bake.rest, Kit.body.createPose(bake.plan)));

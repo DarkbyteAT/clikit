@@ -46,10 +46,10 @@
    * figure a few dozen pixels tall: a crowd.
    */
   const DETAIL = Object.freeze({
-    high: Object.freeze({ cell: 0.011, most: 120, error: 0.06 }),
-    medium: Object.freeze({ cell: 0.017, most: 80, error: 0.1 }),
-    low: Object.freeze({ cell: 0.028, most: 48, error: 0.13 }),
-    far: Object.freeze({ cell: 0.028, most: 48, error: 0.3, triangles: 600 }),
+    high: Object.freeze({ cell: 0.011, most: 120, error: 0.06, triangles: 25000 }),
+    medium: Object.freeze({ cell: 0.017, most: 80, error: 0.1, triangles: 8000 }),
+    low: Object.freeze({ cell: 0.028, most: 48, error: 0.13, triangles: 2500 }),
+    far: Object.freeze({ cell: 0.028, most: 48, error: 0.3, triangles: 1000 }),
   });
   /** A solid thinner than this many cells may fall between samples. */
   const FEWEST_CELLS_ACROSS = 1.6;
@@ -1407,6 +1407,13 @@
     leastTurn: 0.2,
     /** No edge a collapse leaves may span more than this share of a full change of owners: a joint keeps the loops it bends on. */
     mostShareStep: 0.5,
+    /**
+     * A vertex whose normal is this far (radians) from that of the vertex it would be moved onto costs as much
+     * again as the whole tolerance. Shading is read from the normals, and a normal carries form the positions
+     * do not (it is averaged over more of the surface than a triangle: `NORMAL_SMOOTHING`), so a vertex is also
+     * kept where the light turns, or a tone's edge would run straight across what was a curve.
+     */
+    turn: 0.14,
     /** Collapses between two pauses of `simplifySteps` (about a millisecond's work each hundred). */
     slice: 1200,
   });
@@ -1487,7 +1494,9 @@
    * @property {Float32Array} normals
    * @property {Uint16Array|Uint32Array} indices
    * @property {Uint32Array} kept per kept vertex, its index in the mesh given (rising): `pick` carries any other attribute over
-   * @property {number} error the largest error of a collapse made, metres (root mean square distance to the planes a vertex stood for)
+   * @property {number} error the largest cost of a collapse made, metres (root mean square distance to the planes
+   *   a vertex stood for, with the turn of its normal counted in)
+   * @property {number} distance the largest such distance alone, metres: how far the form may have moved
    */
 
   /**
@@ -1577,8 +1586,10 @@
     }
     yield undefined;
 
-    /** The mean squared distance from where `target` is to the planes `vertex` stands for. */
-    const errorAt = (vertex, target) => {
+    /** Metres a radian of turned normal counts as, squared. */
+    const turnCost = (tolerance / SIMPLIFY.turn) ** 2;
+    /** The mean squared distance from where `target` is to the planes `vertex` stands for, metres squared. */
+    const distanceAt = (vertex, target) => {
       const from = vertex * QUADRIC;
       const x = positions[target * VECTOR];
       const y = positions[target * VECTOR + 1];
@@ -1590,6 +1601,13 @@
         2 * (quadrics[from + 1] * x * y + quadrics[from + 2] * x * z + quadrics[from + 5] * y * z + quadrics[from + 3] * x + quadrics[from + 6] * y + quadrics[from + 8] * z) +
         quadrics[from + 9];
       return Math.max(0, sum) / (weight[vertex] || 1);
+    };
+    /** What moving `vertex` onto `target` costs, metres squared: `distanceAt`, and how far the normal there is from the vertex's own. */
+    const errorAt = (vertex, target) => {
+      const turnX = normals[vertex * VECTOR] - normals[target * VECTOR];
+      const turnY = normals[vertex * VECTOR + 1] - normals[target * VECTOR + 1];
+      const turnZ = normals[vertex * VECTOR + 2] - normals[target * VECTOR + 2];
+      return distanceAt(vertex, target) + turnCost * (turnX * turnX + turnY * turnY + turnZ * turnZ);
     };
     /** How much of the ownership differs between two vertices: 0 the same owners in the same shares, 1 none in common. */
     const shareStep = (first, second) => {
@@ -1733,6 +1751,7 @@
     yield undefined;
 
     let worst = 0;
+    let furthest = 0;
     let sinceYield = 0;
     /** Neighbours to queue again after a collapse (the target's, as they are afterwards). */
     let again = new Int32Array(64);
@@ -1742,13 +1761,20 @@
       if (!isWanted(heap.cost)) break;
       const liveFaces = gather(vertex);
       for (let index = 0; index < aroundCount; index++) aroundCost[index] = errorAt(vertex, around[index]);
-      // The cheapest neighbour the surface allows; a refused one is passed over for the next.
+      // The cheapest neighbour the surface allows. When that one is refused the next may cost much more, so the
+      // vertex goes back in the queue at that cost and waits its turn: collapses are made strictly cheapest first.
       let target = -1;
       let cost = 0;
+      let isQueuedAgain = false;
       for (;;) {
         let pick = -1;
         for (let index = 0; index < aroundCount; index++) if (aroundCost[index] < Infinity && (pick < 0 || aroundCost[index] < aroundCost[pick])) pick = index;
         if (pick < 0 || !isWanted(aroundCost[pick])) break;
+        if (aroundCost[pick] > heap.cost * (1 + EPSILON) + EPSILON * EPSILON) {
+          queueAt(vertex, around[pick], aroundCost[pick]);
+          isQueuedAgain = true;
+          break;
+        }
         if (canCollapse(vertex, around[pick], liveFaces)) {
           target = around[pick];
           cost = aroundCost[pick];
@@ -1756,11 +1782,13 @@
         }
         aroundCost[pick] = Infinity;
       }
+      if (isQueuedAgain) continue;
       if (target < 0) {
         // Refused for now; a collapse beside it may change that.
         isParked[vertex] = 1;
         continue;
       }
+      furthest = Math.max(furthest, distanceAt(vertex, target));
       // The collapse: triangles on the edge die, the rest of the vertex's corners become the target's.
       for (let corner = head[vertex]; corner >= 0; ) {
         const following = next[corner];
@@ -1813,7 +1841,7 @@
     for (let vertex = 0; vertex < vertexCount; vertex++) if (renumbered[vertex] >= 0) kept[renumbered[vertex]] = vertex;
     const indices = used > MOST_SHORT_INDEX ? new Uint32Array(alive * VECTOR) : new Uint16Array(alive * VECTOR);
     for (let face = 0, out = 0; face < faceCount; face++) if (!isDead[face]) for (let corner = 0; corner < VECTOR; corner++) indices[out++] = renumbered[faces[face * VECTOR + corner]];
-    return { positions: pick(positions, VECTOR, kept), normals: pick(normals, VECTOR, kept), indices, kept, error: Math.sqrt(worst) };
+    return { positions: pick(positions, VECTOR, kept), normals: pick(normals, VECTOR, kept), indices, kept, error: Math.sqrt(worst), distance: Math.sqrt(furthest) };
   }
 
   /**

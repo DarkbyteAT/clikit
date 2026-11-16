@@ -368,7 +368,7 @@
    * @property {Float32Array} faceShare per vertex, how much of it the head's bones move where its layer is a body surface, else 0
    * @property {Uint8Array} paint 2 per vertex: its layer's ramp slot (also its line class) and ink group
    * @property {Array<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}>} ranges
-   * @property {number} error the furthest the mesh was allowed off the surfaces it was meshed on, metres (`Kit.sculpt.simplify`)
+   * @property {number} error the furthest a vertex was moved off the planes it stood for when the mesh was simplified, metres (`Kit.sculpt.simplify`'s `distance`)
    */
 
   /** The solid of a layout piece in the sculpting pose, with the fillets its thickness earns. */
@@ -438,14 +438,17 @@
    * last. A garment with no raise (stripes, a trim, a tattoo) is paint: it lies a hair above the raised
    * garment of its own part, or above the skin, and is cut out of that garment's area.
    * @param {Garment[]} garments in paint order
+   * @param {number} [slack=0] metres a surface of this level of detail may stand off the form it was meshed on
+   *   (`Kit.sculpt.DETAIL`'s `error` of a cell): layers stand at least that far apart, so a coarse level's flatter
+   *   triangles do not cut through the layer below
    * @returns {Array<{garment: Garment, offset: number, host: ?Garment, isPaint: boolean}>}
    */
-  const stackGarments = (garments) => {
+  const stackGarments = (garments, slack = 0) => {
     let lastOffset = 0;
     const raised = garments
       .filter((garment) => garment.raise > 0)
       .map((garment) => {
-        lastOffset = Math.max(garment.raise, SCULPT.leastRaise, lastOffset + SCULPT.layerGap);
+        lastOffset = Math.max(garment.raise, SCULPT.leastRaise, lastOffset + Math.max(SCULPT.layerGap, slack));
         return { garment, offset: lastOffset, host: null, isPaint: false };
       });
     const painted = garments
@@ -660,7 +663,7 @@
     const layers = [];
     for (const group of groups.values()) {
       const bones = [...new Set(group.solids.map((part) => part.owner))];
-      const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
+      const specs = regions && frames ? stackGarments(garmentsOn(bones, regions), cell * Kit.sculpt.DETAIL[detail].error) : [];
       const field = yield* Kit.sculpt.sampleSteps(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
       const layerOf = (id, ramp, mesh, offset) => ({
         id,
@@ -778,7 +781,7 @@
       faceShare: Kit.sculpt.pick(whole.faceShare, 1, kept),
       paint: Kit.sculpt.pick(whole.paint, PAINT, kept),
       ranges,
-      error: light.error,
+      error: light.distance,
     };
   };
 

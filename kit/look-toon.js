@@ -217,8 +217,8 @@
    * contour "bilinear weight of one side = 1/2", a smooth curve, where a nearest read would give texel steps.
    */
   const GLSL_REGIONS = `
-    #if defined(LOOK_STAMP) && !defined(LOOK_REGIONS)
-      uniform float uBlockRow;     // a stamp on a bone nothing is painted over still looks its ramps up from the block
+    #if (defined(LOOK_STAMP) || defined(LOOK_VERTEX_PAINT)) && !defined(LOOK_REGIONS)
+      uniform float uBlockRow;     // a stamp on a bone nothing is painted over (or a vertex-painted surface) still looks its ramps up from the block
     #endif
     #ifdef LOOK_REGIONS
       uniform sampler2D uRegionMap;
@@ -292,9 +292,21 @@
       }
     #endif`;
 
+  /**
+   * One mesh of several paints (the layers of a sculpted figure joined: kit/figure-sculpt.js): each vertex names
+   * its ramp slot, which is also its line class, and its ink group. No vertex is shared between two paints, so
+   * the pair is the same at a triangle's three corners and reaches a fragment unchanged.
+   */
+  const GLSL_VERTEX_PAINT_PARS = `
+    #ifdef LOOK_VERTEX_PAINT
+      attribute vec2 vertexPaint;
+      varying vec2 vPaint;
+    #endif`;
+
   const TOON_VERTEX = `
     #include <skinning_pars_vertex>
     ${GLSL_CROWD_PARS}
+    ${GLSL_VERTEX_PAINT_PARS}
     #ifdef LOOK_INSTANCE_RAMP
       attribute float instanceRamp;
     #endif
@@ -332,6 +344,9 @@
       vLocalPosition = position;
       vViewDepth = -mvPosition.z;
       vRampOffset = 0.0;
+      #ifdef LOOK_VERTEX_PAINT
+        vPaint = vertexPaint;
+      #endif
       #ifdef LOOK_INSTANCE_RAMP
         vRampOffset = instanceRamp;
       #endif
@@ -369,6 +384,9 @@
     #ifdef LOOK_RESPONSE_SHARE
       varying float vResponseShare;
     #endif
+    #ifdef LOOK_VERTEX_PAINT
+      varying vec2 vPaint;
+    #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
     varying float vViewDepth;
@@ -390,6 +408,12 @@
     void main() {
       float row = uRamp + vRampOffset;
       float inkClass = uInkClass;
+      float inkGroup = uInkGroup;
+      #ifdef LOOK_VERTEX_PAINT
+        row = uBlockRow + floor(vPaint.x + 0.5) + vRampOffset;
+        inkClass = floor(vPaint.x + 0.5);
+        inkGroup = floor(vPaint.y + 0.5);
+      #endif
       float lineRow = -1.0;
       vec3 response = uResponse;
       #ifdef LOOK_RESPONSE_SHARE
@@ -442,7 +466,7 @@
       }
       #ifdef LOOK_INDEX_OUTPUT
         // (ramp, tone + line class, ink group, depth) as four bytes; colour is resolved later, by look-ink.js.
-        gl_FragColor = vec4(indexBytes(row, tone, inkClass), uInkGroup / 255.0, depthByte(vViewDepth));
+        gl_FragColor = vec4(indexBytes(row, tone, inkClass), inkGroup / 255.0, depthByte(vViewDepth));
       #else
         #ifdef LOOK_SOFT
           // A fixed tone is whole (and may be the deep column), so its blend weight is zero and it is read as it is.
@@ -463,6 +487,7 @@
   const HULL_VERTEX = `
     #include <skinning_pars_vertex>
     ${GLSL_CROWD_PARS}
+    ${GLSL_VERTEX_PAINT_PARS}
     #ifdef LOOK_INK_NORMAL
       attribute vec3 inkNormal;
     #endif
@@ -472,6 +497,9 @@
     varying vec3 vLocalPosition;
     void main() {
       vLocalPosition = position;
+      #ifdef LOOK_VERTEX_PAINT
+        vPaint = vertexPaint;
+      #endif
       ${GLSL_TRANSFORM}
       // three.js flips the normal of a back-side material; the push must follow the surface's true outward normal.
       #ifdef FLIP_SIDED
@@ -495,12 +523,21 @@
     uniform float uInkClass;
     varying float vViewDepth;
     varying vec3 vLocalPosition;
+    #ifdef LOOK_VERTEX_PAINT
+      varying vec2 vPaint;
+    #endif
     ${GLSL_PALETTE}
     ${GLSL_DEPTH_BYTE}
     ${GLSL_REGIONS}
     void main() {
       float row = uRamp;
       float inkClass = uInkClass;
+      float inkGroup = uInkGroup;
+      #ifdef LOOK_VERTEX_PAINT
+        row = uBlockRow + floor(vPaint.x + 0.5);
+        inkClass = floor(vPaint.x + 0.5);
+        inkGroup = floor(vPaint.y + 0.5);
+      #endif
       #ifdef LOOK_REGIONS
         // The outline takes the ink of whatever is painted there, and a shell is outlined only where it shows.
         vec4 region = regionAt(regionUv(vLocalPosition));
@@ -510,7 +547,7 @@
       #endif
       #ifdef LOOK_INDEX_OUTPUT
         float high = step(${ROW_HIGH_STEP}.0, row);
-        gl_FragColor = vec4((row - ${ROW_HIGH_STEP}.0 * high) / 255.0, (${INK_COLUMN}.0 + ${CLASS_STEP}.0 * inkClass + ${ROW_HIGH_BIT}.0 * high) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
+        gl_FragColor = vec4((row - ${ROW_HIGH_STEP}.0 * high) / 255.0, (${INK_COLUMN}.0 + ${CLASS_STEP}.0 * inkClass + ${ROW_HIGH_BIT}.0 * high) / 255.0, inkGroup / 255.0, depthByte(vViewDepth));
       #else
         gl_FragColor = vec4(toOutput(paletteColor(${INK_COLUMN}.0, row)), 1.0);
       #endif
@@ -564,7 +601,10 @@
    * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below
    *   it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
    * @property {LookRegions} [regions] the mesh is painted from a baked region map instead of one ramp
-   * @property {number} [blockRow] with `regions` or `stamps`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
+   * @property {boolean} [vertexPaint] the geometry has a two-number `vertexPaint` attribute: per vertex, its ramp slot
+   *   (a row from `blockRow`, and its line class) and its ink group, instead of the part's one `ramp`, `inkClass` and
+   *   `inkGroup` (several paints in one mesh, so one draw: a sculpted figure's layers)
+   * @property {number} [blockRow] with `regions`, `stamps` or `vertexPaint`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
    * @property {number} [shell] with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
    * @property {boolean} [stamps] the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js
    *   `stamps`): each vertex names its slot and tone, and it is never outlined
@@ -662,7 +702,7 @@
       uPart: { value: new THREE.Vector3(part.shiny ? 1 : 0, part.emissive ? 1 : 0, part.tone === undefined ? -1 : part.tone) },
       uInkClass: { value: part.inkClass || 0 },
       ...(part.crowdBones ? { uCrowdBones: { value: part.crowdBones } } : {}),
-      ...(part.regions || part.stamps ? { uBlockRow: { value: part.blockRow || 0 } } : {}),
+      ...(part.regions || part.stamps || part.vertexPaint ? { uBlockRow: { value: part.blockRow || 0 } } : {}),
       ...(part.regions ? regionUniforms(part.regions, part.shell || 0) : {}),
     });
     const axisVector = (axis) => new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
@@ -684,7 +724,8 @@
       ...(part.responseShare ? { LOOK_RESPONSE_SHARE: '' } : {}),
       ...crowdDefines(part),
     });
-    const crowdDefines = (part) => (part.crowdBones ? { LOOK_CROWD_BONES: '' } : {});
+    /** What the toon and the hull material of a part both need to know of how its vertices are placed and painted. */
+    const crowdDefines = (part) => ({ ...(part.crowdBones ? { LOOK_CROWD_BONES: '' } : {}), ...(part.vertexPaint ? { LOOK_VERTEX_PAINT: '' } : {}) });
 
     /** Makes the geometry draw twice, once per material slot (toon, hull), and gives it welded normals for the hull. */
     const prepareGeometry = (mesh) => {
@@ -741,7 +782,7 @@
         const entry = { mesh, toon, hull, setRamp: (row) => (partValues.uRamp.value = row) };
         // A region or stamp may name any slot of its figure's block, so the block's last row counts too (a per-instance
         // row offset is the caller's to keep in range).
-        highestRow = Math.max(highestRow, part.ramp, part.regions || part.stamps ? (part.blockRow || 0) + BLOCK_SLOTS - 1 : 0);
+        highestRow = Math.max(highestRow, part.ramp, part.regions || part.stamps || part.vertexPaint ? (part.blockRow || 0) + BLOCK_SLOTS - 1 : 0);
         dressed.push(entry);
         defineKey = '';
         return entry;
