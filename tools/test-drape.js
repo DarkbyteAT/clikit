@@ -405,7 +405,7 @@ module.exports = ({ Kit, test, assert }) => {
   });
 
   test('drape: thin cloth is a thin shell at every level of detail, never a rigid board, and is carried by its own bone where it hangs free', () => {
-    ['high', 'medium', 'low'].forEach((level) => {
+    ['high', 'medium', 'low', 'far'].forEach((level) => {
       const made = sculptedOf(wearing('person', { top: 'tee', bottom: 'trousers', outerwear: 'cloak' }), level);
       const { plan } = made.bake;
       const bone = plan.boneIndex('outerwear/cloak');
@@ -424,7 +424,9 @@ module.exports = ({ Kit, test, assert }) => {
         if (at[vertex * 3 + 1] < lowest + (highest - lowest) * 0.25) [hemShare, hemCount] = [hemShare + own, hemCount + 1];
       }
       assert.ok(highest - lowest > 0.35, `${level}: it keeps its length (${(highest - lowest).toFixed(3)} m)`);
-      assert.ok(hemShare / hemCount > 0.9, `${level}: its hem rides its own bone (${(hemShare / hemCount).toFixed(2)}), which a movement may simulate`);
+      // At far the whole cloak is a few dozen vertices and its lowest quarter takes in the row above the hem, which the back shares.
+      const mostlyOwn = level === 'far' ? 0.8 : 0.9;
+      assert.ok(hemShare / hemCount > mostlyOwn, `${level}: its hem rides its own bone (${(hemShare / hemCount).toFixed(2)}), which a movement may simulate`);
       assert.ok(ownShare / (at.length / VECTOR) < 0.999, `${level}: where it lies on the back the body carries it`);
       // Thin: the volume it encloses is that of a sheet about as thick as authored (1.9 cm), not of a slab a grid cell or two thick.
       let sixVolumes = 0;
@@ -435,6 +437,37 @@ module.exports = ({ Kit, test, assert }) => {
       const thickness = sixVolumes / 6 / (areaOf({ positions: at, indices: cloak.indices }) / 2);
       assert.ok(thickness > 0.008 && thickness < 0.03, `${level}: about as thick as authored: ${thickness.toFixed(4)} m`);
     });
+  });
+
+  test('drape: hair sunk in the head is not drawn where the head hides it, but a plait that swings on its own bone is drawn whole', () => {
+    // Dense: simplified, a budget spends elsewhere what the cut saves, and the count says nothing.
+    const made = sculptedOf(wearing('person', { hair: 'hairBraids' }), 'medium', { simplify: false });
+    const whole = sculptedOf(wearing('person', { hair: 'hairBraids' }), 'medium', { cull: false, simplify: false });
+    const { plan } = made.bake;
+    const hair = wornLayer(made, 'hair');
+    assert.ok(hair.indices.length < wornLayer(whole, 'hair').indices.length * 0.85, `the sunk part is gone: ${hair.indices.length / VECTOR} of ${wornLayer(whole, 'hair').indices.length / VECTOR} triangles`);
+    const swings = (bone) => {
+      for (let at = bone; at > 0; at = plan.parent[at]) if (plan.stiffness[at] < Kit.body.PHYSICAL_DEFAULTS.stiffness) return true;
+      return false;
+    };
+    const count = hair.positions.length / VECTOR;
+    const seen = new Map();
+    for (let face = 0; face < hair.indices.length; face += VECTOR)
+      for (let corner = 0; corner < VECTOR; corner++) {
+        const [from, to] = [hair.indices[face + corner], hair.indices[face + ((corner + 1) % VECTOR)]];
+        const key = Math.min(from, to) * count + Math.max(from, to);
+        seen.set(key, (seen.get(key) || 0) + 1);
+      }
+    let [open, openOnPlait, plaitVertices] = [0, 0, 0];
+    for (let vertex = 0; vertex < count; vertex++) if (swings(hair.owners[vertex * OWNERS])) plaitVertices++;
+    seen.forEach((times, key) => {
+      if (times !== 1) return;
+      open++;
+      if (swings(hair.owners[Math.floor(key / count) * OWNERS]) && swings(hair.owners[(key % count) * OWNERS])) openOnPlait++;
+    });
+    assert.ok(plaitVertices > 20, `the control: part of the hair swings (${plaitVertices} vertices)`);
+    assert.ok(open > 0, 'the control: the hair is open where it is sunk');
+    assert.strictEqual(openOnPlait, 0, 'no hole in what swings out of the place it was made in');
   });
 
   test('drape: a lifted thigh pushes a skirt out instead of coming through it, and a swung cloak bone carries its cloak', () => {

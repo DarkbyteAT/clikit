@@ -33,7 +33,7 @@
   const MATRIX_TEXELS = 4;
   /** Bones that may move one vertex of a sculpted surface. */
   const SKIN_OWNERS = 4;
-  /** Numbers per vertex of a sculpted surface's paint (its ramp slot, its ink group, whether it glints). */
+  /** Numbers per vertex of a sculpted surface's paint (its ramp slot, its ink group, its flags: glints, has no outline). */
   const SURFACE_PAINT = 3;
   const QUATERNION = 4;
   /** Floats per vertex of a stamp's paint and of its centre (kit/figure-shapes.js `stamps`). */

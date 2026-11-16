@@ -294,8 +294,10 @@
 
   /**
    * One mesh of several paints (the layers of a sculpted figure joined: kit/figure-sculpt.js): each vertex names
-   * its ramp slot, which is also its line class, its ink group, and 1 if it glints like a shiny part. No vertex
-   * is shared between two paints, so the three are the same at a triangle's corners and reach a fragment unchanged.
+   * its ramp slot, which is also its line class, its ink group, and its flags added up: 1 if it glints like a
+   * shiny part, 2 if it has no outline of its own (a lip on a face: its hull is not pushed out, so it stays
+   * behind the piece). No vertex is shared between two paints, so the three are the same at a triangle's corners
+   * and reach a fragment unchanged.
    */
   const GLSL_VERTEX_PAINT_PARS = `
     #ifdef LOOK_VERTEX_PAINT
@@ -414,7 +416,7 @@
         row = uBlockRow + floor(vPaint.x + 0.5) + vRampOffset;
         inkClass = floor(vPaint.x + 0.5);
         inkGroup = floor(vPaint.y + 0.5);
-        isShiny = vPaint.z > 0.5;
+        isShiny = mod(floor(vPaint.z + 0.5), 2.0) > 0.5;
       #endif
       float lineRow = -1.0;
       vec3 response = uResponse;
@@ -509,7 +511,12 @@
       #endif
       vec2 direction = (projectionMatrix * vec4(transformedNormal, 0.0)).xy * uViewport;
       direction /= max(length(direction), 0.0001);
-      gl_Position.xy += direction * (2.0 * uInkWidth / uViewport) * gl_Position.w;
+      float inkWidth = uInkWidth;
+      #ifdef LOOK_VERTEX_PAINT
+        // A vertex that says it has no outline (flag 2) is not pushed out: its hull stays behind its own surface.
+        if (vertexPaint.z > 1.5) inkWidth = 0.0;
+      #endif
+      gl_Position.xy += direction * (2.0 * inkWidth / uViewport) * gl_Position.w;
       // The step back is made in view space and only the depth is taken from it, so the line keeps its place on screen.
       vec4 behind = projectionMatrix * vec4(mvPosition.xy, mvPosition.z - ${HULL_BACK}, 1.0);
       gl_Position.z = behind.z / behind.w * gl_Position.w;
@@ -604,8 +611,9 @@
    *   it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
    * @property {LookRegions} [regions] the mesh is painted from a baked region map instead of one ramp
    * @property {boolean} [vertexPaint] the geometry has a three-number `vertexPaint` attribute: per vertex, its ramp slot
-   *   (a row from `blockRow`, and its line class), its ink group and 1 where it is shiny, instead of the part's one
-   *   `ramp`, `inkClass`, `inkGroup` and `shiny` (several paints in one mesh, so one draw: a sculpted figure's layers)
+   *   (a row from `blockRow`, and its line class), its ink group and its flags added up (1 where it is shiny, 2 where
+   *   it has no outline), instead of the part's one `ramp`, `inkClass`, `inkGroup`, `shiny` and `outlined` (several
+   *   paints in one mesh, so one draw: a sculpted figure's layers)
    * @property {number} [blockRow] with `regions`, `stamps` or `vertexPaint`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
    * @property {number} [shell] with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
    * @property {boolean} [stamps] the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js

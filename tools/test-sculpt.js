@@ -454,6 +454,8 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
 
   test('sculpt: every species of both catalogues sculpts to closed skins and non-empty layers that replace the pieces they were made from', () => {
     assert.strictEqual(catalogs.length, 2, 'both catalogues are loaded');
+    /** Worn layers found open because part of them is sunk in the body: at least the wardrobe's hair must be. */
+    let sunk = 0;
     catalogs.forEach(({ name, catalog }) => {
       const bakery = catalog.bakery({ capacity: 4 });
       catalog.speciesIds().forEach((species) => {
@@ -465,6 +467,12 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         const whole = figure.sculptLayers(bake, layout, { cull: false });
         assert.ok(sculpted.layers.length > 0, `${where}: something is sculpted`);
         const boneCount = bake.plan.boneNames.length;
+        /** The body's own solids in the pose the layers were made in: what a worn object may be sunk in. */
+        const body = Kit.drape.under(
+          layout.pieces
+            .filter((piece) => !piece.isProp && !piece.isFeature && !piece.stamps && !piece.shell && piece.tone === undefined && sculpt.KINDS[piece.shape.kind])
+            .map((piece) => sculpt.solid(piece.shape, sculpted.matrices.subarray(piece.bone * 16, piece.bone * 16 + 16), { owner: piece.bone }))
+        );
         sculpted.layers.forEach((layer) => {
           const vertexCount = layer.positions.length / VECTOR;
           assert.ok(vertexCount > 0 && layer.indices.length >= VECTOR, `${where} ${layer.id}: not empty`);
@@ -481,8 +489,17 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
             if (Math.abs(sum - 1) > 1e-4) assert.fail(`${where} ${layer.id}: weights of vertex ${vertex} sum to ${sum}`);
           }
           if (layer.id.startsWith('worn:')) {
-            assert.deepStrictEqual(edgesOf(layer), { open: 0, pinched: 0 }, `${where} ${layer.id}: closed, every edge shared by exactly two triangles`);
-            assert.ok(sixVolumes(layer) > 0, `${where} ${layer.id}: wound outward`);
+            // A worn object is a closed thing; what is drawn of it is open only where it is sunk in the body.
+            const closed = whole.layers.find((other) => other.id === layer.id);
+            assert.deepStrictEqual(edgesOf(closed), { open: 0, pinched: 0 }, `${where} ${layer.id}: closed when sculpted whole, every edge shared by exactly two triangles`);
+            assert.ok(sixVolumes(closed) > 0, `${where} ${layer.id}: wound outward`);
+            const edges = openEdgesOf(layer);
+            assert.strictEqual(edges.pinched, 0, `${where} ${layer.id}: no edge shared by more than two triangles`);
+            if (edges.open.length) sunk += 1;
+            edges.open.forEach(([x, y, z]) => {
+              const depth = -body.distance(x, y, z);
+              if (!(depth > 0)) assert.fail(`${where} ${layer.id}: an open edge at ${[x, y, z].map((value) => value.toFixed(3))} is ${-depth} m outside the body: the object is open where it can be seen`);
+            });
           }
         });
         // A skin is closed but for what a garment covers: with the paint cut out of it put back, its open edges
@@ -523,6 +540,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         assert.strictEqual(sculpted.matrices.length, boneCount * 16);
       });
     });
+    assert.ok(sunk > 0, 'the control: some worn object (a hair mass) is sunk in its body and so drawn open');
   });
 
   test('sculpt: worn objects follow their data: a skirt is draped on the legs and its own bone and hangs as authored where the body is not in its way, a hat is a solid on its own bone, a sword stays rigid', () => {
@@ -731,6 +749,124 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     }
     assert.ok(pauses >= 2, 'the work can be paused');
     assert.deepStrictEqual(Array.from(step.value.indices), Array.from(few.indices));
+  });
+
+  test('sculpt: a paint edge is held like a border: it stays on its own line with no crack, and a locked vertex stays, whatever the budget', () => {
+    const round = sculpt.surface(sculpt.sample([ball()], { detail: 'medium' }));
+    const faceCount = round.indices.length / VECTOR;
+    // Two paints on one welded skin: a cap above a height and the rest.
+    const paints = new Uint8Array(faceCount);
+    for (let face = 0; face < faceCount; face++) {
+      const height = (round.positions[round.indices[face * 3] * 3 + 1] + round.positions[round.indices[face * 3 + 1] * 3 + 1] + round.positions[round.indices[face * 3 + 2] * 3 + 1]) / 3;
+      paints[face] = height > 0.05 ? 1 : 0;
+    }
+    /** The edges between two paints, as pairs of the given mesh's vertices named by `nameOf`. */
+    const seamsOf = (indices, paintOf, nameOf) => {
+      const first = new Map();
+      const seams = [];
+      for (let face = 0; face < indices.length / VECTOR; face++) {
+        for (let corner = 0; corner < VECTOR; corner++) {
+          const [from, to] = [nameOf(indices[face * 3 + corner]), nameOf(indices[face * 3 + ((corner + 1) % VECTOR)])];
+          const key = from < to ? `${from},${to}` : `${to},${from}`;
+          if (!first.has(key)) first.set(key, paintOf(face));
+          else if (first.get(key) !== paintOf(face)) seams.push([from, to]);
+        }
+      }
+      return seams;
+    };
+    const onSeam = new Set(seamsOf(round.indices, (face) => paints[face], (vertex) => vertex).flat());
+    const areaOfPaint = (mesh, paintOf) => {
+      let area = 0;
+      for (let face = 0; face < mesh.indices.length / VECTOR; face++) {
+        if (paintOf(face) !== 1) continue;
+        const [a, b, c] = [mesh.indices[face * 3] * 3, mesh.indices[face * 3 + 1] * 3, mesh.indices[face * 3 + 2] * 3];
+        const [ux, uy, uz] = [mesh.positions[b] - mesh.positions[a], mesh.positions[b + 1] - mesh.positions[a + 1], mesh.positions[b + 2] - mesh.positions[a + 2]];
+        const [vx, vy, vz] = [mesh.positions[c] - mesh.positions[a], mesh.positions[c + 1] - mesh.positions[a + 1], mesh.positions[c + 2] - mesh.positions[a + 2]];
+        area += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+      }
+      return area;
+    };
+    /** How many seam ends of the simplified mesh were not on the seam to begin with: paint that has run. */
+    const strays = (light) => seamsOf(light.indices, (face) => paints[light.faces[face]], (vertex) => light.kept[vertex]).flat().filter((vertex) => !onSeam.has(vertex)).length;
+    const held = sculpt.simplify(round, { most: 300, paints });
+    assert.ok(held.indices.length / VECTOR <= 300, `the budget is still met: ${held.indices.length / VECTOR}`);
+    assert.deepStrictEqual(edgesOf(held), { open: 0, pinched: 0 }, 'no crack along the paint edge');
+    assert.strictEqual(strays(held), 0, 'every end of the paint edge is a vertex that was on it');
+    close(areaOfPaint(held, (face) => paints[held.faces[face]]) / areaOfPaint(round, (face) => paints[face]), 1, 0.06, 'the painted area is what it was');
+    // The control: simplified without knowing the paints, the edge wanders off its line.
+    const blind = sculpt.simplify(round, { most: 300 });
+    assert.ok(strays(blind) > 0, 'without the paints the edge runs');
+    // Locked vertices: every one is kept, even after its neighbours collapse; the control loses most of them.
+    const locked = new Uint8Array(round.positions.length / VECTOR);
+    let lockedCount = 0;
+    for (let vertex = 0; vertex < locked.length; vertex++) if (round.positions[vertex * 3] > RADIUS * 0.8) [locked[vertex], lockedCount] = [1, lockedCount + 1];
+    assert.ok(lockedCount > 40, `the control: there is something to lock (${lockedCount})`);
+    const keptLocked = (light) => Array.from(light.kept).filter((vertex) => locked[vertex]).length;
+    assert.strictEqual(keptLocked(sculpt.simplify(round, { most: 300, locked })), lockedCount, 'every locked vertex is still there');
+    assert.ok(keptLocked(blind) < lockedCount * 0.5, 'unlocked, most of them go');
+  });
+
+  test('sculpt: at every level a paint and its canvas stay one skin, and every input a sculpt reads is in its signature', () => {
+    const { catalog } = catalogs[0];
+    const bakery = catalog.bakery({ capacity: 4 });
+    // Seed 13 wears paint on its skin (a beard) and on its clothes (the stripes of a knit, the pattern of leggings).
+    const bake = bakery.bakeRecipe({ species: catalog.speciesIds()[0], seed: 13 });
+    /** The edges of paint rims that neither the canvas nor another paint on it shares: 0 unless a paint reaches the canvas's own rim. */
+    const cracks = (layers) => {
+      const keyOf = (at) => at.map((value) => Math.round(value * WELD)).join(',');
+      let [unshared, sheets, rim] = [0, 0, 0];
+      new Set(layers.filter((layer) => layer.canvas).map((layer) => layer.canvas)).forEach((id) => {
+        const canvas = layers.find((layer) => layer.id === id);
+        const onIt = layers.filter((layer) => layer.canvas === id);
+        if (!canvas) return;
+        sheets += onIt.length;
+        // What is still open once the canvas and all its paints are welded together.
+        const open = new Set(openEdgesOf(welded([canvas, ...onIt])).open.map(keyOf));
+        onIt.forEach((sheet) => {
+          const own = openEdgesOf(welded([sheet])).open;
+          rim += own.length;
+          unshared += own.filter((at) => open.has(keyOf(at))).length;
+        });
+      });
+      return { unshared, sheets, rim };
+    };
+    let painted = 0;
+    Object.keys(sculpt.DETAIL).forEach((level) => {
+      const layout = figure.layout(bake, { level });
+      const dense = cracks(figure.sculptLayers(bake, layout, { cull: false, simplify: false }).layers);
+      const light = cracks(figure.sculptLayers(bake, layout, { cull: false }).layers);
+      painted += light.sheets;
+      assert.strictEqual(light.sheets, dense.sheets, `${level}: no paint is lost`);
+      // Simplifying opened no gap along a paint edge: only where a paint ran to its canvas's own rim is its rim unshared.
+      assert.ok(light.rim > 40 && light.unshared < light.rim * 0.2, `${level}: the control: the paints have rims (${light.rim} edges), nearly all shared with their canvas`);
+      assert.ok(light.unshared <= dense.unshared, `${level}: ${light.unshared} edges of paint rims are open, ${dense.unshared} before simplifying`);
+    });
+    assert.ok(painted >= 8, `the control: this person wears paint on skin and on cloth (${painted} sheets over four levels)`);
+    figure.sculptCache.clear();
+    const layout = figure.layout(bake, { level: 'low' });
+    const base = figure.sculptSignature(bake, layout);
+    const sculptedPiece = layout.pieces.findIndex((piece) => !piece.isProp && !piece.stamps && !piece.regions && piece.inkGroup > 0);
+    assert.ok(sculptedPiece >= 0);
+    const withPiece = (change) => ({ ...layout, pieces: layout.pieces.map((piece, index) => (index === sculptedPiece ? { ...piece, ...change } : piece)) });
+    assert.strictEqual(figure.sculptSignature(bake, withPiece({})), base, 'the control: an equal layout signs the same');
+    const original = layout.pieces[sculptedPiece];
+    [{ key: `${original.key}!` }, { ramp: original.ramp + 1 }, { inkGroup: original.inkGroup + 1 }, { regions: { key: 'other' } }, { carve: true }, { blend: 0.123 }, { shiny: !original.shiny }, { outlined: original.outlined === false }].forEach((change) => {
+      assert.notStrictEqual(figure.sculptSignature(bake, withPiece(change)), base, `a piece's ${Object.keys(change)[0]} is in the signature`);
+    });
+    // What a bone's row says of wearing: each is read by the sculpt, so each signs.
+    const { plan } = bake;
+    const row = plan.spec.bones.findIndex((bone) => bone.wear && layout.pieces.some((piece) => piece.bone === plan.boneIndex(bone.name)));
+    assert.ok(row >= 0, 'the control: something is worn');
+    const withRow = (change) => ({ ...bake, plan: Object.assign(Object.create(Object.getPrototypeOf(plan)), plan, { spec: { ...plan.spec, bones: plan.spec.bones.map((bone, index) => (index === row ? { ...bone, ...change } : bone)) } }) });
+    assert.strictEqual(figure.sculptSignature(withRow({}), layout), base, 'the control: an equal plan signs the same');
+    const worn = plan.spec.bones[row];
+    [{ wear: worn.wear === 'drape' ? 'solid' : 'drape' }, { hangs: worn.hangs ? undefined : ['spine'] }, { rank: (worn.rank || 1) + 1 }, { clings: 0.0777 }, { covers: worn.covers ? undefined : ['head'] }].forEach((change) => {
+      assert.notStrictEqual(figure.sculptSignature(withRow(change), layout), base, `a worn bone's ${Object.keys(change)[0]} is in the signature`);
+    });
+    const taller = { ...bake, rest: { ...bake.rest, uniform: Float32Array.from(bake.rest.uniform, (value) => value * 1.1) } };
+    assert.notStrictEqual(figure.sculptSignature(taller, layout), base, 'the size of the pose');
+    assert.notStrictEqual(figure.sculptSignature(bake, layout, layout.level, { cull: false }), base, 'whether hidden surface is kept');
+    assert.notStrictEqual(figure.sculptSignature(bake, layout, layout.level, { simplify: false }), base, 'and whether it is simplified');
   });
 
   test('sculpt: what a layer hides is not meshed, and nothing that can be seen from 26 directions is missing', () => {

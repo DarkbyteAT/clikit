@@ -71,6 +71,12 @@
     clings: 0.1,
     /** A painted layer lies on a bone's own surface: where a relief mark stands further off it than this (an ear, a nose), the mark shows through. */
     proud: 0.018,
+    /**
+     * A worn solid (hair, a horn, a tail's root) gives up what lies deeper in the body than this many grid cells:
+     * the body's own surface, or what is worn on it, is in front of it from every side. The margin is what a
+     * coarse mesh of that surface may sag by, and then some.
+     */
+    buriedCells: 1.5,
     /** A draped object's vertex is shared between the body solids within this many metres of being its nearest. */
     drapeSpread: 0.16,
     /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
@@ -79,8 +85,10 @@
     kept: 24,
     keptBytes: 12e6,
   });
-  /** Numbers per vertex of a surface's `paint`: the ramp slot, the ink group, and 1 where it glints (a shiny piece). */
+  /** Numbers per vertex of a surface's `paint`: the ramp slot, the ink group, and its `PAINT_FLAGS` added up. */
   const PAINT = 3;
+  /** What the third number of a vertex's paint says: it glints (a shiny piece), it has no outline of its own (a lip on a face). */
+  const PAINT_FLAGS = Object.freeze({ shiny: 1, unoutlined: 2 });
   /** Owners per vertex of a layer. */
   const OWNERS = 4;
   /** The largest vertex index a 16-bit index buffer can hold. */
@@ -391,8 +399,10 @@
    * @property {Uint16Array} owners 4 bone indices per vertex
    * @property {Float32Array} weights 4 shares per vertex
    * @property {boolean} [isShiny] it glints (a rigid piece joined as it is: a blade)
+   * @property {boolean} [isUnoutlined] it has no outline of its own (a rigid piece joined as it is: a lip too thin for the grid)
    * @property {Uint8Array} [locked] per vertex, 1 where it must be kept when the surface is made lighter (all of a rigid piece)
-   * @property {SculptLayer} [on] for paint: the layer it was cut out of, whose vertices on the cut it shares
+   * @property {SculptLayer} [on] for paint while it is made: the layer it was cut out of, whose vertices on the cut it shares
+   * @property {string} [canvas] for paint: the id of that layer
    * @property {Float32Array} [faceShare] on a body surface: per vertex, how much of it the head's bones move (0..1); a look lights a face and a form differently
    */
 
@@ -422,7 +432,8 @@
    * @property {Uint16Array} owners 4 bone indices per vertex
    * @property {Float32Array} weights 4 shares per vertex
    * @property {Float32Array} faceShare per vertex, how much of it the head's bones move where its layer is a body surface, else 0
-   * @property {Uint8Array} paint 3 per vertex: its layer's ramp slot (also its line class), its ink group, and 1 where it is shiny
+   * @property {Uint8Array} paint 3 per vertex: its layer's ramp slot (also its line class), its ink group, and its flags added up
+   *   (1 where it is shiny, 2 where it has no outline of its own: `Kit.look`'s `vertexPaint`)
    * @property {Array<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}>} ranges
    * @property {number} error the furthest a vertex was moved off the planes it stood for when the mesh was simplified, metres (`Kit.sculpt.simplify`'s `distance`)
    */
@@ -593,17 +604,19 @@
   const COVER_RINGS = 1;
 
   /**
-   * What is left of a layer when a layer above covers part of it: the triangles a viewer can still see, plus
-   * a margin of `rings` triangles under the cover's edge. A layer under a garment is never seen, and drawing it
-   * costs its triangles for nothing (and lets it poke through the garment in a deep bend).
+   * What is left of a layer when something covers part of it: the triangles a viewer can still see, plus a
+   * margin of `rings` triangles under the cover's edge. What is covered is never seen, and drawing it costs its
+   * triangles for nothing. This is the rule for a cover that is not on the layer's own grid: a worn solid sunk
+   * in the body (`wornSteps`). A garment over the surface it was raised from is the same rule applied sooner,
+   * before anything is meshed (kit/sculpt.js `surface`, `cover` / `under`).
    * @param {SculptLayer} layer
-   * @param {function(number, number, number): boolean} covers is this point of the layer under the cover?
+   * @param {function(number, number, number): boolean} covers is this point of the layer under the cover? (in the layer's space)
    * @param {function(number): boolean} mayHold can `covers` hold on vertices owned by this bone? (it is not asked elsewhere)
    * @param {number} [rings] triangles kept in from the cover's edge
    * @returns {?Object} the mesh left (see `usedMesh`); the layer itself when nothing is covered; null when all of it is
    * @complexity O(vertices) calls of `covers`, O(rings * triangles) besides
    * @example
-   * const seen = Kit.figure.uncovered(skin, (x, y, z) => y < 1, () => true); // skin under a knee-length robe: gone, but for a band under its hem
+   * const seen = Kit.figure.uncovered(hair, (x, y, z) => head.distance(x, y, z) < -0.016, () => true); // the half of a hair mass sunk in the head: gone, but for a band at the scalp
    */
   const uncovered = (layer, covers, mayHold, rings = COVER_RINGS) => {
     const { positions, indices, owners } = layer;
@@ -802,6 +815,7 @@
           piece.carve ? 'carve' : '',
           piece.blend === undefined ? '' : piece.blend,
           piece.shiny ? 'shiny' : '',
+          piece.outlined === false ? 'unoutlined' : '',
         ].join('~')
       );
     const rest = bake.rest || Kit.body.createPose(bake.plan);
@@ -1038,9 +1052,10 @@
       layers.push(...[skin, ...specs.map(({ garment, isPaint }) => (isPaint ? sheetOfPaint : layerOfGarment).get(garment.key))].filter((layer) => layer && layer.indices.length));
       yield undefined;
     }
-    const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead, lifts });
+    const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead, lifts, cull: options.cull !== false });
     worn.forEach(({ layer, pieces }) => {
-      layers.push(layer);
+      // A worn object wholly sunk in the body has no layer, and is still not drawn as a rigid piece.
+      if (layer) layers.push(layer);
       pieces.forEach((piece) => replaced.add(piece.id));
     });
     // What is left rigid and plainly shaded rides in the same mesh, so a figure is one draw and its face.
@@ -1055,7 +1070,7 @@
     const light = options.simplify === false ? null : yield* Kit.sculpt.simplifySteps(whole, { tolerance, most: level.triangles || 0, skin: whole, locked: whole.locked, paints: whole.paints });
     const surface = surfaceOf(whole, drawn, light);
     // What each layer is, without its dense arrays: the layers are found again in the surface only when someone reads them.
-    const kinds = layers.map(({ id, ramp, inkGroup, inkClass, faceShare }) => ({ id, ramp, inkGroup, inkClass, isBody: Boolean(faceShare) }));
+    const kinds = layers.map(({ id, ramp, inkGroup, inkClass, faceShare, on }) => ({ id, ramp, inkGroup, inkClass, isBody: Boolean(faceShare), canvas: on ? on.id : '' }));
     let views = null;
     return {
       get layers() {
@@ -1118,11 +1133,11 @@
   };
 
   /**
-   * Can a piece the sculpt leaves rigid be drawn in the surface: shaded from one ramp like a layer, with an
-   * outline of its own? Stamps, painted or raised pieces and fixed tones need a material of their own; a carving
-   * piece (a shape pressed into a surface) is never drawn at all.
+   * Can a piece the sculpt leaves rigid be drawn in the surface: shaded from one ramp like a layer, outlined or
+   * not as its vertices say? Stamps, painted or raised pieces and fixed tones need a material of their own; a
+   * carving piece (a shape pressed into a surface) is never drawn at all.
    */
-  const isJoinable = (piece) => !piece.carve && !piece.stamps && !piece.regions && !piece.shell && !piece.emissive && piece.tone === undefined && piece.outlined !== false && piece.inkGroup > 0;
+  const isJoinable = (piece) => !piece.carve && !piece.stamps && !piece.regions && !piece.shell && !piece.emissive && piece.tone === undefined && piece.inkGroup > 0;
 
   /** Numbers along a side of a 4 x 4 matrix, and so between the rows of an affine map kept as three rows of four. */
   const SIDE = 4;
@@ -1155,7 +1170,23 @@
       owners[vertex * OWNERS] = piece.bone;
       weights[vertex * OWNERS] = 1;
     }
-    return { id: `piece:${piece.id}`, ramp: piece.ramp, inkGroup: piece.inkGroup, inkClass: piece.ramp, isShiny: Boolean(piece.shiny), positions: placedPoints(built.positions, matrices, at), normals, indices, owners, weights, locked: new Uint8Array(count).fill(1) };
+    // Lit as it was when drawn on its own: a piece of the head (a lip, an earring) takes a face's light.
+    const faceShare = piece.inkGroup === Kit.figure.INK_GROUPS.head ? new Float32Array(count).fill(1) : undefined;
+    return {
+      id: `piece:${piece.id}`,
+      ramp: piece.ramp,
+      inkGroup: piece.inkGroup,
+      inkClass: piece.ramp,
+      isShiny: Boolean(piece.shiny),
+      isUnoutlined: piece.outlined === false,
+      positions: placedPoints(built.positions, matrices, at),
+      normals,
+      indices,
+      owners,
+      weights,
+      locked: new Uint8Array(count).fill(1),
+      ...(faceShare ? { faceShare } : {}),
+    };
   };
 
   /**
@@ -1270,7 +1301,7 @@
       for (let vertex = vertexStart; vertex < vertexStart + vertexCount; vertex++) {
         paint[vertex * PAINT] = layer.ramp;
         paint[vertex * PAINT + 1] = layer.inkGroup;
-        paint[vertex * PAINT + 2] = layer.isShiny ? 1 : 0;
+        paint[vertex * PAINT + 2] = (layer.isShiny ? PAINT_FLAGS.shiny : 0) + (layer.isUnoutlined ? PAINT_FLAGS.unoutlined : 0);
       }
     });
     return {
@@ -1290,7 +1321,7 @@
    * The layers of a surface as layers again: each a view of its run of the surface's arrays (nothing copied
    * but its triangles, which name its own vertices). A layer nothing is left of is not listed.
    * @param {SculptSurface} surface
-   * @param {Array<{id: string, ramp: number, inkGroup: number, inkClass: number, isBody: boolean}>} kinds what each of the
+   * @param {Array<{id: string, ramp: number, inkGroup: number, inkClass: number, isBody: boolean, canvas: string}>} kinds what each of the
    *   surface's first runs is (the sculpted layers; the rigid pieces joined after them are not layers)
    * @returns {SculptLayer[]}
    */
@@ -1300,7 +1331,7 @@
       .map((range, index) => {
         const { vertexStart, indexStart } = range;
         const vertexEnd = vertexStart + range.vertexCount;
-        const { id, ramp, inkGroup, inkClass, isBody } = kinds[index];
+        const { id, ramp, inkGroup, inkClass, isBody, canvas } = kinds[index];
         const indices = new Uint16Array(range.indexCount);
         for (let corner = 0; corner < range.indexCount; corner++) indices[corner] = surface.indices[indexStart + corner] - vertexStart;
         const view = {
@@ -1314,6 +1345,7 @@
           owners: surface.owners.subarray(vertexStart * OWNERS, vertexEnd * OWNERS),
           weights: surface.weights.subarray(vertexStart * OWNERS, vertexEnd * OWNERS),
         };
+        if (canvas) return { ...view, canvas };
         return isBody ? { ...view, faceShare: surface.faceShare.subarray(vertexStart, vertexEnd) } : view;
       })
       .filter((layer) => layer.indices.length > 0);
@@ -1370,9 +1402,10 @@
    * the garments on it, and the drapes of lower rank), so nothing under it shows through and it is hidden in
    * nothing; meshed on the grid where it is thick and as a thin shell where it is thinner than the grid can
    * hold; shared between the body solids beneath it and its own bone; and then carried into the sculpting pose.
-   * @returns {Generator<undefined, Array<{layer: SculptLayer, pieces: Object[]}>, unknown>} yields between steps; returns the layers
+   * What of a solid lies deep in the body is left out (`uncovered`, `SCULPT.buriedCells`) unless `cull` is false.
+   * @returns {Generator<undefined, Array<{layer: ?SculptLayer, pieces: Object[]}>, unknown>} yields between steps; returns the layers (null for an object nothing of which can be seen)
    */
-  function* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces, limbLead, lifts }) {
+  function* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces, limbLead, lifts, cull }) {
     const { plan } = bake;
     const { wears, hangs, ranks, clings, covers } = wearOf(plan);
     const besideMask = Kit.body.roleMask([...SCULPT.beside]);
@@ -1390,6 +1423,18 @@
     /** The body's solids at rest, made once and only when something is draped. */
     let hosts = null;
     const allHosts = () => (hosts = hosts || bodyPieces.map((piece) => ({ piece, part: solidOf(piece, rest, limbLead) })));
+    /** The body's solids in the sculpting pose as one thing to be inside of, made once and only when a solid is worn. */
+    let posed = null;
+    const bodyPosed = () => (posed = posed || Kit.drape.under(bodyPieces.map((piece) => solidOf(piece, matrices, limbLead))));
+    /** Per bone: does it, or a bone it hangs from, move by a spring of its own (a stiffness hint under a plain bone's)? */
+    let swung = null;
+    const swings = () => {
+      if (swung) return swung;
+      swung = new Uint8Array(plan.boneCount);
+      // Parents come before their children in a plan, so one pass carries a swing down its chain.
+      for (let bone = 1; bone < plan.boneCount; bone++) swung[bone] = plan.stiffness[bone] < Kit.body.PHYSICAL_DEFAULTS.stiffness || swung[plan.parent[bone]] ? 1 : 0;
+      return swung;
+    };
     const hostsFor = (mask) => {
       const chosen = allHosts().filter(({ piece }) => mask === 0 || (plan.roles[piece.bone] & mask) !== 0);
       return (chosen.length ? chosen : allHosts()).map(({ part }) => part);
@@ -1526,7 +1571,14 @@
       // Made at rest: carried into the pose the skeleton is bound in.
       if (draped || isSeated) carry(mesh, skin, rest, matrices);
       const { positions, normals, indices } = mesh;
-      made.push({ layer: { id: `worn:${key}`, ramp: lead.ramp, inkGroup: lead.inkGroup, inkClass: lead.ramp, positions, normals, indices, ...skin }, pieces: keptPieces });
+      const layer = { id: `worn:${key}`, ramp: lead.ramp, inkGroup: lead.inkGroup, inkClass: lead.ramp, positions, normals, indices, ...skin };
+      // A solid sunk in the body (half a hair mass, the root of a horn or a tail) is not drawn where the body hides
+      // it. Cloth is laid outside the body, so it has nothing sunk to give up.
+      const buried = cull && !draped && bodyPieces.length ? -ownCell * SCULPT.buriedCells : 0;
+      // What swings on a bone of its own (a plait, a tail) leaves the place it was made in, and would show the hole.
+      const seen = buried ? uncovered(layer, (x, y, z) => bodyPosed().distance(x, y, z) < buried, (bone) => !swings()[bone]) : layer;
+      if (seen) made.push({ layer: seen === layer ? layer : Object.assign(layer, seen), pieces: keptPieces });
+      else made.push({ layer: null, pieces: keptPieces });
       yield undefined;
     }
     return made;

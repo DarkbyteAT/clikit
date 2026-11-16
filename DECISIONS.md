@@ -1312,3 +1312,61 @@ machine at load 20 to 40, so only the ratios mean anything.
   written to. Skins are open under clothes: code that needs a closed skin asks for `{ cull: false }`.
 - **Revisit if** a phone shows vertex cost dominating (then replace the hull in toon), crowds need mixed
   levels, or sculpt time hurts editing (adaptive meshing, or a Worker once the policy is known).
+
+## Sculpt branches joined: cloth, faces, cost and movement on one surface (sculpt branch, merge)
+
+- **The problem.** Three branches grew from one sculpt layer and each changed what a figure's surface is:
+  cloth cut paint out of its canvas and stopped drawing covered layers, faces added relief marks, proud
+  garment cuts and a worn head of hair, cost made the figure one culled, simplified, vertex-painted mesh.
+  Main meanwhile gave figures acts, loose bones and soft part kinds. Joined textually they compile; joined
+  without thought they do the same work twice (two culls), weld nothing (paint sheets and their canvas are
+  separate layers, so the simplifier opens gaps along every paint edge) and miss each other's inputs.
+- **Hidden surface: one mechanism in a field, the other across fields.** Inside one distance field cost's
+  `cover` / `under` at mesh time is the only cull: a cell that a layer further out covers is never meshed, so
+  cloth's `uncovered` pass over finished garment layers of the same field was the same question asked later
+  and is no longer run there. `uncovered` stays for what `cover` cannot see: a worn solid on its own grid
+  (a head of hair, a hat, a pack) that sits partly inside the body. Its triangles deeper than
+  `SCULPT.buriedCells` (1.5) of its own cells inside the posed body are dropped; drapes are exempt (a thin
+  shell near the skin is the garment, not a buried part). Measured on a parted head of hair at high detail:
+  8,616 triangles, of which cost's cull removed none; 4,789 after. `{ cull: false }` still gives closed layers.
+  Rejected: running both culls on garments (double work, same answer); sampling worn solids into the body's
+  field so one cull serves (a hat would blend into the head, and the field's grid is sized for the body);
+  a depth of 0 (the hull and a posed joint show the rim of the hole).
+- **Paint and the simplifier: welded seams, held like borders.** A paint is cut from its canvas by
+  `paintedOn`, so the sheet and what is left share their cut edge exactly. `joinLayers` welds those seam
+  vertices (the sheet names its canvas, `on`) and gives every triangle a paint label; `Kit.sculpt.simplify`
+  takes the labels (`paints`) and treats an edge between two labels as it treats an open border: a seam
+  vertex moves only along a seam edge, and a vertex where seams fork, end or meet a border does not move.
+  Paint edges, ink groups and skin ownership therefore survive at every level, with no crack between a
+  sheet and its canvas, and the triangle budgets still hold. Different layers that are not paint on one
+  another are never welded, so nothing collapses across a garment or a worn solid. Relief marks are part of
+  the bone's solid, hence of the field, and are kept or lost by the error bound like any other shape.
+  Rejected: locking every seam vertex (a stippled beard is all seam; the low and far budgets cannot be met);
+  simplifying each layer before the paint cut (the cut needs the dense canvas, and two layers simplified
+  apart no longer share an edge); leaving sheets unwelded (cracks at low detail, drawn as ink lines).
+- **`locked` now locks.** Cost's `locked` vertices were skipped when the queue was first filled and queued
+  again after any neighbour collapsed, so a joined rigid piece could lose vertices at a tight budget. Found
+  while reading the queue for the seam rule; fixed in the queue (`isFixed`). No test asked for it; one does
+  now, with a control.
+- **Kept bakes hold the surface only.** With paint and hair in the surface a person at high detail was
+  1.17 MB against a 1.10 MB budget. The bytes were the layers kept beside the surface (index copies), not
+  the surface. `layers` is now derived from the surface on first read. The budget is unchanged.
+  Rejected: raising the budget.
+- **Unoutlined pieces join the surface.** Lips, a nose pad and other plain rigid pieces drawn without an ink
+  line used to stay separate meshes (a draw call each) because the surface had no way to say "no line".
+  The paint's third number is now a sum of flags (`PAINT_FLAGS`: shiny 1, unoutlined 2) and the toon hull
+  leaves an unoutlined vertex where it is. Stamps, region paint, fixed tones and emissive pieces still keep
+  their own material.
+- **The signature.** `sculptSignature` now holds everything any branch reads: per piece its regions, wears,
+  hangs, rank, clings, covers, carve, blend, shiny and unoutlined; per pose the uniform size; per call the
+  `whole` and `dense` options. A test changes each and expects a new bake.
+- **Movement.** A cloak is a drape that rides its own bone (`hangs`, rank 3) and that bone is a soft part
+  (`soft: 'cloak'`), so acts and `Kit.motion.loose` swing it and the sculpted cloth follows; plaits swing by
+  `soft: 'plait'` in place of the stiffness and damping pair the faces branch wrote before soft kinds
+  existed. Hair masses and falls stay rigid on the head, as the faces branch left them.
+- **Proof tool.** One job shape for every flag the branches added (`--acts`, `--sockets`, `--only`,
+  `--framing`, `--rigid`, `--level`); cells are framed by swept bounds (main) through the faces branch's
+  body and head framings.
+- **Costs and revisit.** See METRICS row 43. Revisit the burial depth if a pose opens a visible hole at a
+  hairline; revisit seam holding if a look needs paint edges to move (a seam then needs its own error
+  term rather than the border rule).

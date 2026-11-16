@@ -225,7 +225,8 @@
     /**
      * A fall of long hair: one shaped mass down the back of the head and the upper spine, wide at the nape and
      * drawn in at its end. It is draped (`wear: 'drape'`): sculpted as it hangs, then moved by the head, neck
-     * and spine bones beside it, so it follows a nod and lies on the back.
+     * and spine bones beside it, so it follows a nod and lies on the back. It `covers` the spine alone: it is
+     * laid over the back and whatever is worn there, and is not pushed out of the head and neck it grows from.
      * @param {string} name
      * @param {{top?: number, length: number, width?: number, depth?: number, taper?: number, back?: number}} options
      *   `top`: the rise of the middle of its rounded top on the back of the head (default -0.1); `length`: metres it hangs;
@@ -236,7 +237,7 @@
      */
     const fall = (name, { top = -0.1, length, width = halves[0] * FORM.fallWidth, depth = FORM.fallDepth, taper = 0.6, back = 0.02 }) => {
       const start = at([180, top, -width * depth * 0.5]);
-      return [row(name, { at: start, tail: [0, -length, -back], girth: width * 2, wear: 'drape', hangs: ['head', 'neck', 'spine'], shape: { kind: 'capsule', radius: width, taper, scale: [1, 1, depth] } })];
+      return [row(name, { at: start, tail: [0, -length, -back], girth: width * 2, wear: 'drape', hangs: ['head', 'neck', 'spine'], covers: ['spine'], shape: { kind: 'capsule', radius: width, taper, scale: [1, 1, depth] } })];
     };
 
     return { at, mass, lock, fringe, parting, bun, tail, braid, sideburns, fall };

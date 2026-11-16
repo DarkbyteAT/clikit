@@ -8128,7 +8128,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
   - `[inkClass=0]` *number* - 0..15. Where two classes meet on one surface (a sleeve and the skin below it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
   - `[regions]` *LookRegions* - the mesh is painted from a baked region map instead of one ramp
-  - `[vertexPaint]` *boolean* - the geometry has a three-number `vertexPaint` attribute: per vertex, its ramp slot (a row from `blockRow`, and its line class), its ink group and 1 where it is shiny, instead of the part's one `ramp`, `inkClass`, `inkGroup` and `shiny` (several paints in one mesh, so one draw: a sculpted figure's layers)
+  - `[vertexPaint]` *boolean* - the geometry has a three-number `vertexPaint` attribute: per vertex, its ramp slot (a row from `blockRow`, and its line class), its ink group and its flags added up (1 where it is shiny, 2 where it has no outline), instead of the part's one `ramp`, `inkClass`, `inkGroup`, `shiny` and `outlined` (several paints in one mesh, so one draw: a sculpted figure's layers)
   - `[blockRow]` *number* - with `regions`, `stamps` or `vertexPaint`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
   - `[shell]` *number* - with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
   - `[stamps]` *boolean* - the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js `stamps`): each vertex names its slot and tone, and it is never outlined
@@ -9228,8 +9228,10 @@ Kit.drape.ride(skin, cloak.positions, cloakBone, bodyUnder.distance, { clings: 0
   - `owners` *Uint16Array* - 4 bone indices per vertex
   - `weights` *Float32Array* - 4 shares per vertex
   - `[isShiny]` *boolean* - it glints (a rigid piece joined as it is: a blade)
+  - `[isUnoutlined]` *boolean* - it has no outline of its own (a rigid piece joined as it is: a lip too thin for the grid)
   - `[locked]` *Uint8Array* - per vertex, 1 where it must be kept when the surface is made lighter (all of a rigid piece)
-  - `[on]` *SculptLayer* - for paint: the layer it was cut out of, whose vertices on the cut it shares
+  - `[on]` *SculptLayer* - for paint while it is made: the layer it was cut out of, whose vertices on the cut it shares
+  - `[canvas]` *string* - for paint: the id of that layer
   - `[faceShare]` *Float32Array* - on a body surface: per vertex, how much of it the head's bones move (0..1); a look lights a face and a form differently
 - **Sculpted**
   - `layers` *SculptLayer[]* - shared between equal bakes: never write to their arrays (views of `surface`'s, a layer each, made the first time they are read)
@@ -9247,7 +9249,7 @@ Kit.drape.ride(skin, cloak.positions, cloakBone, bodyUnder.distance, { clings: 0
   - `owners` *Uint16Array* - 4 bone indices per vertex
   - `weights` *Float32Array* - 4 shares per vertex
   - `faceShare` *Float32Array* - per vertex, how much of it the head's bones move where its layer is a body surface, else 0
-  - `paint` *Uint8Array* - 3 per vertex: its layer's ramp slot (also its line class), its ink group, and 1 where it is shiny
+  - `paint` *Uint8Array* - 3 per vertex: its layer's ramp slot (also its line class), its ink group, and its flags added up (1 where it is shiny, 2 where it has no outline of its own: `Kit.look`'s `vertexPaint`)
   - `ranges` *Array\<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}\>*
   - `error` *number* - the furthest a vertex was moved off the planes it stood for when the mesh was simplified, metres (`Kit.sculpt.simplify`'s `distance`)
 - **Garment** - The regions of one worn part with one paint and one raise (its waist, chest and sleeves are separate regions, one per bone): one layer.
