@@ -145,6 +145,9 @@
    * contour "bilinear weight of one side = 1/2", a smooth curve, where a nearest read would give texel steps.
    */
   const GLSL_REGIONS = `
+    #if defined(LOOK_STAMP) && !defined(LOOK_REGIONS)
+      uniform float uBlockRow;     // a stamp on a bone nothing is painted over still looks its ramps up from the block
+    #endif
     #ifdef LOOK_REGIONS
       uniform sampler2D uRegionMap;
       uniform vec2 uRegionSize;    // texels: around, along
