@@ -6,7 +6,8 @@
  *
  * Owns:  `Kit.body.catalog(spec)` and what it returns: `resolve` (recipe -> individual), `describe`, `validate`,
  *        `normalize`, `encode` / `decode`, `hash`, `table` (weighted species -> recipes) and `bakery` (individual
- *        -> assembled plan + proportioned rest pose, cached by hash).
+ *        -> assembled plan + proportioned rest pose, cached by hash); the roll rules (`Kit.body.rolls`: harmony
+ *        schemes, followers, contrast and rooms as pure functions) with `clashes` and `reconcile`.
  * Does not own: the inheritance fold (kit/lineage.js), the seed derivation and content hash (kit/seeded.js),
  *        the byte format's primitives (kit/pack.js), plans, dials and kinematics (kit/body-plan.js), attaching
  *        (kit/body-parts.js), instances (kit/body-store.js) or anything that moves or draws a body. This file
@@ -15,6 +16,11 @@
  * Every field's value is `Kit.seeded` hash(seed, field name), not the next number of a stream, so a field never
  * depends on how many fields were read before it: add a dial to a species next month and every existing seed
  * keeps its old values for every old field.
+ *
+ * Roll rules. A species may also state how its fields go together (`SpeciesDefinition.colorWeights`, `follow`,
+ * `harmony`, `contrast`, `occupies`): then a field's hash is still its own, but what it chooses among is narrowed
+ * by the fields rolled before it, so a seed rolls an outfit, not fourteen unrelated colours. The rules are part
+ * of the catalogue: a seed gives the same individual for as long as the catalogue's tables are unchanged.
  *
  * Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
  */
@@ -40,6 +46,146 @@
   const { UINT32_RANGE, hashText: fieldHash, unit: seedUnit, bits: seedBits } = Kit.seeded;
   /** How a dial's value is spread over its range when the species does not say: mid-range bodies common, extremes rare. */
   const DEFAULT_SHAPE = 'bell';
+
+  // ---- roll rules: tunables and pure helpers ------------------------------------------------------------------------
+
+  const FULL_TURN = 360;
+  /** Where along a ramp its own colour is read: the middle, which is what every look draws as the lit colour (kit/palette.js `TONE_POSITIONS`). */
+  const OWN_COLOR_POSITION = 0.5;
+  /**
+   * Harmony schemes: the hues an outfit may use, as offsets in OKLCH degrees from its key hue. `accents` marks
+   * the scheme of neutrals: that many of its channels take a colour (any hue) and the rest take neutrals.
+   * @type {Readonly<Object<string, {hues: ReadonlyArray<number>, accents?: number}>>}
+   */
+  const SCHEMES = Object.freeze({
+    analogous: Object.freeze({ hues: Object.freeze([0, 32, -32]) }),
+    complementary: Object.freeze({ hues: Object.freeze([0, 180]) }),
+    split: Object.freeze({ hues: Object.freeze([0, 150, 210]) }),
+    triad: Object.freeze({ hues: Object.freeze([0, 120, 240]) }),
+    neutral: Object.freeze({ hues: Object.freeze([0]), accents: 1 }),
+  });
+  /** Defaults of a species' `harmony`: how far (degrees) a colour may sit from a scheme hue, and the chroma below which a colour is a neutral that goes with any scheme. */
+  const HARMONY_DEFAULTS = Object.freeze({ tolerance: 26, neutralChroma: 0.05 });
+  /** A follower picks among this many of the ramps nearest its target unless its rule says otherwise. */
+  const DEFAULT_FOLLOW_AMONG = 1;
+  const HARMONY_SCHEME_FIELD = fieldHash('harmony:scheme');
+  const HARMONY_ACCENT_FIELD = fieldHash('harmony:accent');
+  /** No counts are needed to test a room requirement (`Kit.flags.fits`). */
+  const NO_COUNTS = Object.freeze([]);
+
+  /**
+   * The smaller angle between two hues.
+   * @param {number} first degrees
+   * @param {number} second degrees
+   * @returns {number} 0..180
+   * @example Kit.body.rolls.hueGap(350, 20) // 30
+   */
+  const hueGap = (first, second) => Math.abs(((((first - second) % FULL_TURN) + FULL_TURN * 1.5) % FULL_TURN) - FULL_TURN / 2);
+
+  /**
+   * The hues of a scheme round a key hue.
+   * @param {string} schemeId a key of `SCHEMES`
+   * @param {number} keyHue degrees
+   * @returns {number[]} degrees, 0..360
+   * @example Kit.body.rolls.schemeHues('complementary', 30) // [30, 210]
+   */
+  const schemeHues = (schemeId, keyHue) => SCHEMES[schemeId].hues.map((offset) => (((keyHue + offset) % FULL_TURN) + FULL_TURN) % FULL_TURN);
+
+  /**
+   * @typedef {Object} ColorFact
+   * What the rules know of a ramp: its own colour (its middle shade) in OKLCH, plus the same in OKLab.
+   * @property {number} lightness 0..1
+   * @property {number} chroma 0..about 0.4
+   * @property {number} hue degrees
+   * @property {number} greenRed OKLab a
+   * @property {number} blueYellow OKLab b
+   */
+
+  /**
+   * The colour fact of a ramp.
+   * @param {{shades: string[]}} ramp
+   * @returns {ColorFact}
+   */
+  const colorFactOf = (ramp) => {
+    const color = Kit.palette.toOklch(Kit.palette.sampleRamp(ramp.shades, OWN_COLOR_POSITION));
+    const radians = (color.hue * Math.PI * 2) / FULL_TURN;
+    return { ...color, greenRed: color.chroma * Math.cos(radians), blueYellow: color.chroma * Math.sin(radians) };
+  };
+
+  /**
+   * Does a colour belong to a scheme? A neutral always does; a colour does when its hue is within the
+   * tolerance of one of the scheme's hues.
+   * @param {ColorFact} fact
+   * @param {number[]} hues from `schemeHues`
+   * @param {{tolerance: number, neutralChroma: number}} limits
+   * @returns {boolean}
+   * @complexity O(hues)
+   */
+  const isInScheme = (fact, hues, limits) => fact.chroma < limits.neutralChroma || hues.some((hue) => hueGap(fact.hue, hue) <= limits.tolerance);
+
+  /** Below this chroma a colour's hue is too faint to tell it from another colour by. */
+  const HUE_COUNTS_FROM = 0.04;
+
+  /**
+   * Do two colours stand apart? They do when their lightness (value) differs by the rule's `lightness`, or their
+   * chroma (saturation) by its `chroma`, or, for a rule that states `hue`, when both have a hue to speak of and
+   * the hues are that far apart. A rule states the gaps it accepts; one it leaves out cannot satisfy it.
+   * @param {ColorFact} first
+   * @param {ColorFact} second
+   * @param {{lightness?: number, chroma?: number, hue?: number}} rule OKLCH gaps (hue in degrees)
+   * @returns {boolean}
+   * @example Kit.body.rolls.standsApart(skin, shirt, { lightness: 0.12, chroma: 0.06 })
+   */
+  const standsApart = (first, second, rule) =>
+    (rule.lightness !== undefined && Math.abs(first.lightness - second.lightness) >= rule.lightness) ||
+    (rule.chroma !== undefined && Math.abs(first.chroma - second.chroma) >= rule.chroma) ||
+    (rule.hue !== undefined && first.chroma >= HUE_COUNTS_FROM && second.chroma >= HUE_COUNTS_FROM && hueGap(first.hue, second.hue) >= rule.hue);
+
+  /**
+   * The ramps of a palette nearest to a colour moved by an offset, nearest first: what a following channel
+   * chooses from. Distance is measured in OKLab, so "nearest" is how the eye would rank them.
+   * @param {ColorFact} source the colour followed
+   * @param {{lightness?: number, chroma?: number, hue?: number}} offset added to the source in OKLCH
+   * @param {ColorFact[]} candidates the follower's palette
+   * @param {number} among how many to return
+   * @returns {number[]} indices into `candidates`
+   * @complexity O(candidates log candidates)
+   */
+  const nearestTo = (source, offset, candidates, among) => {
+    const [lightness, chroma] = [source.lightness + (offset.lightness || 0), Math.max(0, source.chroma + (offset.chroma || 0))];
+    const radians = ((source.hue + (offset.hue || 0)) * Math.PI * 2) / FULL_TURN;
+    const [greenRed, blueYellow] = [chroma * Math.cos(radians), chroma * Math.sin(radians)];
+    const distance = (fact) => Math.hypot(fact.lightness - lightness, fact.greenRed - greenRed, fact.blueYellow - blueYellow);
+    return candidates
+      .map((fact, index) => ({ index, distance: distance(fact) }))
+      .sort((first, second) => first.distance - second.distance || first.index - second.index)
+      .slice(0, among)
+      .map((entry) => entry.index);
+  };
+
+  /**
+   * The index a unit number picks from a list of weights (entries of weight 0 are never picked).
+   * @param {ArrayLike<number>} weights
+   * @param {number} count how many leading entries to read
+   * @param {number} unitValue in [0, 1)
+   * @returns {number} an index, or -1 when every weight is 0
+   * @complexity O(count) time, no allocation
+   */
+  const pickIndex = (weights, count, unitValue) => {
+    let total = 0;
+    for (let index = 0; index < count; index++) total += weights[index];
+    if (!(total > 0)) return -1;
+    let left = unitValue * total;
+    let last = -1;
+    for (let index = 0; index < count; index++) {
+      if (!(weights[index] > 0)) continue;
+      last = index;
+      left -= weights[index];
+      if (left < 0) return index;
+    }
+    // Rounding can leave a sliver past the last weight; it belongs to the last entry that can be picked.
+    return last;
+  };
 
   const SOCKET_PATH_SEPARATOR = Kit.body.SOCKET_PATH_SEPARATOR;
   const fail = (where, message) => {
@@ -80,6 +226,42 @@
    * @property {Object<string, string>} [colors] colour channel -> the name of a palette of the catalogue
    *   ({ skin: 'skinTones' }); an individual stores which ramp of that palette it uses
    * @property {Object<string, Object<string, number>>} [fills] socket path -> { part id or 'none': weight }
+   * @property {Object<string, Object<string, number>>} [colorWeights] colour channel -> { ramp id: weight } for the
+   *   ramps that are not rolled at weight 1 ({ hair: { teal: 0.3 } }); 0 keeps a ramp for editors only
+   * @property {Object<string, FollowRule>} [follow] colour channel -> the channel it follows: it takes the ramp of
+   *   its own palette nearest the followed colour (plus an offset), whatever sets that colour, unless overridden
+   * @property {HarmonyRule} [harmony] the channels whose colours are drawn from one scheme per roll
+   * @property {ContrastRule[]} [contrast] pairs of channels whose colours must stand apart
+   * @property {Object<string, string[]>} [occupies] part id -> the rooms it takes up on a body ('crown', 'back').
+   *   Two parts that occupy the same room are never rolled together; an override may still combine them
+   */
+
+  /**
+   * @typedef {Object} FollowRule
+   * @property {string} channel the channel followed (it may not itself follow another)
+   * @property {number} [lightness] OKLCH lightness added to the followed colour before the nearest ramp is sought
+   * @property {number} [chroma] OKLCH chroma added
+   * @property {number} [hue] degrees added
+   * @property {number} [among=1] the follower picks, by its own seeded field, among this many nearest ramps
+   */
+
+  /**
+   * @typedef {Object} HarmonyRule
+   * @property {Object<string, number>} schemes scheme id (a key of `Kit.body.rolls.SCHEMES`) -> weight
+   * @property {string[]} channels the channels drawn from the scheme. The first of them (in the species' channel
+   *   order) to take a colour that is not a neutral sets the key hue
+   * @property {number} [tolerance=26] degrees a colour may sit from a scheme hue
+   * @property {number} [neutralChroma=0.05] OKLCH chroma below which a colour is a neutral
+   */
+
+  /**
+   * @typedef {Object} ContrastRule
+   * @property {string[]} between two channels
+   * @property {number} [lightness] least OKLCH lightness gap that satisfies the rule
+   * @property {number} [chroma] least OKLCH chroma gap that satisfies it instead
+   * @property {number} [hue] least hue gap, degrees, that satisfies it instead, between two colours that are not
+   *   neutrals. State at least one of the three: garments that meet want value or saturation apart (two hues of
+   *   one value vibrate), while skin against cloth may also be told apart by hue
    */
 
   /**
@@ -105,13 +287,18 @@
    * @property {Array<function(number): number>} dialDraws per dial: seed -> a number in [0, 1) (`Kit.seeded.field`)
    * @property {Array<function(number): number>} colorDraws per colour channel: seed -> a number in [0, 1)
    * @property {Map<number, string>} keyByHash field id -> override key, for decoding
+   * @property {Object} rolls the species' colour rules compiled (`compileColorRules`): per-channel colour facts
+   *   and weights, followers, the harmony rule and the contrast rules; `active` is false when it states none
+   * @property {?{flags: Object, all: number, taken: Object<string, {requirement: Object, mask: number}>}} rooms the
+   *   rooms its parts occupy as a `Kit.flags` set, the mask of all of them free and, per part that occupies any,
+   *   the requirement "my rooms are free" with the mask it takes; null when no part occupies a room
    */
 
   /**
    * @typedef {Object} RecipeProblem
    * @property {string} code one of 'unknown-species', 'abstract-species', 'bad-seed', 'bad-overrides',
    *   'unknown-field', 'bad-value', 'out-of-range', 'bad-color', 'unknown-part', 'no-such-socket',
-   *   'part-does-not-fit', 'socket-required'
+   *   'part-does-not-fit', 'socket-required'; and from `clashes`: 'contrast', 'harmony', 'occupied'
    * @property {string} [field] the override key at fault
    * @property {string} message what is wrong and how to fix it
    */
@@ -150,7 +337,7 @@
    * Builds a catalogue: compiles every plan and part, folds every node, and compiles each species, so a mistake
    * anywhere in the tables is reported at load with the node, the field and the fix.
    * @param {CatalogSpec} spec
-   * @returns {Object} the catalogue: `resolve`, `describe`, `validate`, `normalize`, `encode`, `decode`, `hash`,
+   * @returns {Object} the catalogue: `resolve`, `describe`, `validate`, `clashes`, `reconcile`, `normalize`, `encode`, `decode`, `hash`,
    *   `table`, `bakery`, `socketsOf`, `species(id)` (a `SpeciesKind`), `speciesIds()`, `plans`, `parts`, `palettes` and `lineage`; each
    *   is documented on its own function below
    * @throws {Error} for anything `Kit.lineage`, `Kit.body.plan`, `Kit.body.part` or `Kit.body.dials` rejects, an
@@ -226,14 +413,30 @@
 
     // ---- compiling a species ----
 
-    const compileFills = (where, declared) =>
+    /**
+     * The rooms of a species: every room name its `occupies` table uses as one `Kit.flags` set, and per part the
+     * requirement "all my rooms are free" with the mask it then takes.
+     */
+    const compileRooms = (where, occupies) => {
+      const partIds = Object.keys(occupies);
+      if (!partIds.length) return null;
+      partIds.forEach((partId) => {
+        if (!compiledParts[partId]) fail(where, `occupies names the part "${partId}", which is not in \`parts\`.`);
+        if (!Array.isArray(occupies[partId])) fail(where, `occupies.${partId} must be a list of room names, e.g. ['crown'].`);
+      });
+      const flags = Kit.flags([...new Set(partIds.flatMap((partId) => occupies[partId]))], 'room');
+      const taken = Object.fromEntries(partIds.filter((partId) => occupies[partId].length).map((partId) => [partId, Object.freeze({ requirement: flags.requirement({ needs: occupies[partId] }), mask: flags.mask(occupies[partId]) })]));
+      return Object.freeze({ flags, all: flags.mask([...flags.names]), taken });
+    };
+
+    const compileFills = (where, declared, rooms) =>
       Object.keys(declared)
         .sort(Kit.body.compareSocketPaths)
         .map((path) => {
           if (!isPlainObject(declared[path])) fail(where, `fills.${path} must be an object of part id (or '${NO_PART}') -> weight.`);
           const options = Object.keys(declared[path])
             .filter((partId) => declared[path][partId] > 0)
-            .map((partId) => ({ part: partId === NO_PART ? null : partId, weight: declared[path][partId] }));
+            .map((partId) => ({ part: partId === NO_PART ? null : partId, weight: declared[path][partId], room: (rooms && rooms.taken[partId]) || null }));
           options.forEach((option) => {
             if (option.part && !compiledParts[option.part])
               fail(where, `fills.${path} offers the part "${option.part}", which is not in \`parts\`. Parts: ${Object.keys(compiledParts).join(', ') || '(none)'}.`);
@@ -260,6 +463,94 @@
           if (misfit) fail(where, `fills.${path} offers "${option.part}", which fits ${compiledParts[option.part].fits.join(', ')} sockets, but "${path}" is a ${misfit} socket.`);
         });
       });
+
+    /** Names a channel of a species in a rule, or fails naming the rule and the channels there are. */
+    const channelIndex = (where, kind, channel, rule) => {
+      const index = kind.colorIds.indexOf(channel);
+      if (index < 0) fail(where, `${rule} names the colour channel "${channel}", which this species does not have. Channels: ${kind.colorIds.join(', ') || '(none)'}.`);
+      return index;
+    };
+
+    /**
+     * Compiles a species' colour rules against its palettes, so a roll reads tables and a mistake in a rule is
+     * reported at load: per channel the colour fact and weight of every ramp, for each follower the ramps it may
+     * take per colour of what it follows, the harmony rule with its member channels, and the contrast rules
+     * listed under both of their channels.
+     * @complexity O(channels x ramps log ramps) once per species
+     */
+    const compileColorRules = (where, definition, kind) => {
+      const { colorWeights = {}, follow = {}, harmony, contrast = [] } = definition;
+      const facts = kind.palettes.map((ramps) => ramps.map(colorFactOf));
+      Object.keys(colorWeights).forEach((channel) => {
+        const ramps = kind.palettes[channelIndex(where, kind, channel, 'colorWeights')];
+        Object.keys(colorWeights[channel]).forEach((rampId) => {
+          if (!ramps.some((ramp) => ramp.id === rampId)) fail(where, `colorWeights.${channel} names the ramp "${rampId}", which the palette "${definition.colors[channel]}" does not have.`);
+          if (!(colorWeights[channel][rampId] >= 0)) fail(where, `colorWeights.${channel}.${rampId} must be a weight of 0 or more.`);
+        });
+      });
+      const weights = kind.palettes.map((ramps, channel) => Float64Array.from(ramps, (ramp) => ((colorWeights[kind.colorIds[channel]] || {})[ramp.id] === undefined ? 1 : colorWeights[kind.colorIds[channel]][ramp.id])));
+      weights.forEach((list, channel) => {
+        if (!list.some((weight) => weight > 0)) fail(where, `colorWeights.${kind.colorIds[channel]} weights every ramp 0, so nothing could be rolled.`);
+      });
+      /** @type {Array<?{source: number, choices: number[][]}>} */
+      const followers = kind.colorIds.map(() => null);
+      Object.keys(follow).forEach((channel) => {
+        const rule = follow[channel];
+        const index = channelIndex(where, kind, channel, 'follow');
+        const source = channelIndex(where, kind, rule.channel, `follow.${channel}`);
+        if (source === index || follow[rule.channel]) fail(where, `follow.${channel} follows "${rule.channel}", which ${source === index ? 'is itself' : 'follows another channel'}; follow a channel that is rolled.`);
+        const among = Math.min(facts[index].length, rule.among || DEFAULT_FOLLOW_AMONG);
+        followers[index] = { source, choices: facts[source].map((fact) => nearestTo(fact, rule, facts[index], among)) };
+      });
+      const refuseFollower = (channel, rule) => {
+        if (followers[kind.colorIds.indexOf(channel)]) fail(where, `${rule} names "${channel}", which follows another channel; state the rule on the channel it follows.`);
+      };
+      let compiledHarmony = null;
+      if (harmony) {
+        const schemeRows = Object.keys(harmony.schemes || {})
+          .filter((schemeId) => harmony.schemes[schemeId] > 0)
+          .map((schemeId) => {
+            if (!SCHEMES[schemeId]) fail(where, `harmony.schemes names "${schemeId}". Schemes: ${Object.keys(SCHEMES).join(', ')}.`);
+            return { id: schemeId, weight: harmony.schemes[schemeId], offsets: SCHEMES[schemeId].hues, accents: SCHEMES[schemeId].accents || 0 };
+          });
+        if (!schemeRows.length || !Array.isArray(harmony.channels) || !harmony.channels.length)
+          fail(where, "harmony needs `schemes` (scheme id -> weight) and `channels` (the channels drawn from the scheme), e.g. { schemes: { analogous: 2, neutral: 1 }, channels: ['top', 'bottom'] }.");
+        const members = harmony.channels.map((channel) => channelIndex(where, kind, channel, 'harmony.channels')).sort((first, second) => first - second);
+        harmony.channels.forEach((channel) => refuseFollower(channel, 'harmony.channels'));
+        compiledHarmony = {
+          schemeRows,
+          members,
+          isMember: kind.colorIds.map((_channel, index) => members.includes(index)),
+          tolerance: harmony.tolerance === undefined ? HARMONY_DEFAULTS.tolerance : harmony.tolerance,
+          neutralChroma: harmony.neutralChroma === undefined ? HARMONY_DEFAULTS.neutralChroma : harmony.neutralChroma,
+        };
+      }
+      /** @type {Array<Array<{other: number, lightness: (number|undefined), chroma: (number|undefined), hue: (number|undefined)}>>} */
+      const contrastWith = kind.colorIds.map(() => []);
+      const contrastRules = contrast.map((rule, row) => {
+        if (!rule || !Array.isArray(rule.between) || rule.between.length !== 2 || (rule.lightness === undefined && rule.chroma === undefined && rule.hue === undefined))
+          fail(where, `contrast[${row}] must be { between: [channel, channel], lightness and/or chroma and/or hue }, e.g. { between: ['top', 'bottom'], lightness: 0.12 }.`);
+        rule.between.forEach((channel) => refuseFollower(channel, `contrast[${row}]`));
+        const [first, second] = rule.between.map((channel) => channelIndex(where, kind, channel, `contrast[${row}]`));
+        const gaps = { lightness: rule.lightness, chroma: rule.chroma, hue: rule.hue };
+        contrastWith[first].push({ other: second, ...gaps });
+        contrastWith[second].push({ other: first, ...gaps });
+        return { first, second, ...gaps };
+      });
+      const hasFollow = followers.some(Boolean);
+      return Object.freeze({
+        active: hasFollow || Boolean(compiledHarmony) || contrastRules.length > 0 || Object.keys(colorWeights).length > 0,
+        facts,
+        weights,
+        followers,
+        hasFollow,
+        harmony: compiledHarmony,
+        contrastWith,
+        contrastRules,
+        /** Scratch for one roll: which channels hold their final colour. A roll is synchronous, so one per species is enough. */
+        decided: new Uint8Array(kind.colorIds.length),
+      });
+    };
 
     const compileKind = (id) => {
       const where = `catalog: species "${id}"`;
@@ -306,13 +597,17 @@
         colorDraws: colorIds.map((channel) => Kit.seeded.field(`${KINDS.color}${KEY_SEPARATOR}${channel}`)),
         fillFields: [],
         fillPaths: [],
+        /** @type {Object} the colour rules compiled; set below, once the palettes are known */
+        rolls: null,
+        rooms: compileRooms(where, definition.occupies || {}),
         /** @type {string[]} the bare plan's required sockets */
         requiredTop: [],
         /** @type {Map<number, string>} field hash -> key, for decoding: dials, colours, declared fills and every bare socket */
         keyByHash: new Map(),
       };
       kind.dialDefaultSteps = kind.dialDefaults.map((preset, dial) => dialStepOf(kind, dial, preset));
-      kind.fillFields = compileFills(where, definition.fills || {});
+      kind.rolls = compileColorRules(where, definition, kind);
+      kind.fillFields = compileFills(where, definition.fills || {}, kind.rooms);
       kind.fillPaths = kind.fillFields.map((field) => field.path);
       checkFills(where, kind);
       // A socket the plan marks required must be given something by every roll.
@@ -478,18 +773,131 @@
       return normalised;
     };
 
+    // ---- rolling by the rules ----
+
+    /** Scratch weights of one pick (a palette has at most `MOST_PALETTE_COLORS` ramps; a socket has far fewer options). */
+    const scratchWeights = new Float64Array(MOST_PALETTE_COLORS);
+
+    /** Is a colour within the scheme of this roll? (`isInScheme` without the list of hues: a roll allocates nothing.) */
+    const fitsScheme = (fact, harmony, scheme, keyHue) => {
+      if (fact.chroma < harmony.neutralChroma) return true;
+      for (let index = 0; index < scheme.offsets.length; index++) if (hueGap(fact.hue, keyHue + scheme.offsets[index]) <= harmony.tolerance) return true;
+      return false;
+    };
+
+    /**
+     * Rolls a species' colours by its rules, in channel order, into `colors`. Each channel still draws from its
+     * own seeded field; the rules only narrow what the draw chooses among:
+     *  - a harmony member takes a colour of the roll's scheme (a neutral, or a hue of the scheme round the key
+     *    hue, which the first member to take a colour sets); in the scheme of neutrals the roll's accent channels
+     *    take a colour and the other members a neutral;
+     *  - a channel under a contrast rule takes a colour that stands apart from the other channel of the rule,
+     *    once that one is decided;
+     *  - a follower takes a ramp near the colour it follows, last, when everything it could follow is decided.
+     * When no ramp passes both harmony and contrast the channel gives up harmony first (contrast is the
+     * guarantee), then contrast, and only then takes any ramp.
+     * @param {SpeciesKind} kind
+     * @param {number} seed
+     * @param {Uint8Array} colors written in place
+     * @param {?Uint8Array} fixed 1 for a channel whose value in `colors` is to be kept and treated as decided from
+     *   the start (a locked field); null rolls them all
+     * @complexity O(channels x ramps x rules of the channel) time, no allocation
+     */
+    const rollColors = (kind, seed, colors, fixed) => {
+      const { facts, weights, followers, harmony, contrastWith, decided } = kind.rolls;
+      const channels = kind.colorIds.length;
+      const scheme = harmony ? Kit.seeded.pick(harmony.schemeRows, seedUnit(seed, HARMONY_SCHEME_FIELD)) : null;
+      // The scheme of neutrals names its accent channel by a field of its own, so it does not move with any colour.
+      const accent = scheme && scheme.accents ? harmony.members[Math.floor(seedUnit(seed, HARMONY_ACCENT_FIELD) * harmony.members.length)] : -1;
+      let keyHue = 0;
+      let hasKey = false;
+      const takeKey = (channel) => {
+        if (!harmony || hasKey || scheme.accents || !harmony.isMember[channel]) return;
+        const fact = facts[channel][colors[channel]];
+        if (fact.chroma < harmony.neutralChroma) return;
+        keyHue = fact.hue;
+        hasKey = true;
+      };
+      for (let channel = 0; channel < channels; channel++) {
+        decided[channel] = fixed && fixed[channel] ? 1 : 0;
+        // A locked member sets the key before anything is rolled, so the rolled members go with it.
+        if (decided[channel]) takeKey(channel);
+      }
+      const admits = (channel, fact) => {
+        if (!harmony || !harmony.isMember[channel]) return true;
+        if (scheme.accents) return channel === accent ? fact.chroma >= harmony.neutralChroma : fact.chroma < harmony.neutralChroma;
+        return !hasKey || fitsScheme(fact, harmony, scheme, keyHue);
+      };
+      const contrasts = (channel, fact) => {
+        const rules = contrastWith[channel];
+        for (let index = 0; index < rules.length; index++) {
+          const { other } = rules[index];
+          if (decided[other] && !standsApart(fact, facts[other][colors[other]], rules[index])) return false;
+        }
+        return true;
+      };
+      const weigh = (channel, useHarmony, useContrast) => {
+        const count = facts[channel].length;
+        for (let index = 0; index < count; index++) {
+          const fact = facts[channel][index];
+          scratchWeights[index] = (!useHarmony || admits(channel, fact)) && (!useContrast || contrasts(channel, fact)) ? weights[channel][index] : 0;
+        }
+        return pickIndex(scratchWeights, count, kind.colorDraws[channel](seed));
+      };
+      for (let channel = 0; channel < channels; channel++) {
+        if (followers[channel] || decided[channel]) continue;
+        let chosen = weigh(channel, true, true);
+        if (chosen < 0) chosen = weigh(channel, false, true);
+        if (chosen < 0) chosen = weigh(channel, true, false);
+        if (chosen < 0) chosen = weigh(channel, false, false);
+        colors[channel] = chosen;
+        decided[channel] = 1;
+        takeKey(channel);
+      }
+      followColors(kind, seed, colors, fixed);
+    };
+
+    /** Sets every follower that is not `fixed` to a ramp near the colour it follows now. */
+    const followColors = (kind, seed, colors, fixed) => {
+      const { followers } = kind.rolls;
+      for (let channel = 0; channel < followers.length; channel++) {
+        if (!followers[channel] || (fixed && fixed[channel])) continue;
+        const choices = followers[channel].choices[colors[followers[channel].source]];
+        colors[channel] = choices[Math.floor(kind.colorDraws[channel](seed) * choices.length)];
+      }
+    };
+
+    /**
+     * The option a socket rolls, given the rooms still free: options whose part needs a room that is taken are
+     * left out of the draw. Null when nothing that fits is offered (the socket stays empty; a required one is
+     * filled afterwards by `fillRequiredSockets`).
+     */
+    const pickFill = (kind, options, unitValue, free) => {
+      for (let index = 0; index < options.length; index++) {
+        const { room } = options[index];
+        scratchWeights[index] = !room || kind.rooms.flags.fits(free, NO_COUNTS, room.requirement) ? options[index].weight : 0;
+      }
+      const chosen = pickIndex(scratchWeights, options.length, unitValue);
+      return chosen < 0 ? null : options[chosen];
+    };
+
     /** Every field of a species derived from a seed alone. */
     const derive = (kind, seed) => {
       const individual = { species: kind.id, seed, dials: new Float32Array(kind.dialIds.length), colors: new Uint8Array(kind.colorIds.length), fills: {} };
       // Hot path for generated crowds: index loops, one hash per field, no intermediate arrays.
       for (let dial = 0; dial < kind.dialIds.length; dial++) individual.dials[dial] = dialValueOfStep(kind, dial, Math.round(kind.dialDraws[dial](seed) * DIAL_STEPS));
-      for (let channel = 0; channel < kind.colorIds.length; channel++) individual.colors[channel] = Math.floor(kind.colorDraws[channel](seed) * kind.palettes[channel].length);
+      if (kind.rolls.active) rollColors(kind, seed, individual.colors, null);
+      else for (let channel = 0; channel < kind.colorIds.length; channel++) individual.colors[channel] = Math.floor(kind.colorDraws[channel](seed) * kind.palettes[channel].length);
+      let free = kind.rooms ? kind.rooms.all : 0;
       for (let field = 0; field < kind.fillFields.length; field++) {
         const { path, hash, options } = kind.fillFields[field];
         // A nested socket is only rolled when the part that carries it was rolled into its parent socket.
         if (path.includes(SOCKET_PATH_SEPARATOR) && !socketTypeAt(kind, individual.fills, path)) continue;
-        const option = Kit.seeded.pick(options, seedUnit(seed, hash));
-        if (option && option.part) individual.fills[path] = option.part;
+        // Sockets are rolled in path order, so of two parts that want one room the earlier socket's is kept.
+        const option = kind.rooms ? pickFill(kind, options, seedUnit(seed, hash), free) : Kit.seeded.pick(options, seedUnit(seed, hash));
+        if (!option || !option.part) continue;
+        individual.fills[path] = option.part;
+        if (option.room) free = (free & ~option.room.mask) >>> 0;
       }
       return individual;
     };
@@ -521,6 +929,17 @@
       if (added) individual.fills = canonicalFills(kind, individual.fills);
     };
 
+    const COLOR_PREFIX = `${KINDS.color}${KEY_SEPARATOR}`;
+    /** One flag per colour channel: is it among these field keys? */
+    const colorMask = (kind, keys) => {
+      const mask = new Uint8Array(kind.colorIds.length);
+      keys.forEach((key) => {
+        const channel = key.startsWith(COLOR_PREFIX) ? kind.colorIds.indexOf(key.slice(COLOR_PREFIX.length)) : -1;
+        if (channel >= 0) mask[channel] = 1;
+      });
+      return mask;
+    };
+
     /** Shared by resolve, validate and normalize: checks the envelope, derives, applies overrides. */
     const build = (recipe, report) => {
       const blocked = (problem) => {
@@ -546,6 +965,8 @@
       const kind = kinds.get(recipe.species);
       const individual = derive(kind, recipe.seed);
       const overrides = recipe.overrides && Object.keys(recipe.overrides).length ? applyOverrides(kind, recipe.overrides, individual, report) : {};
+      // A follower follows whatever its channel holds in the end, an override included, unless it is overridden itself.
+      if (kind.rolls.hasFollow && Object.keys(overrides).some((key) => key.startsWith(COLOR_PREFIX))) followColors(kind, recipe.seed, individual.colors, colorMask(kind, Object.keys(overrides)));
       fillRequiredSockets(kind, individual);
       return { kind, individual, overrides };
     };
@@ -580,6 +1001,75 @@
         problems.push(problem);
       });
       return problems;
+    };
+
+    /**
+     * Is a set of colours one outfit? It is when some scheme, keyed on the hue of one of the colours, holds
+     * them all, or when at most the scheme of neutrals' accents of them are not neutral.
+     */
+    const isHarmonious = (harmony, memberFacts) => {
+      const coloured = memberFacts.filter((fact) => fact.chroma >= harmony.neutralChroma);
+      return harmony.schemeRows.some((scheme) => (scheme.accents ? coloured.length <= scheme.accents : coloured.some((key) => coloured.every((fact) => isInScheme(fact, schemeHues(scheme.id, key.hue), harmony)))));
+    };
+
+    /**
+     * Lists where an individual breaks its species' roll rules: two channels of a contrast rule that do not
+     * stand apart, harmony channels that fit no scheme, two parts in one room. A seed alone never produces a
+     * 'contrast' or 'occupied' clash unless its palettes or fills leave no other choice, and gives up harmony
+     * only to keep contrast; overrides may clash freely, and this is how an editor can say so.
+     * @param {Individual} individual
+     * @returns {RecipeProblem[]} codes 'contrast', 'harmony' and 'occupied'; empty when everything goes together
+     * @complexity O(contrast rules + filled sockets x rooms + schemes x harmony channels squared)
+     * @example catalog.clashes(catalog.resolve({ species: 'person', seed: 7 })) // []
+     */
+    const clashes = (individual) => {
+      const kind = species(individual.species);
+      const { facts, contrastRules, harmony } = kind.rolls;
+      const factOf = (channel) => facts[channel][individual.colors[channel]];
+      const found = contrastRules
+        .filter((rule) => !standsApart(factOf(rule.first), factOf(rule.second), rule))
+        .map((rule) => {
+          const [first, second] = [kind.colorIds[rule.first], kind.colorIds[rule.second]];
+          return { code: 'contrast', field: `${COLOR_PREFIX}${second}`, message: `"${first}" and "${second}" are too alike to stand apart.` };
+        });
+      if (harmony && !isHarmonious(harmony, harmony.members.map(factOf)))
+        found.push({ code: 'harmony', field: `${COLOR_PREFIX}${kind.colorIds[harmony.members[0]]}`, message: `the colours of ${harmony.members.map((channel) => kind.colorIds[channel]).join(', ')} fit none of the species' schemes.` });
+      if (!kind.rooms) return found;
+      /** @type {Map<string, string>} room -> the socket path whose part holds it */
+      const holders = new Map();
+      Object.keys(individual.fills).forEach((path) => {
+        const room = kind.rooms.taken[individual.fills[path]];
+        (room ? kind.rooms.flags.namesOf(room.mask) : []).forEach((name) => {
+          if (holders.has(name))
+            found.push({ code: 'occupied', field: `${KINDS.fill}${KEY_SEPARATOR}${path}`, message: `"${individual.fills[path]}" and "${individual.fills[holders.get(name)]}" both take up the ${name}.` });
+          else holders.set(name, path);
+        });
+      });
+      return found;
+    };
+
+    /**
+     * Makes the rolled colours of a recipe go with the ones that are kept: the colour channels named in `kept`
+     * (default: every overridden one) are held as they are, and every other channel is rolled again by the rules
+     * with those already decided, so a locked skin or shirt is harmonised and contrasted against like a rolled one.
+     * @param {Recipe} recipe
+     * @param {string[]} [kept] field keys; only the 'color:' ones matter
+     * @returns {Object<string, number>} overrides ('color:<channel>' -> ramp index) for the channels that must
+     *   change; empty when the roll already goes with what is kept, or the species has no colour rules
+     * @throws {Error} as `resolve`
+     * @complexity O(fields + channels x ramps x rules)
+     * @example recipe.overrides = { ...recipe.overrides, ...catalog.reconcile(recipe) };
+     */
+    const reconcile = (recipe, kept = Object.keys(recipe.overrides || {})) => {
+      const { kind, individual, overrides } = build(recipe, throwingReporter('reconcile'));
+      if (!kind.rolls.active) return {};
+      const fixed = colorMask(kind, [...kept, ...Object.keys(overrides)]);
+      const colors = Uint8Array.from(individual.colors);
+      rollColors(kind, recipe.seed, colors, fixed);
+      // A follower needs no override: it follows by itself whatever its channel ends up holding.
+      return Object.fromEntries(
+        kind.colorIds.flatMap((channel, index) => (colors[index] !== individual.colors[index] && !kind.rolls.followers[index] ? [[`${COLOR_PREFIX}${channel}`, colors[index]]] : []))
+      );
     };
 
     /**
@@ -861,6 +1351,8 @@
       describe,
       socketsOf,
       validate,
+      clashes,
+      reconcile,
       normalize,
       encode,
       decode,
@@ -870,5 +1362,8 @@
     };
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { catalog, DIAL_STEPS, RECIPE_FORMAT_VERSION: FORMAT_VERSION });
+  /** The pure pieces of the roll rules, for tools and tests. */
+  const rolls = Object.freeze({ SCHEMES, HARMONY_DEFAULTS, hueGap, schemeHues, colorFactOf, isInScheme, standsApart, nearestTo, pickIndex });
+
+  Kit.body = Object.assign(Kit.body || {}, { catalog, rolls, DIAL_STEPS, RECIPE_FORMAT_VERSION: FORMAT_VERSION });
 })();
