@@ -2773,9 +2773,31 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-settings
     const worn = atlas.load(bake.ramps);
     const blade = bake.boneRamp[bake.plan.boneIndex('handRight/blade')];
     assert.strictEqual(worn.rows[blade], worn.offset + blade, 'a ramp index is a row offset inside the block');
-    // The five shades the body system authored are the five tone columns, byte for byte.
-    assert.deepStrictEqual(Array.from({ length: 5 }, (_unused, column) => palette.hexOf(atlas.colorAt(worn.rows[blade], column))), Array.from(bake.ramps[blade].shades));
-    assert.strictEqual(palette.hexOf(palette.tones(Kit.palette.ramp('moss', 0.3), 5).tones[2]), Kit.palette.ramp('moss', 0.3).shades[2], 'tones() reads a Ramp as authored tones');
+    // A ramp of shades is graded: its tones are read at TONE_POSITIONS, the deep column is its darkest shade, and
+    // the second-lightest tone is its middle shade, byte for byte, at every tone count (a character keeps its colours).
+    const { shades } = bake.ramps[blade];
+    assert.deepStrictEqual(
+      Array.from({ length: 5 }, (_unused, column) => palette.hexOf(atlas.colorAt(worn.rows[blade], column))),
+      Array.from(palette.TONE_POSITIONS[5], (position) => palette.hexOf(palette.sampleRamp(shades, position)))
+    );
+    assert.strictEqual(palette.hexOf(atlas.colorAt(worn.rows[blade], palette.DEEP_COLUMN)), shades[0], 'the deep column holds the darkest shade');
+    for (let toneCount = palette.MIN_TONES; toneCount <= palette.MAX_TONES; toneCount++) {
+      const built = palette.tones(Kit.palette.ramp('moss', 0.3), toneCount);
+      // Two tones have no highlight: there the lit tone is the ramp's own colour.
+      assert.strictEqual(palette.hexOf(built.tones[Math.max(1, toneCount - 2)]), Kit.palette.ramp('moss', 0.3).shades[2], `the ramp's own colour among ${toneCount} tones is its middle shade`);
+      assert.strictEqual(palette.hexOf(built.deep), Kit.palette.ramp('moss', 0.3).shades[0], 'the deep colour does not depend on the tone count');
+      for (let tone = 1; tone < toneCount; tone++) assert.ok(palette.toOklch(built.tones[tone]).lightness > palette.toOklch(built.tones[tone - 1]).lightness, 'tones rise in lightness');
+    }
+    // With one shadow tone the shadow is gentle: nearer the middle shade than the ramp's darkest.
+    const three = palette.tones(Kit.palette.ramp('moss', 0.3), 3);
+    const lightnessOf = (rgb) => palette.toOklch(rgb).lightness;
+    assert.ok(lightnessOf(three.tones[1]) - lightnessOf(three.tones[0]) < lightnessOf(three.tones[0]) - lightnessOf(three.deep), 'a three-tone shadow is a gentle step');
+    assert.strictEqual(palette.hexOf(palette.sampleRamp(['#000000', '#646464', '#c8c8c8'], 0.25)), '#323232', 'sampleRamp blends neighbouring shades');
+    // Fixed paints: the nearest tone, or the deep column well below the darkest one.
+    assert.strictEqual([0, 0.25, 0.5, 0.75, 1].map((position) => palette.columnAt(position, 3)).join(), [palette.DEEP_COLUMN, 0, 1, 2, 2].join());
+    assert.strictEqual([0, 0.25, 0.5, 1].map((position) => palette.columnAt(position, 5)).join(), '0,1,3,4', 'five tones reach the darkest shade, so nothing needs the deep column');
+    // Authored tones are still used as given, and their deep colour is their first.
+    assert.strictEqual(palette.hexOf(palette.tones({ tones: ['#101010', '#808080', '#f0f0f0'] }, 3).deep), '#101010');
     assert.strictEqual(Kit.palette.shade(Kit.palette.ramp('moss', 0.3), 0), Kit.palette.ramp('moss', 0.3).shades[0], 'the existing shade() still works');
   });
 }
@@ -2785,6 +2807,8 @@ require('./test-gait.js')({ Kit, sandbox, test, assert });
 require('./test-proof.js')({ Kit, sandbox, test, assert });
 // ---- Kit.sculpt and Kit.figure.sculptLayers: a body as blended, skinned layers ----
 require('./test-sculpt.js')({ Kit, sandbox, test, assert });
+// ---- how characters are lit and rolled: the light model and the roll rules (harmony, followers, contrast, rooms, locks) ----
+require('./test-looks.js')({ Kit, sandbox, test, assert });
 // ---- the character creator's pure pieces (rows, session, slots, camera) over the wardrobe catalogue ----
 require('./test-creator.js')({ Kit, sandbox, test, assert });
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });
