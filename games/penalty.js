@@ -122,10 +122,12 @@
     /** The match in play: its ladder entry, the shootout, the four actors and the running tallies. */
     let match = null;
     /** The kick in play: the rules' kick once struck, and what led up to it. */
-    let play = { role: 'taker', kick: null, clock: 0, pressure: 0, wind: 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: null };
+    let play = { role: 'taker', kick: null, clock: 0, pressure: 0, wind: 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: null, touch: null, arrival: null, setDive: null };
     const keyAim = { isActive: false, angle: 0, pull: KEYS.startPull };
     let liveAim = { pull: 0, angle: 0, isArmed: false };
     let ratchetStep = 0;
+    /** A playtest's set piece (`tools.face`): the shot their taker will strike exactly, in place of their own mind; null in play. */
+    let rehearsal = null;
     /** The camera's promises, counted per frame while a playtest watches them: frames checked, and frames each promise was broken. */
     let heartbeatIn = 0;
 
@@ -176,13 +178,15 @@
     /** Builds the four characters of a match, standing where they wait. */
     const castMatch = () => {
       stage.clearFigures();
-      const actorOf = (recipe) => PERFORM.actor(stage.addFigure(recipe));
-      match.cast = {
-        you: { taker: actorOf(DATA.playerRecipe(stage.catalog, saved, progress.kit(), 'taker')), keeper: actorOf(DATA.playerRecipe(stage.catalog, saved, progress.kit(), 'keeper')) },
-        them: { taker: actorOf(DATA.rivalRecipe(stage.catalog, match.rival, 'taker')), keeper: actorOf(DATA.rivalRecipe(stage.catalog, match.rival, 'keeper')) },
-      };
+      const actorOf = (recipe, standing) => PERFORM.actor(stage.addFigure(recipe, standing));
+      // In the order the player first sees them: their own taker and the keeper facing it, then the pair of the other end.
+      const yourTaker = actorOf(DATA.playerRecipe(stage.catalog, saved, progress.kit(), 'taker'), { seat: 'aim', z: stage.takerWait().z });
+      const theirKeeper = actorOf(DATA.rivalRecipe(stage.catalog, match.rival, 'keeper'), { seat: 'aim', z: MARKS.keeper.z });
+      const yourKeeper = actorOf(DATA.playerRecipe(stage.catalog, saved, progress.kit(), 'keeper'), { seat: 'keeper', z: MARKS.keeper.z });
+      const theirTaker = actorOf(DATA.rivalRecipe(stage.catalog, match.rival, 'taker'), { seat: 'keeper', z: MARKS.rivalTaker.wait.z });
+      match.cast = { you: { taker: yourTaker, keeper: yourKeeper }, them: { taker: theirTaker, keeper: theirKeeper } };
       // The order the stage was given them in: the order of `stage.framing().figures`.
-      match.order = [match.cast.you.taker, match.cast.you.keeper, match.cast.them.taker, match.cast.them.keeper];
+      match.order = [yourTaker, theirKeeper, yourKeeper, theirTaker];
     };
     /** The two actors of the kick in play: `[taker, keeper]`. */
     const onPitch = () => (play.role === 'taker' ? [match.cast.you.taker, match.cast.them.keeper] : [match.cast.them.taker, match.cast.you.keeper]);
@@ -203,6 +207,15 @@
     const roar = (volume) => sfx.noise({ dur: 1.1, vol: 0.28 * volume, freq: 900, q: 0.6, type: 'bandpass' });
     const groan = () => sfx.tone({ freq: 220, to: 130, dur: 0.6, type: 'sawtooth', vol: 0.08 });
 
+    /**
+     * Notes how the picture agreed with the rules when the keeper met the ball: which save was being played and
+     * how far the nearer hand was from the ball across the keeper's plane (a playtest reads it from `debugState`).
+     */
+    const noteTouch = (type, point) => {
+      const keeper = onPitch()[1];
+      play.touch = { type, form: keeper.handsOff().form, gap: keeper.handsFrom(point), at: { x: point.x, y: point.y } };
+    };
+
     /** What the presenter does for each event of the rules. */
     const ON_EVENT = {
       ground({ speed, point }) {
@@ -217,6 +230,7 @@
         sfx.buzz(30);
       },
       parry({ speed, point }) {
+        noteTouch('parry', point);
         sfx.play('hit', { vol: strength(speed), pitch: 0.8 });
         sfx.play('thud', { vol: strength(speed) });
         fx.hitstop(FEEL.glove.stop);
@@ -225,6 +239,7 @@
         sfx.buzz(25);
       },
       held({ speed, point }) {
+        noteTouch('held', point);
         sfx.play('thud', { vol: strength(speed), pitch: 0.7 });
         fx.hitstop(FEEL.held.stop);
         fx.shake(FEEL.held.shake);
@@ -255,7 +270,10 @@
       },
     };
     ON_EVENT.bar = ON_EVENT.post;
-    ON_EVENT.block = ON_EVENT.parry;
+    ON_EVENT.block = (event) => {
+      ON_EVENT.parry(event);
+      play.touch.type = 'block';
+    };
 
     // ----------------------------------------------------- match flow -----------------------------------------------------
 
@@ -266,7 +284,7 @@
     /** Sets up the next kick: whose it is, how much it weighs, the wind, and where everyone stands. */
     const beginKick = () => {
       const role = SIM.kickerOf(match.shootout) === 'you' ? 'taker' : 'keeper';
-      play = { role, kick: null, clock: 0, pressure: SIM.pressureOf(match.shootout, match.cup.pressure), wind: match.cup.wind ? random.range(-match.cup.wind, match.cup.wind) : 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: play.lastOutcome };
+      play = { role, kick: null, clock: 0, pressure: SIM.pressureOf(match.shootout, match.cup.pressure), wind: match.cup.wind ? random.range(-match.cup.wind, match.cup.wind) : 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: play.lastOutcome, touch: play.touch, arrival: null, setDive: null };
       stage.setSeat(role === 'taker' ? 'aim' : 'keeper');
       stage.setWind(play.wind);
       stage.ball.set(SIM.SPOT, { x: 0, y: 0, z: 0 }, 0);
@@ -301,8 +319,10 @@
       fx.shake(FEEL.strike.shake * strength(pace));
       stage.burst(SIM.SPOT, { count: 7, speed: 2, up: 2, colors: [3] });
       sfx.buzz(18);
-      // Their keeper moves when the rules say; the player's keeper is already moving if the player has tapped.
-      if (play.role === 'taker' && dive) onPitch()[1].dive(diveShown(dive, 0));
+      play.arrival = SIM.crossingOf(launch, progress.ball(), play.wind);
+      // Their keeper moves when the rules say; the player's keeper is already moving if the player has tapped,
+      // and now learns when the ball will really be there.
+      if (dive) onPitch()[1][play.role === 'taker' ? 'dive' : 'retime'](meetingOf(dive, 0, play.arrival));
       // The cut: at the strike the camera steps past the taker, so nothing stands between the lens and the flight.
       if (play.role === 'taker') stage.setSeat('flight');
       flow.go('flight');
@@ -311,17 +331,34 @@
     /** The player's shot leaves the boot: their keeper decides, and the kick begins. */
     const strikeAsTaker = () => {
       const launch = SIM.launchOf(play.shot, progress.ball(), boot());
-      strike(launch, SIM.rivalDive(match.rival.keeper, { launch, ballRow: progress.ball(), wind: play.wind, history: match.history }, random));
+      const dive = play.setDive ? SIM.diveOf(play.setDive, 0, match.rival.keeper) : SIM.rivalDive(match.rival.keeper, { launch, ballRow: progress.ball(), wind: play.wind, history: match.history }, random);
+      strike(launch, dive);
     };
 
     /** Their shot leaves the boot: the taker answers an early dive, sprays under pressure, and the kick begins. */
     const strikeAsKeeper = () => {
       const answered = SIM.takerAnswer(play.intent, match.rival.taker, play.earlyDive, random);
-      strike(SIM.launchOf(SIM.takerAim(answered, match.rival.taker, progress.ball(), play.pressure, random), progress.ball()), play.earlyDive);
+      const aim = rehearsal ? SIM.solveAim(rehearsal.targetX, rehearsal, progress.ball()) : SIM.takerAim(answered, match.rival.taker, progress.ball(), play.pressure, random);
+      strike(SIM.launchOf(aim, progress.ball()), play.earlyDive);
     };
 
-    /** A dive of the rules as the actor is asked for it: where, how long until the body moves, and how long it then takes. */
-    const diveShown = (dive, now) => ({ target: dive.target, delay: Math.max(0, dive.start - now), seconds: dive.windup + dive.duration - Math.max(0, now - dive.start) });
+    /**
+     * A dive of the rules as the actor is asked for it: where the hands must be, how long until the body moves,
+     * and how long it then has. A save is decided as the ball reaches the keeper's plane, so that is the moment
+     * the picture's hands are timed for, at the point the rules' hands have got to by then (the dive's end for a
+     * keeper who is early, short of it for one who is late). With no ball coming in time, the dive is shown as
+     * the rules run it.
+     * @param {Object} dive a `Dive` of the rules
+     * @param {number} now seconds since the strike (negative before it)
+     * @param {?{seconds: number}} arrival when the ball reaches the keeper's plane, seconds since the strike
+     * @returns {{target: {x: number, y: number}, delay: number, seconds: number}}
+     */
+    const meetingOf = (dive, now, arrival) => {
+      const leaves = Math.max(now, dive.start);
+      const isBallMet = Boolean(arrival) && arrival.seconds > Math.max(now, dive.start + dive.windup);
+      const at = isBallMet ? arrival.seconds : dive.start + dive.windup + dive.duration;
+      return { target: isBallMet ? SIM.keeperAt(dive, at).hands : dive.target, delay: Math.max(0, dive.start - now), seconds: at - leaves };
+    };
 
     /** Sends the player's keeper to a point of the keeper's plane: once per kick, before or after the strike. */
     const diveTo = (point) => {
@@ -334,7 +371,7 @@
       const dive = SIM.diveOf(point, now, keeper);
       if (play.kick) play.kick.dive = dive;
       else play.earlyDive = dive;
-      onPitch()[1].dive(diveShown(dive, now));
+      onPitch()[1].dive(meetingOf(dive, now, play.arrival));
       stage.marker.show(dive.target);
       sfx.play('whoosh', { pitch: 1.2 });
       sfx.buzz(12);
@@ -569,7 +606,9 @@
         // Their taker comes in. The player may dive at any moment from here on.
         facing: {
           enter() {
-            play.intent = SIM.takerIntent(match.rival.taker, random);
+            play.intent = rehearsal ? { curve: 0, tell: 0, ...rehearsal } : SIM.takerIntent(match.rival.taker, random);
+            // Until the ball is struck, a keeper who goes early is timed for the shot the taker means to hit.
+            play.arrival = SIM.crossingOf(SIM.launchOf(SIM.solveAim(play.intent.targetX, play.intent, progress.ball()), progress.ball()), progress.ball(), play.wind);
             onPitch()[0].runUp({ from: MARKS.rivalTaker.wait, to: MARKS.rivalTaker.strike, seconds: RUN_UP.seconds - PERFORM.TIMING.strikeAt, tell: play.intent.tell });
             hint.set('Tap where to dive. Not too early, not too late');
           },
@@ -645,7 +684,8 @@
         if (match && match.cast) {
           onPitch().forEach((each) => each.update(dt, time));
           const kick = play.kick;
-          if (kick) stage.ball.set(kick.ball.position, kick.ball.velocity, dt);
+          // A held ball is in the gloves: the rules say it was caught, the body says where the gloves are.
+          if (kick) stage.ball.set(kick.touched.held ? onPitch()[1].holding(FIELD.ballRadius) : kick.ball.position, kick.ball.velocity, dt);
           const isNetted = stage.net.update(dt, kick ? kick.ball.position : null);
           if (isNetted && kick && !kick.touched.net) sfx.noise({ dur: 0.12, vol: 0.12, freq: 3000, type: 'highpass' });
         }
@@ -660,17 +700,35 @@
        */
       tools: {
         progress,
-        shoot: (aim) => flow.is('aiming') && releaseShot({ curve: 0, isArmed: true, ...aim }),
+        /**
+         * Shoots without a finger.
+         * @param {{pull: number, angle: number, curve?: number}} aim
+         * @param {{x: number, y: number}} [setDive] where their keeper goes at the strike, in place of their own mind
+         */
+        shoot(aim, setDive = null) {
+          if (!flow.is('aiming')) return false;
+          play.setDive = setDive;
+          return releaseShot({ curve: 0, isArmed: true, ...aim });
+        },
+        /** Where a shot of an aim crosses the keeper's plane, and when (for a playtest that sends their keeper there). */
+        crossing: (aim) => SIM.crossingOf(SIM.launchOf({ curve: 0, ...aim }, progress.ball(), boot()), progress.ball(), play.wind),
         dive: (x, y) => diveTo({ x, y }),
         /** Ends the match in play at once, five kicks to none, for or against the player (to reach the result sheet). */
         finish(won) {
           match.shootout = { first: 'you', you: Array.from({ length: RULES.kicks }, () => won), them: Array.from({ length: RULES.kicks }, () => !won) };
           flow.go('result');
         },
-        /** Jumps to a kick with the player in goal (a fresh shootout that the rival starts). */
-        face() {
+        /**
+         * Jumps to a kick with the player in goal (a fresh shootout that the rival starts).
+         * @param {{targetX: number, pull: number, curve?: number}} [setPiece] the shot their taker strikes, exactly
+         *   (no mind, no spray), on every kick until `face()` is called without one
+         * @returns {?{x: number, y: number, seconds: number}} where and when a set piece crosses the keeper's plane
+         */
+        face(setPiece = null) {
+          rehearsal = setPiece;
           match.shootout = SIM.createShootout('them');
           beginKick();
+          return setPiece ? SIM.crossingOf(SIM.launchOf(SIM.solveAim(setPiece.targetX, setPiece, progress.ball()), progress.ball()), progress.ball(), play.wind) : null;
         },
         beginMatch,
         showClubhouse,
@@ -702,6 +760,8 @@
         phase: flow.state,
         role: play.role,
         outcome: play.lastOutcome,
+        touch: play.touch,
+        isKeeperOnBall: Boolean(play.kick && play.kick.touched.keeper),
         kickTime: play.kick ? play.kick.time : 0,
         waited: play.role === 'taker' ? play.aimSeconds : play.clock,
         pull: liveAim.pull,
@@ -717,6 +777,7 @@
         rungs: progress.rungsWon(),
         hasSavedCharacter: Boolean(saved),
         seat: stage.seat(),
+        isBuilding: stage.isBuilding(),
         grain: stage.grain(),
         framing: framing.report(),
         ball: play.kick ? { ...play.kick.ball.position } : null,

@@ -66,6 +66,28 @@ module.exports = ({ Kit, test, assert }) => {
     assert.strictEqual(look.RESPONSES.face.dither, 0, 'a face is never dithered');
   });
 
+  test('look: a texel has a size at every depth under a perspective camera, and a face layer is grown or dropped by it', () => {
+    const RADIANS = Math.PI / 180;
+    // A phone picture of 422 rows through a 50 degree lens: the taker 6 m away, the keeper 13 m away.
+    const slope = look.texelSlope(50 * RADIANS, 422);
+    assert.ok(Math.abs(look.texelSlope(Math.PI / 2, 400) * 10 - 0.05) < 1e-12, 'at 90 degrees the picture is twice as tall as it is far');
+    assert.strictEqual(look.texelWorldAt(0.02, 0, 7), 0.02, 'an orthographic camera has one texel size at every depth');
+    assert.strictEqual(look.texelWorldAt(0, slope, -1), 0, 'behind the lens there is no size');
+    const [near, far] = [look.texelWorldAt(0, slope, 6), look.texelWorldAt(0, slope, 13)];
+    assert.ok(Math.abs(far / near - 13 / 6) < 1e-9 && near > 0, 'a texel grows in proportion to depth');
+    // An eye 3 cm across with a least size of 2 texels: left alone close up, grown on the far keeper, capped when tiny.
+    assert.strictEqual(look.stampGrowth(0.015, 2, near), 1, `control: at ${(0.03 / near).toFixed(1)} texels the eye is big enough`);
+    const grown = look.stampGrowth(0.015, 2, far);
+    assert.ok(grown > 1 && Math.abs((0.03 * grown) / far - 2) < 1e-9, `on the far keeper the eye is grown to 2 texels (x${grown.toFixed(2)})`);
+    assert.strictEqual(look.stampGrowth(0.015, 2, far * 10), look.STAMP_MOST_GROWTH, 'growth is capped: a face never swallows the head');
+    // The fault this replaces: with the texel size unknown (0) nothing was grown and nothing dropped.
+    assert.strictEqual(look.stampGrowth(0.015, 2, 0), 1);
+    assert.strictEqual(look.stampGrowth(0.015, -2, 0), 1, 'unknown size: a layer that should vanish stays');
+    assert.strictEqual(look.stampGrowth(0.015, -2, far), 0, 'the white of an eye under 2 texels is dropped');
+    assert.strictEqual(look.stampGrowth(0.015, -2, near), 1);
+    assert.strictEqual(look.stampGrowth(0.015, 0, far), 1, 'no rule: paint on a wall is left alone');
+  });
+
   test('look: dither fades as texels grow against the figure; the presets share one hull line weight', () => {
     assert.strictEqual(look.ditherAt(0.08, 0), 0.08, 'an unknown texel size leaves the dither alone');
     assert.strictEqual(look.ditherAt(0.08, look.DITHER_TEXEL_FADE.full), 0.08);

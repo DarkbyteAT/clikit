@@ -985,6 +985,12 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.strictEqual(figure.detailFor(155, 'medium'), 'medium');
     assert.strictEqual(figure.detailFor(800, 'far'), 'high');
     assert.throws(() => figure.detailFor(100, 'tiny'), /no level "tiny"/);
+    // A least level: a small character the player looks at is never given the crowd's level.
+    assert.deepStrictEqual([20, 64, 65, 151, 331].map((pixels) => figure.detailFor(pixels, undefined, 'low')), ['low', 'low', 'low', 'medium', 'high']);
+    assert.strictEqual(figure.detailFor(40, 'far', 'low'), 'low', 'a level shown below the least is left at once');
+    assert.strictEqual(figure.detailFor(40, 'low', 'low'), 'low');
+    assert.strictEqual(figure.detailFor(40, 'low'), 'far', 'control: without a least, 40 pixels is the crowd\'s level');
+    assert.throws(() => figure.detailFor(100, undefined, 'tiny'), /no level "tiny" \(`least`\)/);
   });
 
   test('figure detail: a height in pixels is measured on the target, so a pixel look counts its texels', () => {

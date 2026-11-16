@@ -15,6 +15,7 @@
  *   Kit.act.marks('dive').contact                                     // seconds into a dive that the hands arrive
  *   Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: 0.3 } }); // hands there in 0.3 s; landing as authored
  *   Kit.act.play(motion, 'save', { target, reach: { mark: 'contact', in: 0.4 } }); // a FAMILY: the form that gets there
+ *   Kit.act.meet(motion, 'contact', 0.25);                            // while it plays: the moment became known, or moved
  *   Kit.act.playing(motion)                                           // 'dive' (or the form a family chose) until it has finished
  *   Kit.act.takeRootMotion(motion, offset)                            // after a kick or a dive: where the body ended up
  *   Kit.act.base(motion, 'keeperReady');                              // the loop it returns to between one-shots
@@ -29,7 +30,7 @@
  *        performances for one job, chosen by where the point is against the body's own reach), `rig` (what a plan's roles are, measured once),
  *        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
  *        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
- *        controls (`play`, `marks`, `stop`, `base`, `aim`, `point`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+ *        controls (`play`, `marks`, `meet`, `stop`, `base`, `aim`, `point`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
  *        `takeRootMotion`, `cast`), `refusal`,
  *        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
  * Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
@@ -1655,6 +1656,30 @@
    */
   const marks = (performanceOrId) => resolve('marks', performanceOrId).marks;
 
+  /**
+   * Fits what is left of the lead-in of the performance that is playing to a new time: the named mark is met
+   * `seconds` from now, whatever `play` was told. For a moment that becomes known, or moves, after the body
+   * has begun (a keeper who went early learns at the strike when the ball will arrive).
+   * @param {Object} motion a `MotionState`
+   * @param {string} mark a mark of the performance that is playing (usually 'contact')
+   * @param {number} seconds from now, greater than 0
+   * @returns {boolean} false, changing nothing, when nothing playing declares the mark or it has already passed
+   * @throws {Error} for a time that is not positive
+   * @complexity O(1)
+   * @example
+   * Kit.act.play(keeper, 'save', { target, reach: { mark: 'contact', in: guess } });
+   * Kit.act.meet(keeper, 'contact', ballArrivesIn);   // later, once the ball is struck
+   */
+  const meet = (motion, mark, seconds) => {
+    if (!(seconds > 0)) fail('meet', `\`seconds\` must be greater than 0, got ${JSON.stringify(seconds)}.`);
+    const acting = actingOf(motion);
+    const at = acting.now ? acting.now.marks[mark] : undefined;
+    if (at === undefined || acting.time >= at) return false;
+    acting.leadUntil = at;
+    acting.leadRate = (at - acting.time) / seconds;
+    return true;
+  };
+
   const setBase = (motion, compiled) => {
     const acting = actingOf(motion);
     if (compiled && !canPerform(motion, acting, compiled)) return false;
@@ -1860,6 +1885,7 @@
     point,
     playing,
     marks,
+    meet,
     progress,
     rootMotion,
     keepInPlace,

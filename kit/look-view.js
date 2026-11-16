@@ -179,8 +179,10 @@
         // Below native resolution a hull line is one texel; at native resolution it is the knob's width in device pixels.
         const lineWidth = scale > 1 ? 1 : settings.inkWidth * pixelRatio;
         shading.apply(settings, { width: target.width, height: target.height, lineWidth, depthRange: fitDepthRange(camera) });
-        // Stamps (the layers of a face) keep a least size in target texels; only an orthographic camera has one texel size.
+        // Stamps (the layers of a face) keep a least size in target texels: one texel size under an orthographic camera.
+        // A perspective camera has no one size: a texel grows with depth, and each stamp asks at its own (`Kit.look.texelWorldAt`).
         shading.uniforms.uTexelWorld.value = camera.isOrthographicCamera ? ((camera.top - camera.bottom) / camera.zoom) * (scale / bufferSize.y) : 0;
+        shading.uniforms.uTexelSlope.value = camera.isOrthographicCamera ? 0 : Kit.look.texelSlope((camera.fov * Math.PI) / HALF_TURN_DEGREES, bufferSize.y / scale);
         // Dither pays only while a figure is large enough to hold the pattern; below native resolution it fades with the texel.
         if (scale > 1) shading.uniforms.uDither.value = Kit.look.ditherAt(settings.dither, shading.uniforms.uTexelWorld.value);
         const restoreFigures = placeFigures(camera, settings, target);

@@ -221,6 +221,28 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.strictEqual(Object.keys(act.marks('wave')).length, 0, 'a performance without marks has none');
   });
 
+  test('act: a mark of a performance already under way is met at a time given later, and what follows it is untouched', () => {
+    const STEP = 1 / 120;
+    const contactShare = act.CONTACT.dive;
+    const state = cast(person);
+    assert.strictEqual(act.meet(state, 'contact', 1), false, 'nothing is playing: nothing to fit');
+    act.play(state, 'dive', { target: defaultPoint(person, 'dive'), reach: { mark: 'contact', in: 2 } });
+    run(state, 0.5, STEP);
+    const before = act.progress(state);
+    assert.ok(before > 0 && before < contactShare, `control: half a second in, the lead-in is under way (${before})`);
+    assert.strictEqual(act.meet(state, 'release', 0.2), false, 'a mark the performance does not declare is refused');
+    assert.ok(act.meet(state, 'contact', 0.2), 'the contact is moved to 0.2 s from now');
+    run(state, 0.2 - 2 * STEP, STEP);
+    assert.ok(act.progress(state) < contactShare, 'just before the new time the hands have not arrived');
+    run(state, 4 * STEP, STEP);
+    assert.ok(act.progress(state) >= contactShare, 'just after it they have');
+    const afterContact = act.progress(state);
+    run(state, 0.3, STEP);
+    assert.ok(Math.abs(act.progress(state) - afterContact - 0.3 / act.REPERTOIRE.dive.seconds) < 0.01, 'after the mark the performance runs as authored');
+    assert.strictEqual(act.meet(state, 'contact', 0.2), false, 'a mark already passed cannot be met again');
+    assert.throws(() => act.meet(state, 'contact', 0), /greater than 0/);
+  });
+
   test('act: a dive reaches eight points spread over a goal-sized area, low and high, both sides, on a squat body and a tall one', () => {
     [person, samples.bakery().bakeRecipe({ species: 'human', seed: 1 })].forEach((bake) => {
       const { stature, high } = act.rig(bake.plan, bake.rest);

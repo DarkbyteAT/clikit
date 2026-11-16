@@ -1383,3 +1383,54 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Costs and revisit.** See METRICS row 43. Revisit the burial depth if a pose opens a visible hole at a
   hairline; revisit seam holding if a look needs paint edges to move (a seam then needs its own error
   term rather than the border rule).
+
+## Spot Kick on the save family, sculpted bodies and a texel that has a size in perspective (football2 branch)
+
+- **A save is timed for the ball, not for the rules' hands.** The game played `dive` at a rate that put the
+  hands on the rules' point when the rules' hands arrived, then undid the rate after contact with its own shim.
+  The rules' keeper arrives and waits; a body cannot, so a keeper who went early had landed before the ball came
+  (measured: 0.99 m between glove and ball at the catch of a high centre shot). Now `games/penalty.js`
+  `meetingOf` asks for the hands where the rules' hands are at the moment the ball reaches the keeper's plane,
+  and `Kit.act.play(motion, 'save', { target, reach: { mark: 'contact', in } })` picks catch, catchHigh,
+  smother, dive or diveStep. Glove to ball at the rules' touch, eight set pieces from both ends: 0.04 to 0.23 m
+  (the rules' reach is 0.46 m plus the ball). The shim is gone.
+  Rejected: timing for the rules' arrival and holding the pose (a body hanging in the air); moving the rules to
+  the body (the body follows the rules, and the bots play the rules without one).
+- **`Kit.act.meet(motion, mark, seconds)`** (kit/act.js). A keeper who taps before the strike is timed for the
+  shot the taker means to hit; at the strike the real arrival is known and the rest of the lead-in is fitted to
+  it. Rejected: playing the save again at the strike (it restarts the cross-fade and the travel); waiting for
+  the strike to move at all (the tap must answer within a frame).
+- **A held ball is drawn in the gloves, a ball's radius beyond them along the reach line** (head through
+  hands). On these bodies an arm is about as long as the head is wide, so from behind the hands only just lead
+  the head however the trunk is tipped (`TUNING.handLead` already does what the skeleton allows). The ball
+  leading the gloves is what makes a catch read hands-first from both cameras. Rejected: a lower keeper camera
+  (the taker and the ball then sit behind the bar: the seat was set at 5.8 m so they clear it); a closer one
+  (the whole goal must stay in the picture to be tapped, which fixes the keeper's size in portrait at about
+  goal width / 3.4); longer arms for keepers (changes the owner's characters); a per-game pose.
+  Still weak: a missed dive seen from behind is a head and a trunk, and a smother seen from the spot is the
+  crown of a head.
+- **The cast is built in slices at an automatic level, never below low.** `Kit.figure.build(..., { level:
+  'auto', least: 'low', pixels, sculpt: 'steps' })`, settled by `Kit.slices` (kit/flow.js: jobs given what is
+  left of a frame's slice, 5 ms here), the cast before the supporters; a character is not drawn until its
+  surface is ready. `least` is new (kit/figure-detail.js `detailFor(pixels, shown, least)`): at `far` the
+  keeper seen from the spot (55 texels) had skin through the hair and a smeared face (sheet kept); far is a
+  crowd's level. Rejected: showing the rigid stand-in while sculpting (about 100 draws a figure for a few
+  frames and a visible change of body); a fixed level per grain (what it replaced: the keeper and the taker
+  need different levels, and the flight cut changes both).
+- **Front rows are sculpted, the terrace behind stays cards.** Two tiers of `Kit.figure.crowd` at `far`, one
+  look per shirt ramp of the ground (six instanced crowds an end, a top in the ground's dye), cards until a
+  look is sculpted. Cost at the first ground: 12 draws and about 55 k triangles for 56 people against 1 draw
+  and 0.9 k for cards; every seat sculpted would be 290 k on the full ground, the whole phone budget, for
+  figures 12 texels tall. Rejected: all sculpted; none (the owner asked for more detail and the front row is
+  where it shows). Missing layer: a crowd of mixed looks in one draw, and a level under `far` (a few hundred
+  triangles) for people this small.
+- **A texel has a size at every depth** (kit/look-settings.js `texelSlope`, `texelWorldAt`, `stampGrowth`;
+  kit/look-toon.js; kit/look-view.js). `uTexelWorld` was 0 under a perspective camera, which switched off the
+  least-size and drop rules of face layers in every perspective game. The view now also sets `uTexelSlope`
+  (world units per texel per unit of depth) and a stamp measures itself at its own centre's depth, with the
+  model's scale counted (a figure scaled 1.6 has layers 1.6 times as big; the orthographic case ignored that
+  too). Rejected: one texel size taken at the scene's middle depth (wrong for the far keeper and the near taker
+  at once); a size per figure through the anchor uniform (stamps in instanced crowds have no anchor of their
+  own). Ink depth steps and dither still read `uTexelWorld` alone: under perspective they stay unscaled, and
+  the game sets its dither from its grid.
+- **Revisit if** a far level with hair that holds arrives (then drop `least` here), or the crowd layer above.

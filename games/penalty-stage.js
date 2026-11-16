@@ -17,7 +17,7 @@
  */
 (() => {
   const DATA = window.SPOT_KICK_DATA, SIM = window.SPOT_KICK_SIM;
-  const { FIELD } = DATA;
+  const { FIELD, DYE } = DATA;
   const { goal } = FIELD;
   const { clamp, lerp, damp } = Kit.math;
   const TURN = Math.PI * 2;
@@ -48,12 +48,14 @@
    * @property {Object<string, string>} colors ramp name -> base colour, over SHARED_COLORS. `glow` is the halo
    *   round a floodlight: the sky's own colour where the lamps are off, so the halo is not there
    * @property {number} crowd share of the seats that are taken, 0..1
+   * @property {number[]} shirts the dye (`SPOT_KICK_DATA.DYE`) of each look of sculpted supporter's top, in the
+   *   order of the crowd's shirt ramps (`crowd0`...), so the front rows wear the colours of the terrace behind
    */
 
   /** The grounds, by `CupRow.look`. A ground is a palette: the same meshes, recoloured by rewriting atlas rows. */
   const LOOKS = {
     park: {
-      sky: 0x8fd0f2, crowd: 0.45,
+      sky: 0x8fd0f2, crowd: 0.6, shirts: [DYE.coral, DYE.sky, DYE.mustard, DYE.cream, DYE.forest, DYE.plum],
       colors: {
         grass: '#57a843', stripe: '#4c9a3c', worn: '#8f9648', stand: '#8a7a68', step: '#a39382', rail: '#e4dfd0', roof: '#5f6f7a', board: '#e8e2d0', boardAlt: '#3f8f6a', shade: '#2f6b33',
         sky: '#8fd0f2', haze: '#c9ecf7', cloud: '#ffffff', glow: '#8fd0f2', flag: '#ff6b4a', lamp: '#7f8c96',
@@ -61,7 +63,7 @@
       },
     },
     harbour: {
-      sky: 0x9fb6c4, crowd: 0.7,
+      sky: 0x9fb6c4, crowd: 0.7, shirts: [DYE.navy, DYE.cream, DYE.rust, DYE.charcoal, DYE.teal, DYE.mustard],
       colors: {
         grass: '#4a9a66', stripe: '#418c5c', worn: '#7f9460', stand: '#51667a', step: '#64798c', rail: '#c9d3da', roof: '#34465a', board: '#1f4f78', boardAlt: '#e9eef0', shade: '#2a6146',
         sky: '#9fb6c4', haze: '#d5e2e6', cloud: '#eef2f3', glow: '#9fb6c4', flag: '#ffd23f', lamp: '#6f8090',
@@ -69,7 +71,7 @@
       },
     },
     lights: {
-      sky: 0x141a33, crowd: 1,
+      sky: 0x141a33, crowd: 1, shirts: [DYE.crimson, DYE.mustard, DYE.cream, DYE.navy, DYE.plum, DYE.coral],
       colors: {
         grass: '#3f9f58', stripe: '#36904d', worn: '#74904a', stand: '#2a2f4a', step: '#363c5c', rail: '#8088b0', roof: '#1c2038', board: '#b3202e', boardAlt: '#f3d24a', shade: '#1d5a35',
         sky: '#141a33', haze: '#27305a', cloud: '#232b52', glow: '#4a5aa0', flag: '#f3d24a', lamp: '#fff6c8',
@@ -172,8 +174,24 @@
   /** The goal frame: sides of its round posts, and the thinner bars that hold the net out behind it. */
   const FRAME = Object.freeze({ sides: 6, stay: 0.035, staySides: 4 });
 
-  /** Palette rows: the ground's ramps plus a block of 16 for each of the four characters of a match. */
-  const ATLAS_ROWS = 128;
+  /** Palette rows: the ground's ramps, a block of 16 for each of the four characters of a match and one for each look of supporter. */
+  const ATLAS_ROWS = 256;
+  /**
+   * Milliseconds of a frame given to building what is not ready yet (a character's surface, a supporter's): the
+   * match starts on the first frame and the bodies arrive over the next few, with no frame held.
+   */
+  const BUILD_SLICE_MS = 5;
+  /** The coarsest level a character of the cast is drawn at: the keeper seen from the spot is small, and still someone with a face and hair. */
+  const CAST_LEAST_LEVEL = 'low';
+  /**
+   * The supporters near enough to be seen as people: the front `tiers` of each end are sculpted figures (one
+   * instanced surface per look, kit/figure.js `crowd`), one look for each shirt colour of the ground, rolled
+   * from the wardrobe by `seed`. Behind them the terrace is the stadium's cards. `height`: how tall one stands,
+   * metres; `level`: their level of detail (a face is a few texels at this distance).
+   */
+  const SUPPORTERS = Object.freeze({ tiers: 2, seed: 4711, height: 1.25, level: 'far' });
+  /** A kit crowd is scaled as a whole: a wardrobe person at `FIGURE_SCALE` stands `FIGURE_HEIGHT`. */
+  const SUPPORTER_SCALE = (SUPPORTERS.height * FIGURE_SCALE) / FIGURE_HEIGHT;
   /**
    * The ball as drawn: an icosphere whose faces near the twelve corners of an icosahedron are the dark patches
    * (`patchWithin`: the cosine of how far from a corner a face may point), how fast it visibly rolls, its
@@ -242,6 +260,8 @@
     let seatName = 'aim';
     let grain = LOOK.grain;
     let grid = gridOf(grain, size, size.h);
+    /** Work spread over frames: the characters' surfaces first (the player is looking at them), then the supporters'. */
+    const building = { cast: Kit.slices(), crowd: Kit.slices() };
 
     /** Adds a mesh to the look scene, dressed in a world ramp. `label` names it in `budget()`. */
     const dressed = (label, geometry, ramp, part = {}, parent = view.scene) => {
@@ -357,7 +377,7 @@
       geometry.setAttribute('instanceRamp', new THREE.InstancedBufferAttribute(ramps, 1));
       const mesh = dressedInstances('crowd', geometry, members.length * mostCards, 'crowd0', { instanceRamp: true, inkGroup: 3, tone: Kit.paint.TONE.base }, ends[end]);
       mesh.material[0].side = THREE.DoubleSide;
-      return { end, members, mesh, ramps, shown: [], lively: [], wasCheering: false, toward: PLACES[end].toward };
+      return { end, members, mesh, ramps, shown: [], cardboard: [], lively: [], supporters: [], wasCheering: false, toward: PLACES[end].toward };
     };
     const crowds = [crowdOf('goal'), crowdOf('taker')];
     let cheer = 0;
@@ -368,19 +388,24 @@
         mesh.setMatrixAt(member.first + card, scratchMatrix);
       });
     };
-    /** Seats the crowd a ground draws: who is there, the cards each is made of, and each card's ramp. */
-    const seatCrowd = () => {
+    /** Is a spectator in the front tiers, where people are sculpted? */
+    const isUpFront = (member) => member.y < Kit.stadium.END.stand.rise * (SUPPORTERS.tiers + 0.5);
+    /** Is a spectator drawn as a sculpted figure now (their look's surface is ready)? Until then they are cards like the rest. */
+    const isSculpted = (member) => isUpFront(member) && supporterLooks[member.shirt].isReady;
+    /** Seats the cards of the crowd a ground draws: who is there, the cards each is made of, and each card's ramp. */
+    const seatCards = () => {
       crowds.forEach((crowd) => {
         let next = 0;
         crowd.shown = crowd.members.filter((member) => member.chance < look.crowd);
-        crowd.shown.forEach((member) => {
+        crowd.cardboard = crowd.shown.filter((member) => !isSculpted(member));
+        crowd.cardboard.forEach((member) => {
           const cards = Kit.stadium.cards(member);
           member.first = next;
           member.cards = cards.map(({ card }) => card);
           cards.forEach(({ run, index }) => (crowd.ramps[next++] = rows[run + index] - rows.crowd0));
           placeMember(crowd, member, 0);
         });
-        crowd.lively = crowd.shown.filter((member) => member.isLively);
+        crowd.lively = crowd.cardboard.filter((member) => member.isLively);
         crowd.mesh.count = next;
         crowd.mesh.geometry.attributes.instanceRamp.needsUpdate = true;
         crowd.mesh.instanceMatrix.needsUpdate = true;
@@ -390,13 +415,90 @@
     const moveCrowd = (time) => {
       crowds.forEach((crowd) => {
         if (!ends[crowd.end].visible) return;
-        const movers = cheer > 0 || crowd.wasCheering ? crowd.shown : crowd.lively;
+        const isLoud = cheer > 0 || crowd.wasCheering;
+        const movers = isLoud ? crowd.cardboard : crowd.lively;
         // Hot path: an index loop over the spectators that move.
         for (let index = 0; index < movers.length; index++) placeMember(crowd, movers[index], Kit.stadium.lift(movers[index], time, cheer));
         crowd.wasCheering = cheer > 0;
         crowd.mesh.instanceMatrix.needsUpdate = true;
+        crowd.supporters.forEach((group) => liftSupporters(group, time, isLoud));
       });
     };
+
+    // ---- the supporters up front: sculpted figures, one instanced crowd per look and end ----
+    const catalog = Kit.body.catalog(DATA.CATALOG);
+    const bakery = catalog.bakery({ capacity: 16 });
+    const PLACE = 4; // numbers per member of a kit crowd's `places`: x, y, z, heading
+    /**
+     * The looks of supporter of the ground in use, one per shirt colour of its crowd: a wardrobe person in a
+     * top of the ground's dye, their rows in the atlas and, once sculpted, `isReady`. Sculpting is queued behind
+     * the cast; a look of an earlier ground is sculpted already (a dye changes no surface).
+     * @type {Array<{bake: Object, block: Object, isReady: boolean, job: ?Function}>}
+     */
+    let supporterLooks = [];
+    const dressSupporters = () => {
+      crowds.forEach(clearSupporters);
+      supporterLooks.forEach((made) => {
+        if (made.job) building.crowd.drop(made.job);
+        view.atlas.free(made.block);
+      });
+      supporterLooks = look.shirts.map((dye, index) => {
+        const bake = bakery.bakeRecipe(DATA.supporterRecipe(catalog, SUPPORTERS.seed, index, dye));
+        const task = Kit.figure.sculptTask(bake, Kit.figure.layout(bake, { level: SUPPORTERS.level }));
+        const made = { bake, block: Kit.figure.loadRows(view, bake), isReady: task.isDone(), job: null };
+        if (made.isReady) return made;
+        made.job = building.crowd.add((milliseconds) => {
+          made.isReady = task.step(milliseconds);
+          // Their cards come down and the figures go up in the same frame.
+          if (made.isReady) seatCrowd();
+          return made.isReady;
+        });
+        return made;
+      });
+    };
+    /** Stands the sculpted supporters of one look at one end: a kit crowd of exactly those who are there. */
+    const supportersOf = (crowd, lookIndex) => {
+      const made = supporterLooks[lookIndex];
+      const members = crowd.shown.filter((member) => member.shirt === lookIndex && isSculpted(member));
+      if (!members.length) return null;
+      const figures = Kit.figure.crowd(view, made.bake, members.length, { level: SUPPORTERS.level, rows: made.block });
+      // A kit crowd places its members in its own space: the group is scaled to a supporter's height, so places are divided by it.
+      const scale = SUPPORTER_SCALE;
+      figures.root.scale.setScalar(scale);
+      figures.root.traverse((object) => (object.name = 'supporters'));
+      ends[crowd.end].add(figures.root);
+      members.forEach((member, index) => figures.places.set([member.x / scale, member.y / scale, member.z / scale, crowd.toward > 0 ? 0 : Math.PI], index * PLACE));
+      figures.pose();
+      const everyone = members.map((_member, index) => index);
+      return { figures, members, scale, everyone, lively: everyone.filter((index) => members[index].isLively) };
+    };
+    /** Lifts the supporters who move: the lively ones bob, and everyone jumps while the ground is loud. */
+    const liftSupporters = (group, time, isLoud) => {
+      const movers = isLoud ? group.everyone : group.lively;
+      if (!movers.length) return;
+      // Hot path: an index loop over the supporters that move.
+      for (let index = 0; index < movers.length; index++) {
+        const member = group.members[movers[index]];
+        group.figures.places[movers[index] * PLACE + 1] = (member.y + Kit.stadium.lift(member, time, cheer)) / group.scale;
+      }
+      group.figures.pose();
+    };
+    const clearSupporters = (crowd) => {
+      crowd.supporters.forEach((group) => {
+        ends[crowd.end].remove(group.figures.root);
+        group.figures.dispose();
+      });
+      crowd.supporters = [];
+    };
+    /** Seats the whole crowd of a ground: the cards, then the sculpted supporters whose looks are ready. */
+    const seatCrowd = () => {
+      seatCards();
+      crowds.forEach((crowd) => {
+        clearSupporters(crowd);
+        crowd.supporters = supporterLooks.map((_made, index) => supportersOf(crowd, index)).filter(Boolean);
+      });
+    };
+    dressSupporters();
     seatCrowd();
 
     // ---- flags that show the wind: two cloths, instances of one mesh ----
@@ -482,8 +584,6 @@
     bitMesh.visible = false;
 
     // ---- figures ----
-    const catalog = Kit.body.catalog(DATA.CATALOG);
-    const bakery = catalog.bakery({ capacity: 16 });
     const figures = [];
 
     // ---- camera ----
@@ -596,28 +696,43 @@
        * @param {number[]} ballColors [panel, patch] of the ball in play
        */
       setLook(lookId, ballColors) {
+        const previous = look;
         look = LOOKS[lookId] || LOOKS.park;
         const colors = { ...SHARED_COLORS, ...look.colors, ballPanel: ballColors[0], ballPatch: ballColors[1] };
         WORLD_RAMPS.forEach((name) => view.atlas.writeRamp(world, name, colors[name]));
+        // The same ground again (the next rival of a cup): the crowd is already in its seats.
+        if (look === previous) return;
+        dressSupporters();
         seatCrowd();
       },
       /**
-       * Builds a character from a recipe and stands it in the scene.
+       * Builds a character from a recipe and stands it in the scene. Its surface is sculpted over the next
+       * frames (a slice of each, the characters asked for first), at the level of detail its size on screen
+       * asks for, which the look then keeps right as the camera cuts closer or further.
        * @param {Object} recipe a `Recipe` of the wardrobe catalogue
+       * @param {{seat: string, z: number}} standing where it will first be seen: from which seat (a key of
+       *   `SEATS`) and how far up the pitch, world metres; so it is sculpted once, at the level it will be drawn
        * @returns {Object} a `Figure` (kit/figure.js) with `footing`, the point (x, z) its shadow lies under: the
        *   root's place until whoever animates it says otherwise (a dive carries the body off its root)
        */
-      addFigure(recipe) {
-        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { level: Kit.pixelGrid.GRAINS[grain].level });
+      addFigure(recipe, standing) {
+        const texels = Kit.seat.span(solveSeat(SEATS[standing.seat], size), { z: standing.z, to: FIGURE_HEIGHT }, grid.rows);
+        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { level: 'auto', least: CAST_LEAST_LEVEL, pixels: texels, sculpt: 'steps' });
         figure.root.scale.setScalar(FIGURE_SCALE);
         figure.footing = figure.root.position;
         figures.push(figure);
+        figure.building = building.cast.add((milliseconds) => figure.isSettled() || figure.settle(milliseconds));
         return figure;
       },
       /** Removes every character built with `addFigure`. */
       clearFigures() {
-        figures.splice(0).forEach((figure) => figure.dispose());
+        figures.splice(0).forEach((figure) => {
+          building.cast.drop(figure.building);
+          figure.dispose();
+        });
       },
+      /** Is anything still being built (a character's surface, a supporter's)? For a playtest that waits for the finished picture. */
+      isBuilding: () => building.cast.size() + building.crowd.size() > 0,
       ball: {
         /**
          * Puts the ball where the simulation has it and rolls it by its spin and its travel.
@@ -817,6 +932,8 @@
        * @param {number} time seconds
        */
       update(dt, time) {
+        const startedAt = performance.now();
+        if (building.cast.run(BUILD_SLICE_MS)) building.crowd.run(BUILD_SLICE_MS - (performance.now() - startedAt));
         cheer = Math.max(0, cheer - CHEER_FALL * dt);
         moveCrowd(time);
         // A slack flag hangs; a full one stands out along the wind and flutters.
@@ -853,12 +970,17 @@
        * walks keeps one outline instead of a different one at every part of a texel.
        */
       render() {
+        // A character whose surface is still being sculpted is not drawn: it arrives whole a few frames later.
+        const unready = figures.filter((figure) => figure.root.visible && !figure.isSettled());
+        unready.forEach((figure) => (figure.root.visible = false));
         const restore = [...figures.filter((figure) => figure.root.visible).map((figure) => snapToGrid(figure.root)), ...(ballGroup.visible ? [snapToGrid(ballGroup)] : [])];
         view.render(camera, { clearColor: look.sky });
         restore.forEach((undo) => undo());
+        unready.forEach((figure) => (figure.root.visible = true));
       },
       dispose() {
         stage.clearFigures();
+        crowds.forEach(clearSupporters);
         view.dispose();
       },
     };

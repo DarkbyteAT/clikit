@@ -608,6 +608,16 @@
   const rivalRecipe = (catalog, row, role) => withOverrides(catalog.table(SQUAD_MIX).roll(row.seed, ROLL_OF[role]), stripOf({ shirt: row.shirt, shorts: row.shorts, keeper: row.keeperShirt }, role));
 
   /**
+   * The recipe of one look of supporter: a wardrobe person rolled by a seed, hands empty, in a top of a dye.
+   * @param {Object} catalog
+   * @param {number} seed rolls the stand's people
+   * @param {number} index which of them
+   * @param {number} dye a `DYE` index: the colour of their top
+   * @returns {Object} a `Recipe`
+   */
+  const supporterRecipe = (catalog, seed, index, dye) => withOverrides(catalog.table(SQUAD_MIX).roll(seed, index), { ...BARE, 'color:top': dye });
+
+  /**
    * The recipe of the player's character for a role. A saved Character Maker character plays both roles and
    * keeps its own clothes under the `own` kit (hands emptied, gloves on in goal); any other kit dresses it in
    * that strip. With no saved character a home player is rolled.
@@ -624,5 +634,5 @@
     return withOverrides(base, { ...BARE, ...(role === 'keeper' ? { 'fill:gloves': 'gloves', 'color:gloves': LEATHER.gloves } : {}) });
   };
 
-  window.SPOT_KICK_DATA = { CATALOG, STRIP_PARTS, FIELD, STEP, SHOT, SWAY, PRESSURE, PLAYER_STATS, KEEPER, RUN_UP, BALLS, PERKS, DYE, KITS, MEDALS, medalGrade, CUPS, ROAD, LADDER, RULES, REWARDS, SCOUT, roadRival, scoutOf, cupUnlockId, createProgress, stripOf, rivalRecipe, playerRecipe };
+  window.SPOT_KICK_DATA = { CATALOG, STRIP_PARTS, FIELD, STEP, SHOT, SWAY, PRESSURE, PLAYER_STATS, KEEPER, RUN_UP, BALLS, PERKS, DYE, KITS, MEDALS, medalGrade, CUPS, ROAD, LADDER, RULES, REWARDS, SCOUT, roadRival, scoutOf, cupUnlockId, createProgress, stripOf, rivalRecipe, playerRecipe, supporterRecipe };
 })();

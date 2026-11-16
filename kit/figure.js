@@ -258,10 +258,11 @@
    * Builds a figure in a view.
    * @param {Object} view from `Kit.look.view`
    * @param {Object} bake from a bakery (kit/body-recipe.js), or a part alone `{ plan, boneRamp, ramps }`
-   * @param {{level?: string, pixels?: number, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, sculpt?: boolean|string, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
+   * @param {{level?: string, least?: string, pixels?: number, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, sculpt?: boolean|string, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
    *   `level` of detail (default 'high'), or 'auto': the view tells the figure how tall it is drawn each frame and
    *   the figure keeps the level that asks for (kit/figure-detail.js), starting at `pixels` (target pixels; default:
-   *   low, which is quick to make) and changing without a hitch; `cache` shared between figures (default one per module); `rows`: a
+   *   low, which is quick to make) and changing without a hitch; `least`: the coarsest level an automatic figure
+   *   is given, however small it is drawn ('low' for a character the player looks at: `far` is a crowd's level); `cache` shared between figures (default one per module); `rows`: a
    *   block from `loadRows` to share (default: the figure loads its own, and frees it on `dispose`); `ground`:
    *   stand the body's lowest point at rest on y = 0 (default true); `center`: turn about the middle of the
    *   footprint rather than the plan's origin (default true); `sculpt`: draw the body as blended, skinned
@@ -279,7 +280,7 @@
   const build = (view, bake, options = {}) => {
     const cache = options.cache || sharedCache();
     const isAuto = options.level === AUTO_LEVEL;
-    const layoutOptions = { level: isAuto ? Kit.figure.detailFor(options.pixels === undefined ? AUTO_START_PIXELS : options.pixels) : options.level, featuresOf: options.featuresOf, regionMapOf: options.regionMapOf };
+    const layoutOptions = { level: isAuto ? Kit.figure.detailFor(options.pixels === undefined ? AUTO_START_PIXELS : options.pixels, undefined, options.least) : options.level, featuresOf: options.featuresOf, regionMapOf: options.regionMapOf };
     /** The level the figure is moving to, with its layout and the sculpt under way for it (`resize`); null when it is where it should be. */
     let pending = null;
     const textures = sharedRegionTextures();
@@ -550,7 +551,7 @@
       resize(pixels, milliseconds = LEVEL_SLICE_MS) {
         // While an edit waits to be sculpted the level stays: one sculpt at a time.
         if (isStale) return shownLayout.level;
-        const wanted = Kit.figure.detailFor(pixels, pending ? pending.level : shownLayout.level);
+        const wanted = Kit.figure.detailFor(pixels, pending ? pending.level : shownLayout.level, options.least);
         if (wanted === shownLayout.level) pending = null;
         else if (!pending || pending.level !== wanted) startLevel(wanted);
         if (!pending) return shownLayout.level;
