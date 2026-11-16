@@ -244,6 +244,7 @@
 
   Kit.register({
     id: 'gallery',
+    kind: 'workbench',
     name: 'Components',
     tagline: 'Every clikit component in every state',
     hook: 'Switch skins; judge every state',

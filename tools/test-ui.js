@@ -66,17 +66,17 @@ async function main() {
   const menuFacts = await read(`(() => {
     const cards = [...document.querySelectorAll('#cards .ui-card')];
     const tagline = cards[0] && cards[0].querySelector('.ui-card-body span');
-    return { count: cards.length, listed: Kit.games.length, shortest: Math.min(...cards.map((card) => card.getBoundingClientRect().height)),
-      taglineShown: Boolean(tagline && tagline.getBoundingClientRect().height > 0), gallery: Boolean(document.getElementById('card-gallery')), pageScroll: document.scrollingElement.scrollHeight - innerHeight };
+    return { count: cards.length, listed: Kit.listed().length, workbenchCards: Kit.games.filter((screen) => screen.kind === 'workbench' && document.getElementById('card-' + screen.id)).length, shortest: Math.min(...cards.map((card) => card.getBoundingClientRect().height)),
+      taglineShown: Boolean(tagline && tagline.getBoundingClientRect().height > 0),  pageScroll: document.scrollingElement.scrollHeight - innerHeight };
   })()`);
-  check('menu: one card per registered entry, the gallery among them', menuFacts.count === menuFacts.listed && menuFacts.gallery, menuFacts);
+  check('menu: one card per game or maker, and no workbench screen is listed', menuFacts.count === menuFacts.listed && menuFacts.workbenchCards === 0, menuFacts);
   check('menu: every card shows its tagline and is at least 44px tall', menuFacts.taglineShown && menuFacts.shortest >= MIN_HIT_PX, menuFacts);
   check('menu: the page itself does not scroll (one screen)', menuFacts.pageScroll <= 0, menuFacts.pageScroll);
   await page.fill('#menu-search', 'zzzz-no-such-game');
   await settle();
   check('menu: a search with no match shows the empty state', await read(`Boolean(document.querySelector('#menu-list .ui-empty')) && !document.querySelector('#cards')`));
   await press('#menu-list .ui-empty button');
-  await page.fill('#menu-search', (await read(`Kit.games[0].name`)).slice(0, 4));
+  await page.fill('#menu-search', (await read(`Kit.listed()[0].name`)).slice(0, 4));
   await settle();
   const filtered = await read(`document.querySelectorAll('#cards .ui-card').length`);
   check('menu: search narrows the list', filtered >= 1 && filtered < menuFacts.count, filtered);
@@ -84,9 +84,10 @@ async function main() {
   await settle();
 
   // ---- gallery ----
-  await press('#open-gallery');
+  check('menu: the workbench link is hidden from players', await read(`document.getElementById('open-gallery').hidden`));
+  await read(`(Kit.play('gallery'), 1)`);
   await page.waitForTimeout(700);
-  check('gallery: opens from the menu footer', await read(`Kit.current && Kit.current.def.id === 'gallery' && Boolean(document.getElementById('gallery-scroll'))`));
+  check('gallery: opens by id, as tools open any workbench screen', await read(`Kit.current && Kit.current.def.id === 'gallery' && Boolean(document.getElementById('gallery-scroll'))`));
   await shot('gallery-top');
 
   // scroll pane

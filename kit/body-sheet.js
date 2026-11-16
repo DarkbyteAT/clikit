@@ -28,6 +28,7 @@
 
   Kit.register({
     id: 'wardrobe',
+    kind: 'workbench',
     name: 'Wardrobe sheet',
     tagline: 'Rolled characters from the creator catalogue',
     hook: 'The wardrobe catalogue drawn by the figure renderer',

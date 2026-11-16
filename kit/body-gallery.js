@@ -90,6 +90,7 @@
 
   Kit.register({
     id: 'bodies',
+    kind: 'workbench',
     name: 'Bodies',
     tagline: 'One body system, many shapes',
     hook: 'Plans, parts, IK and chains as stick figures',

@@ -500,6 +500,7 @@
 
   Kit.register({
     id: 'figures',
+    kind: 'workbench',
     name: 'Figures',
     tagline: 'Body samples drawn in 3D through the stylised look',
     hook: 'Turn them, restyle them, edit them live',

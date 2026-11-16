@@ -603,6 +603,7 @@ Kit.register({ id: 'orbit', name: 'Orbit', theme: { skin: 'neon' }, create: (ctx
   - `hook` *string* - the progression hook, shown on the menu card
   - `color` *number* - accent colour as a hex number
   - `order` *number* - menu position, ascending
+  - `[kind='game']` *'game'\|'maker'\|'workbench'* - what the screen is (Kit.SCREEN_KINDS); a workbench is never listed for players
   - `create` *function(Object): GameInstance* - builds the game from the shell's `ctx`
   - `[theme]` *Object* - the game's HUD theme (kit/theme.js); a game without one gets a development warning
   - `[headless]` *Object* - the game's pure rules and data, usable without THREE or the DOM (tests, tools). Add `headless.progression` (`createState`, `actions`, `apply`, `summary`; see tools/sim.js) and `make sim GAME=<id>` plays the game's long arc for simulated hours. Read it with Kit.headlessOf, which also accepts the older names `model` and `lab`

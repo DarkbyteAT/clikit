@@ -24,8 +24,8 @@
   /** A game's accent as a CSS colour: definitions give either a CSS string or a 0xRRGGBB number. */
   const cssColorOf = (color) => (typeof color === 'number' ? '#' + color.toString(16).padStart(HEX_DIGITS, '0') : color || DEFAULT_CARD_COLOR);
 
-  /** Everything registered, in menu order (the shell sorted it), numbered as shown. */
-  const listedGames = Kit.games.map((game, index) => ({ ...game, number: index + 1 }));
+  /** What a player is offered, in menu order and numbered as shown: games and makers, never workbench screens (Kit.listed). */
+  const listedGames = Kit.listed().map((game, index) => ({ ...game, number: index + 1 }));
   const query = signal('');
 
   const gameCard = (game) =>
@@ -35,7 +35,7 @@
   const Menu = () => {
     const matches = searchRows(listedGames, query.value, SEARCH_FIELDS);
     return html`
-      <${TextField} id="menu-search" type="search" label="Find a game" hideLabel placeholder=${`Search ${listedGames.length} entries`} value=${query} />
+      <${TextField} id="menu-search" type="search" label="Find a game" hideLabel placeholder=${`Search ${listedGames.length} games`} value=${query} />
       <${ScrollPane} fill id="menu-list" label="Games">
         ${matches.length
           ? html`<div id="cards">${matches.map(gameCard)}</div>`
@@ -52,6 +52,8 @@
   mount(html`<${Menu} />`, body);
 
   const galleryLink = document.getElementById('open-gallery');
+  // The component gallery is a workbench screen, so its link is offered only where workbenches are listed.
+  if (galleryLink) galleryLink.hidden = !Kit.listed().some((screen) => screen.id === 'gallery');
   if (galleryLink) {
     galleryLink.addEventListener('click', () => {
       Kit.sfx.play('click');
