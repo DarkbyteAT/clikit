@@ -44,6 +44,8 @@
     clearShare: 0.9,
     mostOpen: 0.7,
     clearSteps: 14,
+    /** Sculpted bakes kept for reuse (`sculptCache`): about 2 MB each at high detail. */
+    kept: 24,
   });
   const MATRIX = 16;
   const VECTOR = 3;
@@ -191,16 +193,16 @@
     return { leads: Int16Array.from(free.map((limb) => limb.lead)), turns, angles };
   };
 
-  /** Is this piece one the sculpt replaces: a solid of the body itself, shaded normally? */
+  /** Is this piece a solid of the body itself, shaded normally: one the sculpt may replace? */
   const isSculpted = (piece) => !piece.isProp && !piece.stamps && !piece.shell && !piece.emissive && piece.tone === undefined && piece.inkGroup !== Kit.figure.INK_GROUPS.glow && Boolean(Kit.sculpt.KINDS[piece.shape.kind]);
 
   /**
    * @typedef {Object} SculptLayer
-   * @property {string} id 'skin:<ramp>' for a body surface, 'region:<id>' for a painted layer
+   * @property {string} id 'skin:<ramp>' for a body surface, 'region:<part>|<ramp>|<raise>' for a painted layer
    * @property {number} ramp index into the bake's ramps
    * @property {number} inkGroup
    * @property {number} inkClass which line class it draws as (its ramp)
-   * @property {Float32Array} positions 3 per vertex, in the bake's rest space
+   * @property {Float32Array} positions 3 per vertex, in the bake's sculpting pose (`matrices`)
    * @property {Float32Array} normals
    * @property {Uint16Array|Uint32Array} indices
    * @property {Uint16Array} owners 4 bone indices per vertex
@@ -208,123 +210,222 @@
    */
 
   /**
-   * Sculpts a bake.
+   * @typedef {Object} Sculpted
+   * @property {SculptLayer[]} layers shared between equal bakes: never write to their arrays
+   * @property {Set<string>} replaced ids of the layout pieces the layers stand in for (do not draw them)
+   * @property {Float32Array} matrices the bone matrices the layers were made in (the bind pose), 16 per bone
+   * @property {{leads: Int16Array, turns: Float32Array}} clearance see `limbClearance`
+   * @property {string} signature what the layers depend on (see `sculptSignature`)
+   */
+
+  /** The solid of a layout piece in the sculpting pose, with the fillets its thickness earns. */
+  const solidOf = (piece, matrices, limbLead) => {
+    const matrix = matrices.subarray(piece.bone * MATRIX, piece.bone * MATRIX + MATRIX);
+    const placed = Kit.sculpt.solid(piece.shape, matrix, { owner: piece.bone });
+    placed.blend = Math.max(SCULPT.leastBlend, Math.min(SCULPT.mostBlend, placed.thinness * SCULPT.blendShare));
+    placed.inverse = Kit.sculpt.invertAffine(matrix);
+    // One limb (an ink group of the layout) blends along its length; it joins the trunk at its first bone's joint.
+    placed.group = piece.inkGroup;
+    placed.join = Math.min(placed.blend, SCULPT.mostJoin);
+    const lead = limbLead.get(piece.inkGroup);
+    placed.anchor = [matrices[lead * MATRIX + 12], matrices[lead * MATRIX + 13], matrices[lead * MATRIX + 14]];
+    return placed;
+  };
+
+  /**
+   * @typedef {Object} Garment
+   * The regions of one worn part with one paint and one raise (its waist, chest and sleeves are separate
+   * regions, one per bone): one layer.
+   * @property {string} key '<part>|<ramp>|<raise>'
+   * @property {?string} part
+   * @property {number} ramp
+   * @property {number} raise metres; 0 is paint
+   * @property {number} order its place in the paint order (the highest of its regions')
+   * @property {Map<number, Function[]>} tests per bone, the predicates of its regions there
+   */
+
+  /** The garments painted on a set of bones, in paint order. */
+  const garmentsOn = (bones, regions) => {
+    /** @type {Map<string, Garment>} */
+    const garments = new Map();
+    bones.forEach((bone) =>
+      regions[bone].forEach((region, index) => {
+        if (region.ramp < 0) return;
+        const key = `${region.part || ''}|${region.ramp}|${region.raise || 0}`;
+        const garment = garments.get(key) || { key, part: region.part || null, ramp: region.ramp, raise: region.raise || 0, order: 0, tests: new Map() };
+        garment.order = Math.max(garment.order, index);
+        garment.tests.set(bone, [...(garment.tests.get(bone) || []), region.test]);
+        garments.set(key, garment);
+      })
+    );
+    return [...garments.values()].sort((first, second) => first.order - second.order);
+  };
+
+  /**
+   * How far each garment stands off the skin. Raised garments stack: each stands at least a gap above the
+   * last. A garment with no raise (stripes, a trim, a tattoo) is paint: it lies a hair above the raised
+   * garment of its own part, or above the skin, and is cut out of that garment's area.
+   * @param {Garment[]} garments in paint order
+   * @returns {Array<{garment: Garment, offset: number, host: ?Garment, isPaint: boolean}>}
+   */
+  const stackGarments = (garments) => {
+    let lastOffset = 0;
+    const raised = garments
+      .filter((garment) => garment.raise > 0)
+      .map((garment) => {
+        lastOffset = Math.max(garment.raise, SCULPT.leastRaise, lastOffset + SCULPT.layerGap);
+        return { garment, offset: lastOffset, host: null, isPaint: false };
+      });
+    const painted = garments
+      .filter((garment) => garment.raise <= 0)
+      .map((garment) => {
+        const host = raised.find((spec) => spec.garment.part && spec.garment.part === garment.part);
+        return { garment, offset: (host ? host.offset : 0) + SCULPT.paintLift, host: host ? host.garment : null, isPaint: true };
+      });
+    return [...raised, ...painted];
+  };
+
+  /**
+   * A garment as a cut of a field: is a point inside it? Asked of the bone whose solid is nearest the point,
+   * in that bone's surface coordinates (how far along it, the angle round it, the outward direction).
+   * @param {Garment} garment
+   * @param {Object} field a `Field` of kit/sculpt.js whose solids carry `inverse`
+   * @param {Object[]} frames `Kit.body.surfaceLayout(plan).frames`
+   * @returns {function(number, number, number): boolean}
+   */
+  const cutOf = (garment, field, frames) => {
+    const { solids } = field;
+    /** Per solid of the field: the garment's predicates on its bone, or null (most solids: answered at once). */
+    const testsOf = solids.map((part) => garment.tests.get(part.owner) || null);
+    const along = [0, 0];
+    return (x, y, z) => {
+      const index = Kit.sculpt.nearestAt(field, x, y, z);
+      const tests = index >= 0 ? testsOf[index] : null;
+      if (!tests) return false;
+      const part = solids[index];
+      const inverse = part.inverse;
+      const localX = inverse[0] * x + inverse[1] * y + inverse[2] * z + inverse[3];
+      const localY = inverse[4] * x + inverse[5] * y + inverse[6] * z + inverse[7];
+      const localZ = inverse[8] * x + inverse[9] * y + inverse[10] * z + inverse[11];
+      const frame = frames[part.owner];
+      Kit.surface.along(frame, localX, localY, localZ, along);
+      // The outward direction: away from the bone's long axis at this height.
+      const outX = localX - frame.end[0] * along[0];
+      const outY = localY - frame.end[1] * along[0];
+      const outZ = localZ - frame.end[2] * along[0];
+      const length = Math.sqrt(outX * outX + outY * outY + outZ * outZ) || 1;
+      for (let test = 0; test < tests.length; test++) if (tests[test](along[0], along[1], outX / length, outY / length, outZ / length)) return true;
+      return false;
+    };
+  };
+
+  /** Numbers in a signature are rounded to this many decimals (a hundredth of a millimetre). */
+  const SIGNATURE_DECIMALS = 5;
+
+  /**
+   * What a bake's sculpted layers depend on, as text: the level of detail, every sculpted piece's shape, bone,
+   * paint slot and regions, and the rest pose. Colours are not in it, so recolouring a body keeps its layers.
+   * @param {Object} bake from a bakery
+   * @param {Object} figureLayout `Kit.figure.layout(bake)`
+   * @param {string} [detail] default the layout's level
+   * @returns {string}
+   * @complexity O(pieces + bones)
+   * @example Kit.figure.sculptSignature(bake, layout) === Kit.figure.sculptSignature(recoloured, Kit.figure.layout(recoloured)) // true
+   */
+  const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
+    const pieces = figureLayout.pieces.filter(isSculpted).map((piece) => [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : ''].join('~'));
+    const rest = bake.rest || Kit.body.createPose(bake.plan);
+    const pose = [rest.translation, rest.rotation, rest.scale].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
+    return [detail, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
+  };
+
+  /** @type {Map<string, Sculpted>} sculpted bakes by signature, most recently used last */
+  const kept = new Map();
+  /**
+   * The sculpted layers kept for reuse: equal bakes (a crowd of one look, a recoloured body, an undo) share one
+   * set of arrays. The `SCULPT.kept` most recently used are held.
+   * @type {{clear: function(): void, size: function(): number}}
+   */
+  const sculptCache = { clear: () => kept.clear(), size: () => kept.size };
+
+  /**
+   * Sculpts a bake. Equal bakes return the same layers (see `sculptCache`).
    * @param {Object} bake from a bakery
    * @param {Object} figureLayout `Kit.figure.layout(bake)`
    * @param {{detail?: string}} [options] a key of `Kit.sculpt.DETAIL` (default: the layout's level)
-   * @returns {{layers: SculptLayer[], replaced: Set<string>, matrices: Float32Array}} `replaced`: ids of the
-   *   layout pieces the layers stand in for (do not draw them); `matrices`: the rest matrices the layers were
-   *   made in (the bind pose)
-   * @complexity O(sum of the body solids' volumes / cell^3) distance evaluations, once per bake
+   * @returns {Sculpted}
+   * @complexity O(body surface area / cell^2) distance evaluations and vertices, once per distinct bake; O(pieces) for a bake seen before
    * @example const { layers, replaced } = Kit.figure.sculptLayers(bake, Kit.figure.layout(bake));
    */
   const sculptLayers = (bake, figureLayout, options = {}) => {
-    const { plan } = bake;
     const detail = options.detail || figureLayout.level;
+    const signature = sculptSignature(bake, figureLayout, detail);
+    const known = kept.get(signature);
+    if (known) {
+      kept.delete(signature);
+      kept.set(signature, known);
+      return known;
+    }
+    const sculpted = { ...sculpt(bake, figureLayout, detail), signature };
+    kept.set(signature, sculpted);
+    if (kept.size > SCULPT.kept) kept.delete(kept.keys().next().value);
+    return sculpted;
+  };
+
+  /** Sculpts a bake afresh (see `sculptLayers`). */
+  const sculpt = (bake, figureLayout, detail) => {
+    const { plan } = bake;
     const matrices = restMatrices(bake, spreadPose(bake));
     const frames = bake.surface && Kit.body.surfaceLayout ? Kit.body.surfaceLayout(plan).frames : null;
     const regions = bake.surface ? bake.surface.regions : null;
-    const replaced = new Set();
-    /** Body solids by ramp: each paint of the body is one blended skin. */
-    const groups = new Map();
+    const candidates = figureLayout.pieces.filter(isSculpted);
     /** Ink group -> the first (nearest the root) bone of that limb. */
     const limbLead = new Map();
-    figureLayout.pieces.filter(isSculpted).forEach((piece) => {
-      const matrix = matrices.subarray(piece.bone * MATRIX, piece.bone * MATRIX + MATRIX);
-      const placed = Kit.sculpt.solid(piece.shape, matrix, { owner: piece.bone });
-      placed.blend = Math.max(SCULPT.leastBlend, Math.min(SCULPT.mostBlend, placed.thinness * SCULPT.blendShare));
-      placed.inverse = Kit.sculpt.invertAffine(matrix);
-      // One limb (an ink group of the layout) blends along its length; it joins the trunk at its first bone's joint.
-      placed.group = piece.inkGroup;
-      placed.join = Math.min(placed.blend, SCULPT.mostJoin);
-      const lead = limbLead.get(piece.inkGroup) === undefined ? piece.bone : limbLead.get(piece.inkGroup);
-      limbLead.set(piece.inkGroup, lead);
-      placed.anchor = [matrices[lead * MATRIX + 12], matrices[lead * MATRIX + 13], matrices[lead * MATRIX + 14]];
-      const group = groups.get(piece.ramp) || { ramp: piece.ramp, inkGroup: piece.inkGroup, solids: [] };
-      group.solids.push(placed);
-      groups.set(piece.ramp, group);
-      replaced.add(piece.id);
-    });
+    candidates.forEach((piece) => limbLead.has(piece.inkGroup) || limbLead.set(piece.inkGroup, piece.bone));
+    const placed = candidates.map((piece) => ({ piece, part: solidOf(piece, matrices, limbLead) }));
+    // One grid cell for the whole body; what is too thin for it (an earring) stays a rigid piece.
+    const cell = placed.length ? Kit.sculpt.cellFor(placed.map(({ part }) => part), detail) : 0;
+    const meshed = placed.filter(({ part }) => !Kit.sculpt.isTooThin(part, cell));
+    const replaced = new Set(meshed.map(({ piece }) => piece.id));
     // The shells the layout made for raised regions are replaced along with the surfaces they were copies of.
     figureLayout.pieces.filter((piece) => piece.shell && replaced.has(piece.id.split('~')[0])).forEach((piece) => replaced.add(piece.id));
+    /** Body solids by ramp: each paint of the body is one blended skin. */
+    const groups = new Map();
+    meshed.forEach(({ piece, part }) => {
+      const group = groups.get(piece.ramp) || { ramp: piece.ramp, inkGroup: piece.inkGroup, solids: [] };
+      group.solids.push(part);
+      groups.set(piece.ramp, group);
+    });
 
     // The trunk: the solids of the limb the root bone belongs to, whatever their paint.
     const trunkGroup = Kit.figure.inkGroupOf(Kit.figure.inkKeyOf(plan, 0));
-    const trunk = [...groups.values()].flatMap((group) => group.solids.filter((part) => part.group === trunkGroup));
-    const trunkDistance = (x, y, z) => trunk.reduce((nearest, part) => Math.min(nearest, part.distance(x, y, z)), Infinity);
+    const trunk = meshed.map(({ part }) => part).filter((part) => part.group === trunkGroup);
+    const trunkDistance = (x, y, z) => {
+      let nearest = Infinity;
+      for (let index = 0; index < trunk.length; index++) nearest = Math.min(nearest, trunk[index].distance(x, y, z));
+      return nearest;
+    };
     const clearance = trunk.length ? limbClearance(bake, limbsOf(bake), trunkDistance) : { leads: new Int16Array(0), turns: new Float32Array(0) };
 
     const layers = [];
     groups.forEach((group) => {
-      const field = Kit.sculpt.sample(group.solids, { detail });
-      const skin = Kit.sculpt.surface(field);
-      layers.push({ id: `skin:${group.ramp}`, ramp: group.ramp, inkGroup: group.inkGroup, inkClass: group.ramp, ...skin, ...Kit.sculpt.weights(skin.positions, group.solids, { spread: SCULPT.weightSpread }) });
-      if (!regions || !frames) return;
-      // Painted layers lie on this skin. The regions of one garment (its waist, chest and sleeves are separate
-      // regions, one per bone) with one paint and one raise are one layer; a region with no raise (stripes, a
-      // trim) is paint on its garment: it shares the garment's surface and is cut out of it.
       const bones = [...new Set(group.solids.map((part) => part.owner))];
-      /** @type {Map<string, {key: string, part: ?string, ramp: number, raise: number, order: number, tests: Map<number, Function[]>}>} */
-      const garments = new Map();
-      bones.forEach((bone) =>
-        regions[bone].forEach((region, index) => {
-          if (region.ramp < 0) return;
-          const key = `${region.part || ''}|${region.ramp}|${region.raise || 0}`;
-          const garment = garments.get(key) || { key, part: region.part || null, ramp: region.ramp, raise: region.raise || 0, order: 0, tests: new Map() };
-          garment.order = Math.max(garment.order, index);
-          garment.tests.set(bone, [...(garment.tests.get(bone) || []), region.test]);
-          garments.set(key, garment);
-        })
-      );
-      const ordered = [...garments.values()].sort((first, second) => first.order - second.order);
-      const along = [0, 0];
-      /** Is a point of the field's space inside a garment? Asked of the bone whose solid is nearest. */
-      const insideOf = (garment) => (x, y, z) => {
-        const { size, origin, cell, nearest } = field;
-        const node = Math.round((x - origin[0]) / cell) + size[0] * (Math.round((y - origin[1]) / cell) + size[1] * Math.round((z - origin[2]) / cell));
-        const owner = nearest[node];
-        if (owner < 0) return false;
-        const part = group.solids[owner];
-        const tests = garment.tests.get(part.owner);
-        if (!tests) return false;
-        const inverse = part.inverse;
-        const [lx, ly, lz] = [inverse[0] * x + inverse[1] * y + inverse[2] * z + inverse[3], inverse[4] * x + inverse[5] * y + inverse[6] * z + inverse[7], inverse[8] * x + inverse[9] * y + inverse[10] * z + inverse[11]];
-        const frame = frames[part.owner];
-        Kit.surface.along(frame, lx, ly, lz, along);
-        // The outward direction: away from the bone's long axis at this height.
-        const [ex, ey, ez] = frame.end;
-        const [nx, ny, nz] = [lx - ex * along[0], ly - ey * along[0], lz - ez * along[0]];
-        const length = Math.hypot(nx, ny, nz) || 1;
-        for (let index = 0; index < tests.length; index++) if (tests[index](along[0], along[1], nx / length, ny / length, nz / length)) return true;
-        return false;
-      };
-      // Raised garments stack: each stands at least a gap above the last raised one of another part.
-      let lastOffset = 0;
-      const specs = [];
-      ordered
-        .filter((garment) => garment.raise > 0)
-        .forEach((garment) => {
-          const offset = Math.max(garment.raise, SCULPT.leastRaise, lastOffset + SCULPT.layerGap);
-          lastOffset = offset;
-          specs.push({ garment, offset, inside: insideOf(garment), isPaint: false });
-        });
-      ordered
-        .filter((garment) => garment.raise <= 0)
-        .forEach((garment) => {
-          const host = specs.find((spec) => spec.garment.part && spec.garment.part === garment.part && spec.garment.raise > 0);
-          const own = insideOf(garment);
-          const inside = host ? (x, y, z) => own(x, y, z) && host.inside(x, y, z) : own;
-          // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
-          specs.push({ garment, offset: (host ? host.offset : 0) + SCULPT.paintLift, inside, isPaint: true });
-        });
-      specs.forEach(({ garment, offset, inside, isPaint }) => {
-        const cloth = Kit.sculpt.surface(field, { offset, cut: inside, keep: (value) => value > -SCULPT.buriedDepth, walls: !isPaint });
-        if (!cloth.indices.length) return;
-        layers.push({ id: `region:${garment.key}`, ramp: garment.ramp, inkGroup: group.inkGroup, inkClass: garment.ramp, ...cloth, ...Kit.sculpt.weights(cloth.positions, group.solids, { spread: SCULPT.weightSpread }) });
+      const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
+      const field = Kit.sculpt.sample(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
+      const layerOf = (id, ramp, mesh, offset) => ({ id, ramp, inkGroup: group.inkGroup, inkClass: ramp, ...mesh, ...Kit.sculpt.weights(mesh.positions, group.solids, { spread: SCULPT.weightSpread, reach: offset + cell }) });
+      layers.push(layerOf(`skin:${group.ramp}`, group.ramp, Kit.sculpt.surface(field), 0));
+      specs.forEach(({ garment, offset, host, isPaint }) => {
+        const own = cutOf(garment, field, frames);
+        const within = host ? cutOf(host, field, frames) : null;
+        const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
+        // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
+        const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
+        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: SCULPT.buriedDepth, walls: !isPaint });
+        if (cloth.indices.length) layers.push(layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
       });
     });
     return { layers, replaced, matrices, clearance };
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, restMatrices, limbsOf, spreadPose, limbClearance, sculptLayers });
+  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers });
 })();
