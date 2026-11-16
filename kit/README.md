@@ -118,7 +118,12 @@ Kit.pack.toText(catalog.encode(recipe));                              // an 8-ch
 | `look-toon.js` | `Kit.look.shading`: palette texture, toon material (bands, dither, rim, glint, emissive) and inverted-hull outline for any mesh, skinned or instanced |
 | `look-ink.js` | `Kit.look.inkPass`: low-resolution index target, one-texel screen-space ink, whole-number upscale |
 | `look-view.js` | `Kit.look.view`: composes the above per preset (toon, pixel, soft toon); texel snapping, dither anchoring, slow-device fallback |
+| `look-panel.js` | `Kit.look.panel`: the look's controls as shared components (preset, knobs, palette rows, the panel sheet) and `lookControls(view)` |
 | `look-show.js` | the `look` screen (`Kit.play('look')`): two stand-in figures, every knob, and on-request measurements |
+| `figure-shapes.js` | pure. `Kit.figure` shape builders (capsule, sphere, box, lathe, extrude) to plain arrays per level of detail, `shapeKey`, `writeBoneMatrix` |
+| `figure-layout.js` | pure. `Kit.figure.layout` (bake -> pieces with ramps and ink groups), `planUpdate` (what an edit changes), `measureRest` / `fitView` (grounding, framing) |
+| `figure.js` | `Kit.figure.build` (a bake drawn through `Kit.look`, posed in one pass, updated incrementally), `geometryCache`, `crowd` (instanced, one bake) |
+| `figure-show.js` | the `figures` screen (`Kit.play('figures')`): the body samples in 3D, live edits, a debug pose and the binding probe |
 
 ### Component library (`kit/ui/`, needs a browser)
 
@@ -174,7 +179,7 @@ input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/lay
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
 lineage  flags  columns  seeded  pack  palette  rig  reach  dynamics
 body-plan  body-parts  body-recipe  body-edit  body-store  body-samples  body-debug  body-gallery
-look-settings  look-toon  look-ink  look-view  look-show
+look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show
 games/*.js  ui/gallery
 shell
 ui/menu
