@@ -19,7 +19,10 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     catalogs.forEach(({ name, catalog }) => {
       const sheet = proof.suite('turn', catalog);
       assert.strictEqual(sheet.cells.length, catalog.speciesIds().length * 8, name);
-      assert.ok(sheet.cells.some((cell) => cell.yaw === 0.5), `${name}: the back is shown`);
+      assert.ok(
+        sheet.cells.some((cell) => cell.yaw === 0.5),
+        `${name}: the back is shown`
+      );
     });
   });
   test('proof: the options suite shows every choice of every socket, from a front, a side and a back view', () => {
@@ -39,7 +42,10 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
   });
   test('proof: the acts suite lists only what a body can do, in eight phases; unknown names are refused with the choices', () => {
     const samples = catalogs.find((entry) => entry.name === 'samples').catalog;
-    const labels = proof.suite('acts', samples).cells.map((cell) => cell.label).join('|');
+    const labels = proof
+      .suite('acts', samples)
+      .cells.map((cell) => cell.label)
+      .join('|');
     assert.match(labels, /carp swim 0\/8/, 'a fish swims');
     assert.doesNotMatch(labels, /carp walk/, 'a fish is not asked to walk');
     assert.match(labels, /hound walk 7\/8/, 'a quadruped walks');

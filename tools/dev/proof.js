@@ -11,8 +11,8 @@ const path = require('path');
 const { ROOT } = require('./project');
 const { openArcade } = require('./browser');
 
-/** Pixels per cell across (PROOF_CELL in the environment overrides it for bigger cells), and the most rows per picture (a picture stays readable when scaled to a screen). */
-const PAGE = { cellWidth: Number(process.env.PROOF_CELL) || 230, rows: 4, mostPages: 40, settleMs: 350 };
+/** Pixels per cell across (PROOF_CELL in the environment overrides it for bigger cells), and the most rows per picture (a picture stays readable when scaled to a screen; PROOF_ROWS overrides it). */
+const PAGE = { cellWidth: Number(process.env.PROOF_CELL) || 230, rows: Number(process.env.PROOF_ROWS) || 4, mostPages: 40, settleMs: 350 };
 const OUT = path.join(ROOT, 'shots', 'proof');
 
 /** Stacks PNG buffers of equal width into one file, top to bottom, on a 2D canvas in the page (no image library needed). */

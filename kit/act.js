@@ -124,6 +124,9 @@
   const SIDE_SIGN = Object.freeze([1, -1]);
   /** The `front` of an arm channel that points straight ahead, radians. */
   const AHEAD = Math.PI / 2;
+  /** Where the last part of a foot channel (its pitch) and of an arm channel (how far out its elbow is) sits. */
+  const FOOT_PITCH = 3;
+  const ELBOW_OUT = FOOT_PITCH;
   /** Metres under which a flat offset has no direction. */
   const TINY = 1e-6;
   /** Joints an arm needs to be posed as an arm: shoulder, elbow, hand. */
@@ -157,7 +160,7 @@
     arcFront: 0.75, // how far towards straight ahead the arc pulls the arm at its middle, 0..1
     arcBend: 0.3, // and how much shorter the reach is there (the elbow bends): the hand never sweeps out through a T
     headClear: 1.05, // a hand keyed inside the head is moved out to this many head radii from its middle
-    handLead: 0.1, // arm lengths a reaching hand is kept ahead of the head's surface along its reach, where the body can
+    handLead: 0.35, // arm lengths a reaching hand is kept ahead of the head's surface along its reach, where the body can
     leadMost: 1.2, // radians the trunk will tip up off a reach line to let the hands lead (a short-armed, big-headed body)
     closeMost: 0.6, // arm lengths the body is moved to bring a point its hand is pulled to within the arm's reach
     leadBack: 0.35, // how much of that tipping is backwards rather than upwards
@@ -874,7 +877,7 @@
     const cap = flat > travel.most * measured.stature ? (travel.most * measured.stature) / flat : 1;
     acting.travel[0] = left * cap;
     // A travel longer than a stride is run in steps; the foot that plants beside the point takes the last one.
-    acting.steps = travel.stride > 0 && measured.legs ? Math.max(1, Math.round((Math.min(flat, travel.most * measured.stature)) / (travel.stride * measured.unit))) : 1;
+    acting.steps = travel.stride > 0 && measured.legs ? Math.max(1, Math.round(Math.min(flat, travel.most * measured.stature) / (travel.stride * measured.unit))) : 1;
     acting.lastFoot = 0;
     for (let index = 0; index < acting.now.reaches.length; index++) {
       const reach = acting.now.reaches[index];
@@ -1217,7 +1220,7 @@
       const pulledIn = distance > longest ? (longest * tuck) / distance : 1;
       Kit.gait.reachLeg(motion, legs, leg, translation[hip] + offsetX * pulledIn, translation[hip + 1] + offsetY * pulledIn, translation[hip + 2] + offsetZ * pulledIn);
       const lifted = Math.max(0, distance - longest) / length;
-      Kit.gait.levelFoot(motion, legs, leg, motion.heading, values[channel + 3] * keyed + Math.min(TUNING.mostHangPitch, lifted * TUNING.hangPitch));
+      Kit.gait.levelFoot(motion, legs, leg, motion.heading, values[channel + FOOT_PITCH] * keyed + Math.min(TUNING.mostHangPitch, lifted * TUNING.hangPitch));
     }
   };
 
@@ -1232,7 +1235,7 @@
     const raise = values[channel];
     const front = values[channel + 1];
     const extend = clamp(values[channel + 2], TUNING.armShortest, TUNING.armLongest) * length;
-    const elbowOut = values[channel + 3];
+    const elbowOut = values[channel + ELBOW_OUT];
     const outSign = SIDE_SIGN[side];
     const level = Math.sin(raise);
     // The frame the arm hangs in: how its parent has turned from rest (rest^-1 first, then the parent's world rotation).

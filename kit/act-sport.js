@@ -261,8 +261,28 @@
       keys: [
         { at: 0.14, ease: 'out', shift: [0, -0.2, 0], turn: [0.2, 0, 0], spine: [0.2, 0, 0], arms: [0.5, 1.2, 0.8, 0.4] },
         // Down: one knee dropped behind, the trunk folded over the ball.
-        { at: 0.4, ease: 'in', shift: [0, -0.74, 0.1], turn: [0.7, 0, 0], spine: [0.7, 0, 0], head: [-0.4, 0, 0], arms: [0.5, AHEAD, 0.95, 0.5], footRight: [0.05, 0, -0.5, 0.9], footLeft: [0.1, 0, 0.15, 0] },
-        { at: 0.56, ease: 'out', shift: [0, -0.76, 0.06], turn: [0.72, 0, 0], spine: [0.74, 0, 0], head: [-0.1, 0, 0], arms: [0.7, AHEAD + 0.3, 0.5, 0.7], footRight: [0.05, 0, -0.5, 0.9], footLeft: [0.1, 0, 0.15, 0] },
+        {
+          at: 0.4,
+          ease: 'in',
+          shift: [0, -0.74, 0.1],
+          turn: [0.7, 0, 0],
+          spine: [0.7, 0, 0],
+          head: [-0.4, 0, 0],
+          arms: [0.5, AHEAD, 0.95, 0.5],
+          footRight: [0.05, 0, -0.5, 0.9],
+          footLeft: [0.1, 0, 0.15, 0],
+        },
+        {
+          at: 0.56,
+          ease: 'out',
+          shift: [0, -0.76, 0.06],
+          turn: [0.72, 0, 0],
+          spine: [0.74, 0, 0],
+          head: [-0.1, 0, 0],
+          arms: [0.7, AHEAD + 0.3, 0.5, 0.7],
+          footRight: [0.05, 0, -0.5, 0.9],
+          footLeft: [0.1, 0, 0.15, 0],
+        },
         { at: 0.72, shift: [0, -0.74, 0.06], turn: [0.66, 0, 0], spine: [0.7, 0, 0], arms: [0.75, AHEAD + 0.35, 0.45, 0.7], footRight: [0.05, 0, -0.5, 0.9], footLeft: [0.1, 0, 0.15, 0] },
         { at: 0.88, ease: 'in', shift: [0, -0.25, 0], turn: [0.2, 0, 0], spine: [0.2, 0, 0], arms: [1, AHEAD + 0.4, 0.45, 0.6], carry: 1 },
         { at: 1, ease: 'settle', carry: 1 },
@@ -364,13 +384,15 @@
    * Stopping a ball, whichever way gets the hands to it: caught standing when it comes at the body, jumped for
    * overhead, dropped onto at the feet, dived at to the side and stepped-and-dived at beyond that. Spans are in
    * the body's own arm spans aside and hand-reach heights up, so a short-armed body dives sooner than a long one.
+   * `LOW`: under this share of its hand-reach height a ball in front is dropped onto, not caught standing.
    */
+  const LOW = 0.3;
   Kit.act.defineFamily({
     id: 'save',
     label: 'Save',
     forms: [
-      { play: 'smother', aside: [0, 1], up: [0, 0.3] },
-      { play: 'catch', aside: [0, 0.5], up: [0.3, 1] },
+      { play: 'smother', aside: [0, 1], up: [0, LOW] },
+      { play: 'catch', aside: [0, 0.5], up: [LOW, 1] },
       { play: 'catchHigh', aside: [0, 1.5], up: [1, Infinity] },
       { play: 'dive', aside: [0, 4.4] },
       { play: 'diveStep' },

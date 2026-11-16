@@ -19,6 +19,7 @@
   /** The three directions that between them show a front, a side and a back. */
   const THREE_VIEWS = Object.freeze([0.07, 0.3, 0.55]);
   const PHASES = 8;
+  const { VECTOR_STRIDE } = Kit.rig;
   const TURN = Math.PI * 2;
   const ROLL_SEED = 20261116;
   const DEFAULT_SEED = 1;
@@ -220,7 +221,9 @@
   /** Where the far ball of the `kickRunUp` act lies, in leg lengths ahead. */
   const FAR_BALL_LEGS = 3.4;
   /** The low shot of the `diveLow` act, in statures: to the body's right, near the ground. */
-  const LOW_SHOT = Object.freeze({ aside: 1.3, up: 0.16 });
+  const LOW_SHOT = Object.freeze({ aside: 1.3, up: 0.16, ahead: 0.1 });
+  /** A ball's middle above the ground and to the kicking side, in leg lengths (the kick's own default). */
+  const BALL_LEGS = 0.25;
 
   /** A performance of `Kit.act.REPERTOIRE` as an act: a whole character standing on the spot, the performance played from its start; `pointOf` (an `ActRig` -> [x, y, z]) gives its target when the default is not wanted. */
   const performanceAct = (id, pointOf) => ({
@@ -291,8 +294,8 @@
     };
     Object.keys(Kit.act.REPERTOIRE).forEach((id) => (ACTS[id] = performanceAct(id)));
     // The same rows with their point somewhere else: a ball three strides away is run up to, a low shot is dived at low.
-    ACTS.kickRunUp = performanceAct('kick', (measured) => [-0.25 * measured.unit, 0.25 * measured.unit, FAR_BALL_LEGS * measured.unit]);
-    ACTS.diveLow = performanceAct('dive', (measured) => [-LOW_SHOT.aside * measured.stature, LOW_SHOT.up * measured.stature, 0.1 * measured.stature]);
+    ACTS.kickRunUp = performanceAct('kick', (measured) => [-BALL_LEGS * measured.unit, BALL_LEGS * measured.unit, FAR_BALL_LEGS * measured.unit]);
+    ACTS.diveLow = performanceAct('dive', (measured) => [-LOW_SHOT.aside * measured.stature, LOW_SHOT.up * measured.stature, LOW_SHOT.ahead * measured.stature]);
     if (Kit.act.FAMILIES.save) GOAL_GRID.up.forEach((_up, row) => GOAL_GRID.across.forEach((_across, column) => (ACTS[saveActId(column, row)] = saveAct(column, row))));
   }
 
@@ -424,7 +427,7 @@
     const widenPose = (posed) => {
       Kit.body.worldTransforms(plan, posed, world);
       for (let bone = 0; bone < plan.boneCount; bone++) {
-        widen(world.translation[bone * 3], world.translation[bone * 3 + 1], world.translation[bone * 3 + 2]);
+        widen(world.translation[bone * VECTOR_STRIDE], world.translation[bone * VECTOR_STRIDE + 1], world.translation[bone * VECTOR_STRIDE + 2]);
         Kit.body.tailPosition(plan, world, bone, tail);
         widen(tail[0], tail[1], tail[2]);
       }
@@ -465,6 +468,7 @@
   /** Palette rows: a page of 32 figures at `Kit.figure.RAMP_SLOTS` rows each, which is also all the indexed looks address (`Kit.look.INDEXED_ROWS`). */
   const ATLAS_ROWS = 512;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
+  const CAMERA_PITCH = (CAMERA.pitchDegrees * Math.PI) / 180;
   /** Room round a figure in its cell, as shares of the largest figure's size; `head` shows this share of the height, from the top. */
   const CELL = Object.freeze({ sideMargin: 1.15, topMargin: 1.22, headShare: 0.42, headTop: 0.12, leastWidth: 0.5 });
   /**
@@ -503,7 +507,7 @@
         if (!sweeps.has(key)) sweeps.set(key, sweep(bake, cell.act || 'rest', cell.yaw));
         return sweeps.get(key);
       };
-      /** @type {Array<{figure: Object, cell: ProofCell, refusal: ?string}>} */
+      /** @type {Array<{figure: Object, cell: ProofCell, refusal: ?string, posed: ProofPose}>} */
       let shown = [];
       let grid = { columns: 1, rows: 1, cellWidth: 1, cellHeight: 1 };
       const catalogs = new Map();
@@ -576,12 +580,18 @@
           const beyond = Math.max(0, measured.reach - swept.restHalf);
           const middle = origin[0] * cosine + origin[2] * sine;
           // In the figure's space, the ground the moving body stands on at 0: its surface goes beyond its joints by what the rest pose shows.
-          return { left: swept.left + middle - beyond, right: swept.right + middle + beyond, top: swept.top + Math.max(0, measured.highestY - origin[1] - swept.restTop), stature: swept.restTop, origin };
+          return {
+            left: swept.left + middle - beyond,
+            right: swept.right + middle + beyond,
+            top: swept.top + Math.max(0, measured.highestY - origin[1] - swept.restTop),
+            stature: swept.restTop,
+            origin,
+          };
         });
         const aspect = Math.min(SWEPT.aspects[1], Math.max(SWEPT.aspects[0], ...frames.map((frame) => (frame.right - frame.left) / (frame.top * (1 + SWEPT.floor)))));
         const rows = Math.max(1, Math.ceil(shown.length / columns));
         grid = { columns, rows, cellWidth: aspect, cellHeight: 1 };
-        const tilt = Math.tan((CAMERA.pitchDegrees * Math.PI) / 180);
+        const tilt = Math.tan(CAMERA_PITCH);
         const drawn = shown.map((entry, index) => {
           const frame = frames[index];
           const [column, row] = [index % columns, Math.floor(index / columns)];
@@ -621,7 +631,7 @@
         const [halfWidth, halfHeight] = [(size.w * worldPerPixel) / 2, (size.h * worldPerPixel) / 2];
         Object.assign(camera, { left: -halfWidth, right: halfWidth, top: halfHeight, bottom: -halfHeight });
         camera.updateProjectionMatrix();
-        const pitch = (CAMERA.pitchDegrees * Math.PI) / 180;
+        const pitch = CAMERA_PITCH;
         camera.position.set(0, height / 2 + Math.sin(pitch) * CAMERA.distance, Math.cos(pitch) * CAMERA.distance);
         camera.lookAt(0, height / 2, 0);
       };
@@ -639,15 +649,18 @@
         if (!cells.length) return null;
         const cross = MARK_CROSS * MARK_UNITS;
         const at = (value) => value * MARK_UNITS;
-        return html`<div style=${`position:absolute;inset:0;display:grid;grid-template-columns:repeat(${columns},1fr);grid-template-rows:repeat(${rows},1fr);pointer-events:none`}>
+        // Fixed to the window, which the canvas fills: the HUD layer the labels sit in is inset from it.
+        return html`<div style=${`position:fixed;inset:0;display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));grid-template-rows:repeat(${rows},minmax(0,1fr));pointer-events:none`}>
           ${cells.map(
-            (cell) => html`<svg viewBox=${`0 0 ${aspect * MARK_UNITS} ${MARK_UNITS}`} preserveAspectRatio="none" style="width:100%;height:100%;overflow:hidden">
-              ${cell.from &&
-              html`<g style=${MARK_STYLE}>
+            (cell) => html`<svg viewBox=${`0 0 ${aspect * MARK_UNITS} ${MARK_UNITS}`} preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:hidden">
+              ${
+                cell.from &&
+                html`<g style=${MARK_STYLE}>
                 <line x1=${at(cell.from[0])} y1=${at(cell.from[1])} x2=${at(cell.here[0])} y2=${at(cell.here[1])} stroke-dasharray="16 12" />
                 <line x1=${at(cell.from[0]) - cross} y1=${at(cell.from[1])} x2=${at(cell.from[0]) + cross} y2=${at(cell.from[1])} />
                 <line x1=${at(cell.from[0])} y1=${at(cell.from[1]) - cross} x2=${at(cell.from[0])} y2=${at(cell.from[1]) + cross} />
-              </g>`}
+              </g>`
+              }
               ${cell.ball && html`<circle cx=${at(cell.ball[0])} cy=${at(cell.ball[1])} r=${at(cell.ball[2])} style=${`${MARK_STYLE};stroke:#ffd84a`} />`}
             </svg>`
           )}
@@ -667,7 +680,19 @@
           view.dispose();
           cache.dispose();
         },
-        debugState: () => ({ cells: shown.length, grid }),
+        debugState: () => ({
+          cells: shown.length,
+          grid,
+          marks: marks.value.cells,
+          placed: shown.map((entry) => ({
+            label: entry.cell.label,
+            x: entry.figure.root.position.x,
+            y: entry.figure.root.position.y,
+            scale: entry.figure.root.scale.x,
+            origin: entry.posed.origin,
+            travel: entry.posed.travel,
+          })),
+        }),
         show,
       };
     },

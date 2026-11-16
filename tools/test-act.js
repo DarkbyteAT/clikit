@@ -237,7 +237,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     });
   });
 
-  test('act: a save chooses its form by where the ball is against the body\'s own reach, says which, and gets a hand to a 5 by 3 goal of shots on four builds', () => {
+  test("act: a save chooses its form by where the ball is against the body's own reach, says which, and gets a hand to a 5 by 3 goal of shots on four builds", () => {
     const builds = [...['person', 'stout', 'lanky'].map((species) => wardrobe.bakery().bakeRecipe({ species, seed: 1 })), samples.bakery().bakeRecipe({ species: 'human', seed: 1 })];
     builds.forEach((bake) => {
       const measured = act.rig(bake.plan, bake.rest);
@@ -279,7 +279,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.strictEqual(act.choose(state, 'testStop', { target: [1.5, 0.6, 0.1] }), 'dive');
   });
 
-  test('act: in the air a leg is drawn up by its foot\'s keyed lift: a dive\'s upper leg is bent, its lower one trails (control: standing, both are long)', () => {
+  test("act: in the air a leg is drawn up by its foot's keyed lift: a dive's upper leg is bent, its lower one trails (control: standing, both are long)", () => {
     const state = cast(person);
     run(state, 1);
     const legs = Kit.gait.legs(person.plan, person.rest);
@@ -309,11 +309,29 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     };
     const human = samples.bakery().bakeRecipe({ species: 'human', seed: 1 });
     const arm = act.rig(human.plan, human.rest).armLength[0];
-    const lowering = { id: 'testLower', seconds: 1, keys: [{ at: 0.2, armLeft: [3, 0, 1, 0] }, { at: 0.8, armLeft: [0.2, 0, 1, 0] }] };
+    const lowering = {
+      id: 'testLower',
+      seconds: 1,
+      keys: [
+        { at: 0.2, armLeft: [3, 0, 1, 0] },
+        { at: 0.8, armLeft: [0.2, 0, 1, 0] },
+      ],
+    };
     const middle = handOut(human, lowering, 0.5);
     assert.ok(middle.ahead > 0.4 * arm, `half way down the hand is in front of the shoulder (${middle.ahead} m ahead, ${middle.aside} m aside)`);
-    assert.ok(middle.aside < 0.75 * arm, 'and not out at arm\'s length to the side');
-    const small = handOut(human, { id: 'testSmall', seconds: 1, keys: [{ at: 0.2, armLeft: [1.9, 0, 1, 0] }, { at: 0.8, armLeft: [1.2, 0, 1, 0] }] }, 0.5);
+    assert.ok(middle.aside < 0.75 * arm, "and not out at arm's length to the side");
+    const small = handOut(
+      human,
+      {
+        id: 'testSmall',
+        seconds: 1,
+        keys: [
+          { at: 0.2, armLeft: [1.9, 0, 1, 0] },
+          { at: 0.8, armLeft: [1.2, 0, 1, 0] },
+        ],
+      },
+      0.5
+    );
     assert.ok(small.aside > 0.9 * arm && Math.abs(small.ahead) < 0.2 * arm, `control: a small move at the side stays at the side (${small.aside}, ${small.ahead})`);
     // Straight up beside a big head on a short arm: the hand would be inside the head.
     const up = { id: 'testUp', seconds: 1, hold: true, keys: [{ at: 0.5, armLeft: [3.05, 0, 1, 0] }] };
@@ -321,7 +339,10 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const raised = handOut(person, up, 1).state;
     const head = jointOf(raised, 'head');
     const centre = [head[0], head[1] + measured.headRadius, head[2]];
-    assert.ok(distance(jointOf(raised, 'handLeft'), centre) > 0.95 * measured.headRadius, `the hand is outside the head (${distance(jointOf(raised, 'handLeft'), centre)} m from its middle, radius ${measured.headRadius})`);
+    assert.ok(
+      distance(jointOf(raised, 'handLeft'), centre) > 0.95 * measured.headRadius,
+      `the hand is outside the head (${distance(jointOf(raised, 'handLeft'), centre)} m from its middle, radius ${measured.headRadius})`
+    );
   });
 
   test('act: a ball further off than a step is run up to: both feet step in turn, the kick still lands on it (control: a near ball takes no run)', () => {
@@ -446,7 +467,10 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       lowest = Math.min(lowest, tipOf(sitter)[1]);
     }
     assert.ok(lowest > -HEM_TOLERANCE, `the cloak's hem never went under the ground by more than its own thickness (${lowest})`);
-    assert.ok(jointOf(sitter, 'pelvis')[1] < 0.1 && tipOf(sitter)[2] < 0 && tipOf(sitter)[1] < 0.06, `sat down, the cloak is laid on the ground behind (${tipOf(sitter)} pelvis ${jointOf(sitter, 'pelvis')})`);
+    assert.ok(
+      jointOf(sitter, 'pelvis')[1] < 0.1 && tipOf(sitter)[2] < 0 && tipOf(sitter)[1] < 0.06,
+      `sat down, the cloak is laid on the ground behind (${tipOf(sitter)} pelvis ${jointOf(sitter, 'pelvis')})`
+    );
     const jumper = cast(person);
     run(jumper, 1);
     act.play(jumper, 'jump');
@@ -457,7 +481,17 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.strictEqual(person.plan.stiffness[cloak], Kit.body.SOFT_KINDS.cloak.stiffness, 'the cloak is soft by its kind');
     const skirt = person.plan.boneIndex('bottom/skirt');
     assert.ok(person.plan.stiffness[skirt] < motion.LOOSE_DEFAULTS.below && person.plan.stiffness[person.plan.boneIndex('chest')] > motion.LOOSE_DEFAULTS.below, 'a hem is loose, a chest is not');
-    assert.throws(() => Kit.body.plan({ id: 'bad', bones: [{ name: 'root', roles: ['root'] }, { name: 'lock', parent: 'root', soft: 'jelly' }] }), /soft.*jelly.*hair/s);
+    assert.throws(
+      () =>
+        Kit.body.plan({
+          id: 'bad',
+          bones: [
+            { name: 'root', roles: ['root'] },
+            { name: 'lock', parent: 'root', soft: 'jelly' },
+          ],
+        }),
+      /soft.*jelly.*hair/s
+    );
   });
 
   test('act: the per-frame path builds no typed arrays and calls no array-building methods (control: a stage that copies an array each frame is caught)', () => {
