@@ -8,7 +8,9 @@ them; `tools/BRIEF.txt` holds the running operational detail. Where the two disa
 A phone-first web page of small playable games and tools, all built on one shared kit (`kit/`). The owner
 plays each for about a minute to decide which ideas deserve to be built out. The lasting product is the kit:
 a set of small, individually useful interfaces and data models that compose into games quickly. A game is
-proof that the kit works, not the other way round.
+proof that the kit works, not the other way round. The kit is not a flat box of parts: it is a stack of
+small platforms, each written in the one below and each making new kinds of piece possible above it
+(amendment 27).
 
 ## North star
 
@@ -189,6 +191,16 @@ started later; the dispatcher forwards each new amendment to every agent as it a
 26. The lead does not disappear into one long inline task. Independent pieces of work go to parallel
     agents on the lead's own model tier, each in its own worktree with a full brief; the lead keeps
     design decisions, integration and the visual review of every landing, and stays reachable.
+
+27. Stacked micro-platforms, not a box of bricks. The point is not only reusable pieces but foundations
+    that make more useful pieces possible later, at several levels of abstraction, complexity and depth.
+    Each layer is a small platform in its own right: it has its own vocabulary, composes the layers under
+    it, and is what the next layer is written in (signed-distance shapes, then a sculpt kernel, then body
+    plans, then a wardrobe, then a character maker, then a game's team). Judge a piece by what it lets the
+    layer above express that could not be expressed before, and by behaviour that emerges from combining
+    pieces that were not written for each other. Prefer the elegant composition (few concepts, each
+    orthogonal, combining freely) over the special case; if a feature needs a new one-off, ask which
+    missing layer would have made it a few lines of data.
 
 ## Measures we have gamed before
 
