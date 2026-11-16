@@ -217,7 +217,7 @@
    * `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail);
    * `mostAspect`: the widest a long body is drawn, in body heights.
    */
-  const CELL = Object.freeze({ sideMargin: 1.06, topMargin: 1.12, floor: 0.04, headMargin: 1.25, leastWidth: 0.5, figureShare: 1.3, mostAspect: 1.3 });
+  const CELL = Object.freeze({ sideMargin: 1.06, topMargin: 1.12, floor: 0.04, headMargin: 1.4, leastWidth: 0.5, figureShare: 1.3, mostAspect: 1.3 });
 
   Kit.register({
     id: 'proof',
