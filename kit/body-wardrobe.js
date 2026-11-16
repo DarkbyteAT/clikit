@@ -1257,7 +1257,7 @@
 
   /**
    * Palettes by name. Ten natural skins from pale to deep, eight fantasy skins, ten hair colours (six natural,
-   * two greys, two dyes), eight irises, four eye whites, six lip tones, twelve dyes for cloth, six leathers,
+   * two greys, two dyes), eight irises, two natural eye whites and three fantasy ones, six lip tones, twelve dyes for cloth, six leathers,
    * six metals and stones, four inks.
    */
   const PALETTES = {
@@ -1305,9 +1305,9 @@
       ramp('violet', 0.75, { saturation: 0.45, darkest: 0.12, lightest: 0.66 }),
       ramp('gold', 0.13, { saturation: 0.9, darkest: 0.22, lightest: 0.78 }),
     ],
-    whites: [
+    whites: [ramp('ivory', 0.11, { saturation: 0.15, darkest: 0.7, lightest: 0.96 }), ramp('cool', 0.58, { saturation: 0.15, darkest: 0.7, lightest: 0.97 })],
+    fantasyWhites: [
       ramp('ivory', 0.11, { saturation: 0.15, darkest: 0.7, lightest: 0.96 }),
-      ramp('cool', 0.58, { saturation: 0.15, darkest: 0.7, lightest: 0.97 }),
       ramp('void', 0.7, { saturation: 0.2, darkest: 0.04, lightest: 0.2 }),
       ramp('ember', 0.08, { saturation: 0.8, darkest: 0.4, lightest: 0.8 }),
     ],
@@ -1667,7 +1667,7 @@
       traits: ['horned', 'tailed'],
       set: {
         code: 13,
-        colors: { skin: 'fantasySkins' },
+        colors: { skin: 'fantasySkins', sclera: 'fantasyWhites' },
         // Fill tables merge key by key down the lineage, so an option is removed by weighting it 0.
         fills: {
           ears: { earsRound: 0, earsSmall: 0, earsLarge: 0, earsPointed: 2, earsLong: 3 },
