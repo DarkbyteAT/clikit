@@ -633,11 +633,21 @@
 
   const scratchQuaternion = new Float32Array(QUATERNION_STRIDE);
 
-  /** Holds a leg's foot level, facing the way it was planted and pitched about its toe, whatever the shin is doing. */
-  const levelFoot = (motion, rig, feet, leg) => {
+  /**
+   * Holds a leg's foot level, facing a heading and pitched about its own left axis, whatever the shin is doing.
+   * @param {Object} motion a `MotionState` whose world transforms are current for the leg
+   * @param {LegRig} rig
+   * @param {number} leg index in the rig's gait order
+   * @param {number} heading the way the foot points, radians about +Y
+   * @param {number} pitch radians; positive puts the toes down (a heel rising), negative lifts them (a heel strike)
+   * @returns {void}
+   * @complexity O(bones hanging from the foot), no allocation
+   * @example Kit.gait.levelFoot(motion, rig, leg, motion.heading, 0);
+   */
+  const levelFoot = (motion, rig, leg, heading, pitch) => {
     const { plan, pose, world } = motion;
-    const halfYaw = feet.footHeading[leg] / 2;
-    const halfPitch = feet.pitch[leg] / 2;
+    const halfYaw = heading / 2;
+    const halfPitch = pitch / 2;
     // yaw about +Y, then pitch about the foot's own left axis (+X): toes down as the heel comes up.
     const turnX = Math.cos(halfYaw) * Math.sin(halfPitch);
     const turnY = Math.sin(halfYaw) * Math.cos(halfPitch);
@@ -660,6 +670,49 @@
       turnW * restW - turnX * restX - turnY * restY - turnZ * restZ
     );
     if (plan.subtreeEnd[foot] > foot + 1) Kit.body.worldTransforms(plan, pose, world, motion.x, motion.y, motion.z, motion.heading, foot + 1, plan.subtreeEnd[foot]);
+  };
+
+  /**
+   * Solves one leg so its ankle is at a world point: exactly for a leg of three bones (the knee hinted to the
+   * side its limits bend to, turned by the body's heading), as a chain for a longer one. The foot's own
+   * rotation is left to `levelFoot`. Usable by any stage that puts a foot somewhere (a kick, a crouch).
+   * @param {Object} motion a `MotionState` whose world transforms are current down to the hip
+   * @param {LegRig} rig from `Kit.gait.legs`
+   * @param {number} leg index in the rig's gait order
+   * @param {number} targetX where the ankle should be, world metres
+   * @param {number} targetY
+   * @param {number} targetZ
+   * @returns {void}
+   * @complexity O(leg bones), no allocation
+   * @example Kit.gait.reachLeg(motion, rig, 0, footX, groundY + rig.sole[0], footZ);
+   */
+  const reachLeg = (motion, rig, leg, targetX, targetY, targetZ) => {
+    const { plan, world } = motion;
+    const chain = rig.longChains[leg];
+    if (chain) {
+      Kit.reach.chain(plan.parent, motion.pose, world, chain, targetX, targetY, targetZ);
+      return;
+    }
+    const sine = Math.sin(motion.heading);
+    const cosine = Math.cos(motion.heading);
+    const hip = rig.upper[leg] * VECTOR_STRIDE;
+    const bendX = rig.bendX[leg] * cosine + rig.bendZ[leg] * sine;
+    const bendZ = -rig.bendX[leg] * sine + rig.bendZ[leg] * cosine;
+    const reach = rig.length[leg];
+    Kit.reach.twoBone(
+      plan.parent,
+      motion.pose,
+      world,
+      rig.upper[leg],
+      rig.middle[leg],
+      rig.end[leg],
+      targetX,
+      targetY,
+      targetZ,
+      (world.translation[hip] + targetX) / 2 + bendX * reach,
+      (world.translation[hip + 1] + targetY) / 2,
+      (world.translation[hip + 2] + targetZ) / 2 + bendZ * reach
+    );
   };
 
   /** This frame's pose at full detail: the body set where its legs can carry it, then every leg solved to its foot. */
@@ -705,30 +758,8 @@
       feet.targetX[leg] = targetX;
       feet.targetY[leg] = targetY;
       feet.targetZ[leg] = targetZ;
-      const chain = rig.longChains[leg];
-      if (chain) Kit.reach.chain(plan.parent, motion.pose, world, chain, targetX, targetY, targetZ);
-      else {
-        // The knee is hinted to the side its limits bend to (in the world: the body-frame direction turned by the heading).
-        const hip = rig.upper[leg] * VECTOR_STRIDE;
-        const bendX = rig.bendX[leg] * cosine + rig.bendZ[leg] * sine;
-        const bendZ = -rig.bendX[leg] * sine + rig.bendZ[leg] * cosine;
-        const reach = rig.length[leg];
-        Kit.reach.twoBone(
-          plan.parent,
-          motion.pose,
-          world,
-          rig.upper[leg],
-          rig.middle[leg],
-          rig.end[leg],
-          targetX,
-          targetY,
-          targetZ,
-          (world.translation[hip] + targetX) / 2 + bendX * reach,
-          (world.translation[hip + 1] + targetY) / 2,
-          (world.translation[hip + 2] + targetZ) / 2 + bendZ * reach
-        );
-      }
-      levelFoot(motion, rig, feet, leg);
+      reachLeg(motion, rig, leg, targetX, targetY, targetZ);
+      levelFoot(motion, rig, leg, feet.footHeading[leg], feet.pitch[leg]);
     }
   };
 
@@ -807,22 +838,29 @@
   const arms = () => Kit.motion.stage({ name: 'gait.arms', pose: poseArms });
 
   /**
-   * Walking, ready made: lean, arms, planted feet and trailing tails and wings at full detail; clock-driven
-   * swing at level of detail 1; nothing beyond. The same stage walks any plan with two or more legs.
+   * Walking, ready made: lean, arms, planted feet, and tails, wings and everything loose trailing at full
+   * detail; clock-driven swing at level of detail 1; nothing beyond. The same stage walks any plan with two or
+   * more legs. Other stages join it at the two places where order matters: `before` the legs are solved
+   * (whatever moves the body over its feet: breathing, a weight shift) and `after` (whatever poses the upper
+   * body over the walk: a performance, a gaze), both ahead of the trailing chains.
+   * @param {{before?: Array<Object|Function>, after?: Array<Object|Function>}} [options] stages of kit/motion.js
    * @returns {Object} a `Stage`
    * @complexity see `plant` (detail 0) and `swing` (detail 1)
    * @example
    * const motion = Kit.motion.state(bake, Kit.gait.walk());
    * Kit.motion.advance(motion, dt, x, 0, z, heading);
    */
-  const walk = () =>
+  const walk = ({ before = [], after = [] } = {}) =>
     Kit.motion.byDetail([
       Kit.motion.sequence(
         Kit.motion.lean({ pitchPerSpeed: RUN_LEAN, pitchWeight: (motion, plan) => legs(plan, motion.rest).upright }),
+        ...before,
         arms(),
         plant(),
+        ...after,
         Kit.motion.trail(),
-        Kit.motion.trail({ roles: ['wing'], gravity: [0, -GRAVITY / 4, 0] })
+        Kit.motion.trail({ roles: ['wing'], gravity: [0, -GRAVITY / 4, 0] }),
+        Kit.motion.loose()
       ),
       Kit.motion.sequence(swing(), arms()),
     ]);
@@ -891,5 +929,5 @@
     return out;
   };
 
-  Kit.gait = { STRIDE, GAITS, GAIT_NAMES, CLOCK, SWING, STANCE, SWING_ONLY, ARMS, WALK_NEEDS, froude, strideLength, footOffset, legs, plant, swing, arms, walk, feet, support };
+  Kit.gait = { STRIDE, GAITS, GAIT_NAMES, CLOCK, SWING, STANCE, SWING_ONLY, ARMS, WALK_NEEDS, froude, strideLength, footOffset, legs, reachLeg, levelFoot, plant, swing, arms, walk, feet, support };
 })();

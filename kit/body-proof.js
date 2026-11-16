@@ -25,6 +25,8 @@
   /** Seconds a movement runs before its first phase is shown, so it has settled into its cycle. */
   const WARM_UP = 2;
   const SIMULATION_STEP = 1 / 60;
+  /** Seconds of standing the idle act is shown over. */
+  const IDLE_SECONDS = 6;
 
   const fail = (where, message) => {
     throw new Error(`Kit.body.proof.${where}: ${message}`);
@@ -93,10 +95,7 @@
     /** Every movement each species can do, in eight phases, from a three-quarter view and from the front. */
     acts: (catalog, _editor, { species, acts = Object.keys(ACTS).filter((id) => id !== 'rest') }) => {
       const bakery = catalog.bakery({ capacity: species.length });
-      const canDo = (id, act) => {
-        const bake = bakery.bakeRecipe(subjectOf(id));
-        return !Kit.motion.refusal(ACTS[act].stage(), bake.plan, bake.rest);
-      };
+      const canDo = (id, act) => !refusalOf(ACTS[act], bakery.bakeRecipe(subjectOf(id)));
       return {
         title: 'Movement',
         columns: PHASES,
@@ -139,7 +138,22 @@
    * @property {function(): Object} stage makes the motion stage (kit/motion.js)
    * @property {function(Object): number} speed metres per second for a bake (0: on the spot)
    * @property {function(Object, number): number} cycle seconds of one cycle for a bake at that speed
+   * @property {function(Object): void} [begin] called with the motion state once it has settled, before the
+   *   cycle that is shown (a one-shot performance starts here)
+   * @property {function(Object): ?string} [refusal] why a bake cannot do it, beyond what its stage needs
    */
+
+  /** Why a bake cannot do an act: the stage's refusal, or the act's own. */
+  const refusalOf = (act, bake) => Kit.motion.refusal(act.stage(), bake.plan, bake.rest) || (act.refusal ? act.refusal(bake) : null);
+
+  /** A performance of `Kit.act.REPERTOIRE` as an act: a whole character standing on the spot, the performance played from its start. */
+  const performanceAct = (id) => ({
+    stage: () => Kit.act.character({ fidgets: [] }),
+    speed: () => 0,
+    cycle: () => Kit.act.REPERTOIRE[id].seconds,
+    begin: (motion) => Kit.act.play(motion, id),
+    refusal: (bake) => Kit.act.refusal(id, bake.plan, bake.rest),
+  });
 
   /**
    * The movements a cell can show, by id. Open: a module that adds a movement adds a row (`Kit.body.proof.ACTS.wave = ...`),
@@ -152,6 +166,13 @@
     run: { stage: () => Kit.gait.walk(), speed: speedAt(1.6), cycle: (bake, speed) => Kit.gait.strideLength(speed, Kit.gait.legs(bake.plan, bake.rest).legLength) / speed },
     swim: { stage: () => Kit.swim.swim(), speed: () => 1, cycle: () => 1 },
   };
+  if (Kit.act) {
+    // Standing with nothing asked of it: breathing, a weight shift, a gaze and blinks over six seconds.
+    ACTS.idle = { stage: () => Kit.act.character({ fidgets: [] }), speed: () => 0, cycle: () => IDLE_SECONDS };
+    // A wave laid over a walk: the legs keep walking, one arm is taken over.
+    ACTS.walkWave = { ...ACTS.walk, stage: () => Kit.act.character({ fidgets: [] }), cycle: () => Kit.act.REPERTOIRE.wave.seconds, begin: (motion) => Kit.act.play(motion, 'wave'), refusal: (bake) => Kit.act.refusal('wave', bake.plan, bake.rest) };
+    Object.keys(Kit.act.REPERTOIRE).forEach((id) => (ACTS[id] = performanceAct(id)));
+  }
 
   /**
    * Poses a figure at a phase of an act by simulating it from a standing start, so the same cell is the same
@@ -171,17 +192,21 @@
       return null;
     }
     const { bake } = figure;
-    const stage = act.stage();
-    const refusal = Kit.motion.refusal(stage, bake.plan, bake.rest);
+    const refusal = refusalOf(act, bake);
     if (refusal) {
       figure.pose();
       return refusal;
     }
     const speed = act.speed(bake);
-    const until = WARM_UP + phase * act.cycle(bake, speed);
-    const motion = Kit.motion.state(bake, stage);
-    for (let time = 0; time < until; time += SIMULATION_STEP) Kit.motion.advance(motion, SIMULATION_STEP, 0, 0, speed * (time + SIMULATION_STEP), 0);
+    const motion = Kit.motion.state(bake, act.stage());
+    const simulate = (from, until) => {
+      for (let time = from; time < until; time += SIMULATION_STEP) Kit.motion.advance(motion, SIMULATION_STEP, 0, 0, speed * (time + SIMULATION_STEP), 0);
+    };
+    simulate(0, WARM_UP);
+    if (act.begin) act.begin(motion);
+    simulate(WARM_UP, WARM_UP + phase * act.cycle(bake, speed));
     Kit.rig.copy(motion.pose, figure.local);
+    if (figure.face) figure.face(Kit.act ? Kit.act.face(motion) : null);
     figure.pose();
     return null;
   };

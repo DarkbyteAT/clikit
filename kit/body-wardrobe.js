@@ -928,6 +928,9 @@
           turn: [-7, 0, 0],
           tail: [0, -0.85, 0],
           girth: 0.4,
+          // Loose: a panel hung from the shoulders swings behind the body (`Kit.motion.loose`).
+          stiffness: 30,
+          damping: 0.5,
           shape: {
             kind: 'extrude',
             outline: [
