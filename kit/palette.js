@@ -6,7 +6,8 @@
  *
  * Owns:  `Kit.palette.ramp` (build a ramp from a hue), `Kit.palette.shade` (the shade of a ramp for a light
  *        level) and `Kit.palette.toCss`; OKLCH conversion and `Kit.palette.tones` (2-6 perceptually even tones
- *        plus an ink colour, from one base colour or from an existing ramp); named sets of ramps
+ *        plus a deep and an ink colour, from one base colour or from an existing ramp, and where along a graded
+ *        ramp those tones sit: `TONE_POSITIONS`, `columnAt`); named sets of ramps
  *        (`Kit.palette.set`, `Kit.palette.SETS`); and `Kit.palette.atlas`, the packed tone x ramp table that
  *        becomes the palette texture of the look shaders (kit/look-toon.js). Shading never invents RGB: a pixel
  *        is (ramp row, tone column) and colour appears only when that pair is looked up in the table.
@@ -72,8 +73,13 @@
 
   // ==== perceptual tones and the packed table (what the look shaders read) ==============================================
 
-  /** Width of the packed table in texels: six tone columns, one spare, and the ink column last. A power of two. */
+  /** Width of the packed table in texels: six tone columns, the deep column, and the ink column last. A power of two. */
   const TONE_SLOTS = 8;
+  /**
+   * Column that holds a ramp's deepest colour: the dark end that shading with few tones never reaches (see `TONE_POSITIONS`). Marks that
+   * must read on any tone of the surface under them (a pupil, a lash line, the line of a mouth) are painted with it.
+   */
+  const DEEP_COLUMN = 6;
   /** Column that holds a ramp's outline colour. */
   const INK_COLUMN = 7;
   const MIN_TONES = 2;
@@ -130,6 +136,22 @@
    * must stay gentle (a face half in shadow should not look bearded); each further tone reaches deeper.
    */
   const SHADOW_REACH = { oneTone: 0.55, perExtraTone: 0.15 };
+  /**
+   * Where along a graded ramp (a `Ramp` of shades, 0 its darkest and 1 its lightest) each tone sits, by tone
+   * count, darkest first. Three rules shape the table. The second-lightest tone is always the ramp's middle,
+   * so a character keeps its colours when the tone count changes and a five-shade ramp's middle shade is drawn
+   * byte for byte. With one shadow tone the step down from it stays gentle (the reasoning of `SHADOW_REACH`: a
+   * face half in a deep shadow reads as half a face); each further tone reaches deeper, down to the ramp's
+   * darkest. The lightest tone stops short of the ramp's end, so a highlight is a colour, not chalk.
+   * @type {Record<number, number[]>}
+   */
+  const TONE_POSITIONS = Object.freeze({
+    2: Object.freeze([0.28, 0.5]),
+    3: Object.freeze([0.26, 0.5, 0.78]),
+    4: Object.freeze([0.08, 0.28, 0.5, 0.78]),
+    5: Object.freeze([0, 0.18, 0.34, 0.5, 0.8]),
+    6: Object.freeze([0, 0.14, 0.27, 0.39, 0.5, 0.8]),
+  });
   /** Below this chroma a colour has no usable hue of its own. */
   const NEUTRAL_CHROMA = 0.015;
   /** The highlight is always at least this much lighter than the base (OKLCH lightness), even for near-white bases. */
@@ -253,6 +275,7 @@
    * @typedef {Object} ToneRamp
    * @property {number[][]} tones [red, green, blue] bytes, darkest first
    * @property {number[]} ink [red, green, blue] bytes of the outline colour
+   * @property {number[]} deep [red, green, blue] bytes of the ramp's deepest colour (the `DEEP_COLUMN`)
    */
 
   /** Index of the base colour in a ramp: the second-lightest tone, so exactly one tone is a highlight. */
@@ -286,17 +309,50 @@
     });
   };
 
-  /** Reads any accepted ramp form as a RampSpec: a base colour, a spec, or a `Ramp` of CSS shades (used as authored tones). */
+  /** Reads any accepted ramp form as a RampSpec: a base colour, a spec, or a `Ramp` of CSS shades (a graded ramp, sampled at `TONE_POSITIONS`). */
   const toRampSpec = (spec) => {
     if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) return { base: spec };
-    return spec.shades ? { tones: spec.shades } : spec;
+    return spec.shades ? { graded: spec.shades } : spec;
+  };
+
+  /**
+   * The colour at a position along a graded ramp: 0 is its darkest shade, 1 its lightest, and a position between
+   * two shades blends them (channel by channel; neighbouring shades of one ramp are close enough for that to be even).
+   * @param {Array<string|number|number[]>} shades darkest first, 2 or more
+   * @param {number} position 0..1, clamped
+   * @returns {number[]} [red, green, blue], 0..255
+   * @complexity O(1)
+   * @example Kit.palette.sampleRamp(Kit.palette.ramp('moss', 0.3).shades, 0.5) // the middle shade
+   */
+  const sampleRamp = (shades, position) => {
+    const along = clamp01(position) * (shades.length - 1);
+    const lower = Math.min(shades.length - 2, Math.floor(along));
+    const [dark, light] = [rgbOf(shades[lower]), rgbOf(shades[lower + 1])];
+    return dark.map((channel, index) => Math.round(channel + (light[index] - channel) * (along - lower)));
+  };
+
+  /**
+   * The column of the packed table a fixed paint reads: a mark painted at a position of its ramp (0 darkest ..
+   * 1 lightest) takes the nearest tone the ramp has at this tone count (the darker of two equally near), and a
+   * position less than half way up to the darkest tone takes the deep column. The stamp shader in kit/look-toon.js computes exactly this.
+   * @param {number} position 0..1 along the ramp
+   * @param {number} toneCount 2..6
+   * @returns {number} a tone column 0..toneCount - 1, or `DEEP_COLUMN`
+   * @example Kit.palette.columnAt(0, 3) // 6: the deep column
+   */
+  const columnAt = (position, toneCount) => {
+    const positions = TONE_POSITIONS[toneCount];
+    if (position < positions[0] / 2) return DEEP_COLUMN;
+    return positions.reduce((nearest, at, column) => (Math.abs(at - position) < Math.abs(positions[nearest] - position) ? column : nearest), 0);
   };
 
   /**
    * Builds a ramp of tones, darkest first, plus its ink colour. From a base colour the shadows darken in
    * equal perceptual steps while turning toward a cool hue and gaining a little chroma, and the highlight
-   * lightens, warms and pales; the base itself is kept byte-exact. Authored tones are used as given and
-   * resampled (nearest) when a different count is asked for.
+   * lightens, warms and pales; the base itself is kept byte-exact. Authored tones (`{ tones }`) are used as given
+   * and resampled (nearest) when a different count is asked for. A `Ramp` of shades is graded: its tones are
+   * read at `TONE_POSITIONS`, so few tones give a gentle shadow, many reach the ramp's dark end, and the
+   * second-lightest is the ramp's middle at every count.
    * @param {RampSpec|Ramp|string|number} spec a ramp spec, just the base colour, or a `Ramp` from `Kit.palette.ramp`
    *   (its shades are used as authored tones)
    * @param {number} [toneCount=4] 2..6
@@ -309,10 +365,15 @@
       throw new Error(`Kit.palette.tones: toneCount must be a whole number from ${MIN_TONES} to ${MAX_TONES}, got ${toneCount}.`);
     const rampSpec = toRampSpec(spec);
     const shape = { ...TONE_SHAPE, ...rampSpec.shape };
-    const tones = rampSpec.tones ? resampleTones(rampSpec.tones, toneCount) : generateTones(rampSpec.base, shape, toneCount);
-    if (rampSpec.ink !== undefined) return { tones, ink: rgbOf(rampSpec.ink) };
-    // Ink comes from the full-depth shadow, so the line colour is the same whatever the tone count.
-    return { tones, ink: inkOf(rampSpec.tones ? tones[0] : toneAround(toOklch(rgbOf(rampSpec.base)), shape, 1, 0), shape) };
+    const tones = rampSpec.graded ? gradeTones(rampSpec.graded, toneCount) : rampSpec.tones ? resampleTones(rampSpec.tones, toneCount) : generateTones(rampSpec.base, shape, toneCount);
+    // The deepest colour is the full-depth shadow, so it (and the ink made from it) is the same whatever the tone count.
+    const deep = rampSpec.graded ? rgbOf(rampSpec.graded[0]) : rampSpec.tones ? tones[0] : toneAround(toOklch(rgbOf(rampSpec.base)), shape, 1, 0);
+    return { tones, deep, ink: rampSpec.ink !== undefined ? rgbOf(rampSpec.ink) : inkOf(deep, shape) };
+  };
+
+  const gradeTones = (shades, toneCount) => {
+    if (!Array.isArray(shades) || shades.length < MIN_TONES) throw new Error(`Kit.palette.tones: a ramp's "shades" needs at least ${MIN_TONES} colours, darkest first.`);
+    return TONE_POSITIONS[toneCount].map((position) => sampleRamp(shades, position));
   };
 
   const resampleTones = (authored, toneCount) => {
@@ -366,7 +427,7 @@
   /**
    * @typedef {Object} PaletteAtlas
    * The packed table: `width` tone columns by `height` ramp rows of RGBA bytes, ready to be a texture.
-   * @property {number} width texels per row (8: tones 0..5, a spare, ink)
+   * @property {number} width texels per row (8: tones 0..5, deep, ink)
    * @property {number} height rows
    * @property {Uint8Array} data RGBA bytes, row by row
    * @property {number} toneCount tones currently written per ramp
@@ -404,7 +465,8 @@
     const writeRow = (row, spec) => {
       const built = tones(spec, table.toneCount);
       // Columns past the tone count repeat the lightest tone, so a stale tone index can never read garbage.
-      for (let column = 0; column < INK_COLUMN; column++) writeTexel(row, column, built.tones[Math.min(column, built.tones.length - 1)]);
+      for (let column = 0; column < DEEP_COLUMN; column++) writeTexel(row, column, built.tones[Math.min(column, built.tones.length - 1)]);
+      writeTexel(row, DEEP_COLUMN, built.deep);
       writeTexel(row, INK_COLUMN, built.ink);
     };
     const requireSameRamps = (block, source) => {
@@ -507,5 +569,5 @@
    */
   const SETS = Object.fromEntries(SET_ROWS.map(([name, ramps]) => [name, set(name, ramps)]));
 
-  Kit.palette = { RAMP_DEFAULTS, toCss, ramp, shade, TONE_SLOTS, INK_COLUMN, MIN_TONES, MAX_TONES, TONE_SHAPE, SETS, rgbOf, hexOf, toOklch, fromOklch, tones, set, atlas };
+  Kit.palette = { RAMP_DEFAULTS, toCss, ramp, shade, TONE_SLOTS, INK_COLUMN, DEEP_COLUMN, TONE_POSITIONS, sampleRamp, columnAt, MIN_TONES, MAX_TONES, TONE_SHAPE, SETS, rgbOf, hexOf, toOklch, fromOklch, tones, set, atlas };
 })();

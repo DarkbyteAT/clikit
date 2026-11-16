@@ -4,7 +4,8 @@
  *
  * Owns:  the band lookup and ordered-dither tables the shaders mirror (`bandOf`, `edgesFor`, `bayerAt`); the grid
  *        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`);
- *        and the presets and knobs (`PRESETS`, `KNOBS`, `settings`).
+ *        the lights and how kinds of surface answer them (`LIGHTING`, `RESPONSES`); and the presets and knobs
+ *        (`PRESETS`, `KNOBS`, `settings`).
  * Does not own: colour (kit/palette.js: ramps, tones and the packed atlas), textures, materials or passes
  *        (look-toon.js, look-ink.js), or the frame (look-view.js).
  *
@@ -16,16 +17,62 @@
   /**
    * Band edges on the light value n.L (-1 facing away .. 1 facing the light), by tone count. A pixel's tone is
    * the number of edges at or below its light. The top edge is high so the highlight stays a small accent, and
-   * the shadow edges sit below zero so a face turned a little from the light is not half dark.
+   * the shadow edges sit below zero so a form turned a little from the light is not half dark. With the key
+   * light of `LIGHTING` a ball shows about a sixth of its disc in shadow and a tenth in highlight: two or three
+   * clean tones on a large form. The second-lightest band (the ramp's own colour) always contains
+   * `LIGHTING.fillCap`, which is what lets the fill light lift a face to its own colour and no further.
    * @type {Record<number, number[]>}
    */
   const BAND_EDGES = {
-    2: [0],
-    3: [-0.05, 0.62],
-    4: [-0.3, 0.05, 0.62],
-    5: [-0.4, -0.1, 0.25, 0.66],
-    6: [-0.45, -0.2, 0.05, 0.3, 0.68],
+    2: [-0.08],
+    3: [-0.08, 0.8],
+    4: [-0.38, -0.02, 0.8],
+    5: [-0.45, -0.12, 0.24, 0.82],
+    6: [-0.5, -0.24, 0.02, 0.3, 0.84],
   };
+
+  /**
+   * The lights of the look, in view space (x right, y up, z toward the viewer), so they keep their place on
+   * screen as the camera or a figure turns: a figure is lit the same from all eight directions.
+   *  - `key`: from the upper left and well in front, so what faces the viewer is lit and the shadow is a
+   *    crescent down the right and under overhangs, never a half.
+   *  - `fill`: almost the viewer's own direction. It never brightens past `fillCap` (a light value inside the
+   *    ramp's own colour band), so it can lift a shadow off a surface but cannot add a highlight. How much of it
+   *    a surface takes is the surface's response (`RESPONSES`).
+   *  - `back`: from behind, to the right and a little below. With `bounce` on, shadowed surface that faces it
+   *    (the far-side silhouette) is lifted one tone, which keeps a figure's dark side off a dark backdrop.
+   *  - `rim`: with `rim` on, lit surface seen edge-on is lifted one tone.
+   */
+  const LIGHTING = Object.freeze({
+    key: Object.freeze([-0.44, 0.52, 0.73]),
+    fill: Object.freeze([0.08, 0.16, 0.98]),
+    fillCap: 0.5,
+    back: Object.freeze([0.74, -0.18, -0.65]),
+    bounceEdge: 0.3,
+    rim: Object.freeze({ maxFacing: 0.3, minLight: 0.3 }),
+  });
+
+  /**
+   * @typedef {Object} LightResponse
+   * How a kind of surface answers the light.
+   * @property {number} fillGain how strongly the fill light follows the surface turning to the viewer
+   * @property {number} fillBias added to that; the fill's light value is `fillGain * (n . fill) + fillBias`, capped
+   *   at `LIGHTING.fillCap`, and a fragment takes the brighter of key and fill
+   * @property {number} dither share of the look's dither the surface takes, 0..1
+   */
+
+  /**
+   * Responses by name (`LookPart.response`). `form` is everything by default: key light only. `face` is bare
+   * skin that carries features: wherever it is turned toward the viewer the fill holds it at its own colour, so
+   * eyes, brows and a mouth always sit on a readable tone; only the last sliver before the far silhouette can
+   * take the shadow, which keeps the head round. A face is never dithered: a checker of two tones across a
+   * cheek reads as stubble.
+   * @type {Record<string, LightResponse>}
+   */
+  const RESPONSES = Object.freeze({
+    form: Object.freeze({ fillGain: 0, fillBias: -2, dither: 1 }),
+    face: Object.freeze({ fillGain: 1.2, fillBias: -0.5, dither: 0 }),
+  });
   /** An edge no light value reaches: pads the shader's fixed-length edge array. */
   const UNUSED_EDGE = 9;
   const MAX_EDGES = MAX_TONES - 1;
@@ -144,7 +191,14 @@
    * @property {boolean} snap move figures by whole texels when drawn below native resolution
    * @property {number} yawSteps facings per turn a caller should round a figure's turn to (see stepYaw); 0 is continuous
    * @property {boolean} rim lift grazing, lit edges one tone
+   * @property {boolean} bounce lift the shadowed far-side silhouette one tone (a back light)
    */
+
+  /**
+   * Hull line width of the native-resolution presets, CSS pixels: one weight, so a character's outline does not
+   * change when the look does. (Below native resolution a line is one texel by definition.)
+   */
+  const LINE_WIDTH = 2;
 
   /**
    * The three looks, as data. `label` and `about` are for an editor; the rest are LookSettings.
@@ -153,23 +207,24 @@
   const PRESETS = {
     toon: {
       label: 'Toon',
-      about: 'Three flat tones and a bold hull line: classic cel shading.',
+      about: 'Three flat tones and a hull line: classic cel shading.',
       toneCount: 3,
       dither: 0,
       ditherSpace: 'screen',
       softness: 0,
       outline: 'hull',
-      inkWidth: 2.5,
+      inkWidth: LINE_WIDTH,
       pixelRows: 0,
       snap: false,
       yawSteps: 0,
       rim: false,
+      bounce: true,
     },
     pixel: {
       label: 'Pixel',
       about: 'Four tones at low resolution, dithered edges and one-texel ink.',
       toneCount: 4,
-      dither: 0.12,
+      dither: 0.07,
       ditherSpace: 'anchored',
       softness: 0,
       outline: 'ink',
@@ -178,20 +233,22 @@
       snap: true,
       yawSteps: 24,
       rim: true,
+      bounce: true,
     },
     soft: {
       label: 'Soft toon',
-      about: 'Five tones with softened edges, a thin line and a rim.',
+      about: 'Five tones with softened edges, the same line and a rim.',
       toneCount: 5,
       dither: 0,
       ditherSpace: 'screen',
       softness: 0.045,
       outline: 'hull',
-      inkWidth: 1.5,
+      inkWidth: LINE_WIDTH,
       pixelRows: 0,
       snap: false,
       yawSteps: 0,
       rim: true,
+      bounce: true,
     },
   };
 
@@ -228,6 +285,7 @@
     { id: 'yawSteps', label: 'Facings', type: 'choice', options: optionsOf([0, 8, 16, 24], (steps) => (steps ? String(steps) : 'Smooth')) },
     { id: 'snap', label: 'Snap to texels', type: 'toggle' },
     { id: 'rim', label: 'Rim light', type: 'toggle' },
+    { id: 'bounce', label: 'Back light', type: 'toggle' },
   ];
 
   /**
@@ -247,5 +305,5 @@
     return { ...merged, preset: presetId, isIndexed: merged.outline === 'ink' || merged.pixelRows > 0 };
   };
 
-  Kit.look = { MAX_EDGES, BAND_EDGES, BAYER_4, PRESETS, KNOBS, bandOf, edgesFor, bayerAt, snapToTexel, stepYaw, texelScale, weldNormals, settings };
+  Kit.look = { MAX_EDGES, BAND_EDGES, LIGHTING, RESPONSES, BAYER_4, PRESETS, KNOBS, bandOf, edgesFor, bayerAt, snapToTexel, stepYaw, texelScale, weldNormals, settings };
 })();
