@@ -395,16 +395,27 @@
       return withOverrides(mirrored, {}, (key) => key.startsWith(FILL_KEY) && mirrored.overrides[key] === null && !existing.has(key));
     };
 
+    /** Ids of the features that differ between two placements lists (matched by id and side; a missing copy counts). */
+    const changedFeatures = (before, after) => {
+      const keyOf = (feature) => `${feature.id}|${feature.side}`;
+      const textOf = (feature) => JSON.stringify([feature.bone, feature.point, feature.size, feature.rotation, feature.frames, feature.ramp]);
+      const earlier = new Map(before.map((feature) => [keyOf(feature), textOf(feature)]));
+      const later = new Map(after.map((feature) => [keyOf(feature), textOf(feature)]));
+      const keys = [...new Set([...earlier.keys(), ...later.keys()])].filter((key) => earlier.get(key) !== later.get(key));
+      return [...new Set(keys.map((key) => key.split('|')[0]))];
+    };
+
     /**
      * What differs between two bakes, so a renderer can update in place instead of rebuilding: recolour for
      * `colors`, re-pose for `bones`, rebuild the skeleton and meshes only when `rebuild` is true.
      * @param {Object} previous a `Bake`
      * @param {Object} next a `Bake`
-     * @returns {{rebuild: boolean, species: boolean, dials: string[], colors: string[], sockets: string[], bones: number[], shapes: number[]}}
+     * @returns {{rebuild: boolean, species: boolean, dials: string[], colors: string[], sockets: string[], bones: number[], shapes: number[], features: string[]}}
      *   `rebuild`: the assembled plan differs (another species or outfit), so bone indices do not carry over;
      *   `dials` / `colors`: ids whose value differs; `sockets`: paths whose part differs; `bones`: indices in
      *   `next.plan` whose rest transform differs (every bone when `rebuild` is true); `shapes`: indices whose
-     *   shape row differs, so their mesh is rebuilt but the skeleton is not
+     *   shape row differs, so their mesh is rebuilt but the skeleton is not; `features`: ids of surface features
+     *   whose placement, size or paint differs (re-stamp those)
      * @complexity O(bones + fields) time; allocates the report
      * @example const { rebuild, bones } = editor.changes(shown, bakery.bakeRecipe(recipe));
      */
@@ -435,6 +446,7 @@
         sockets: paths.filter((path) => previous.individual.fills[path] !== next.individual.fills[path]),
         bones,
         shapes,
+        features: changedFeatures(previous.surface.features, next.surface.features),
       };
     };
 

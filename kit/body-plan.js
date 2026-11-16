@@ -299,6 +299,10 @@
    *   'hover'); the role-derived ones are worked out and must not be listed
    * @property {number} [density] kilograms per cubic metre, for bones that state no `mass` (default 1000)
    * @property {Object<string, string>} [filled] socket name -> part id, written by `Kit.body.assemble`
+   * @property {Object[]} [features] surface features (eyes, a nose, a scar) placed on bones by azimuth and
+   *   elevation: `FeatureSpec` rows of kit/body-surface.js, kept as data on `spec` and laid out by that file
+   * @property {Object[]} [regions] painted areas of bones (a sleeve, a hairline, stripes): `RegionSpec` rows of
+   *   kit/body-surface.js, kept as data on `spec`
    */
 
   /**

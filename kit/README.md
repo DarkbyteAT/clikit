@@ -71,6 +71,7 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 |---|---|
 | `body-plan.js` | `Kit.body.plan`: bones, sockets, roles, capabilities, joint limits, mass, shapes, paint channels; `dials` / `applyDials`; `requireFit` |
 | `body-parts.js` | `Kit.body.part` / `assemble`: parts plug into typed sockets and may expose their own; the result is an ordinary plan |
+| `body-surface.js` | `Kit.body.surfaceLayout` / `surfaceOf`: features placed on bones by azimuth and elevation, painted regions, `regionAt` |
 | `body-recipe.js` | `Kit.body.catalog`: species over `Kit.lineage`; `resolve`, `validate`, `normalize`, `encode` / `decode`, `hash`, `table`, `bakery` |
 | `body-edit.js` | `Kit.body.editor`: a schema of every dial, colour and socket; pure edits; what changed between two bakes |
 | `body-store.js` | `Kit.body.store`: instances as columns (position, heading, phase, detail, recipe index) |
@@ -170,7 +171,7 @@ loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
 input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
 lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
-body-plan  body-parts  body-recipe  body-edit  body-store  body-samples  body-debug  body-gallery
+body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-debug  body-gallery
 games/*.js  ui/gallery
 shell
 ui/menu

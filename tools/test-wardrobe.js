@@ -14,7 +14,7 @@ const path = require('path');
 const vm = require('vm');
 
 /** Kit files these tests add to the sandbox, in load order; those that do not exist yet are skipped. */
-const FILES = ['surface', 'region'];
+const FILES = [];
 
 module.exports = ({ Kit, sandbox, test, assert }) => {
   FILES.forEach((name) => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', `${name}.js`), 'utf8'), sandbox, { filename: `${name}.js` }));
@@ -380,5 +380,166 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         ),
       /the part "lantern" has the required socket "flame" \(type flame\), but no part in `parts` fits a flame socket/
     );
+  });
+
+  // ---- surface features and regions ----
+  const eyeFrames = (openHeight) => ({
+    open: [
+      { outline: Kit.surface.ellipse(0, 0, 1, openHeight, 10), paint: { channel: 'cloth', shade: 4 } },
+      { outline: Kit.surface.ellipse(0, 0, 0.4, 0.4, 8), paint: { channel: 'skin', shade: 99 } },
+    ],
+    half: [{ outline: Kit.surface.ellipse(0, -0.2, 1, openHeight / 2, 10), paint: { channel: 'cloth', shade: 4 } }],
+    closed: [{ outline: Kit.surface.ellipse(0, -0.3, 1, 0.12, 10, { from: 180, to: 360 }), paint: { channel: 'skin', shade: 0 } }],
+  });
+  const SURFACED = sampleVariant((spec) => {
+    spec.plans.biped.sockets.push({ name: 'eyes', bone: 'head', type: 'eyes' }, { name: 'top', bone: 'chest', type: 'top' }, { name: 'hair', bone: 'head', type: 'hair' });
+    spec.parts.roundEyes = { fits: ['eyes'], bones: [], features: [{ id: 'eye', azimuth: 0, elevation: 4, spacing: 50, size: [0.03, 0.025], rotation: 8, frames: eyeFrames(0.8) }] };
+    spec.parts.nose = { fits: ['eyes'], bones: [], features: [{ id: 'nose', elevation: -12, shape: { kind: 'sphere', radius: 0.012 }, lift: 0.004, paint: 'skin' }] };
+    spec.parts.tee = {
+      fits: ['top'],
+      bones: [],
+      regions: [
+        { id: 'body', roles: ['spine'], where: { band: { s: [0, 1] } }, paint: 'cloth', layer: 2 },
+        { id: 'sleeve', roles: ['arm'], except: ['hand'], where: { band: { s: [0, 0.6] } }, paint: 'cloth', layer: 2 },
+      ],
+    };
+    spec.parts.crop = {
+      fits: ['hair'],
+      bones: [{ name: 'fringe', roles: ['root'], tail: [0, 0, 0.05], shape: { kind: 'box', size: [0.16, 0.03, 0.04] } }],
+      regions: [{ id: 'cap', bones: ['@host'], where: { edge: { front: 0.75, back: 0.35, jag: 0.03, count: 7 } }, paint: 'metal', layer: 4 }],
+    };
+    spec.nodes.humanoid.set.fills.eyes = { roundEyes: 1 };
+    spec.nodes.humanoid.set.dials.eyeSpacing = { min: 0.7, max: 1.4, affects: [{ feature: 'eye', param: 'spacing' }] };
+    spec.nodes.humanoid.set.dials.eyeSize = { sided: true, min: 0.7, max: 1.4, affects: [{ feature: 'eye', param: 'size' }] };
+    spec.nodes.humanoid.set.dials.eyeHeight = { min: -10, max: 10, default: 0, affects: [{ feature: 'eye', param: 'elevation', mode: 'offset' }] };
+  });
+  const FACE = { 'dial:eyeSpacing': 1, 'dial:eyeSize@left': 1, 'dial:eyeSize@right': 1, 'dial:eyeHeight': 0 };
+
+  test('features: a surface-only part places a mirrored pair on the head surface, with frames painted by ramp and shade', () => {
+    const faced = body.catalog(SURFACED);
+    const bake = faced.bakery().bakeRecipe({ species: 'human', seed: 2, overrides: FACE });
+    assert.strictEqual(
+      bake.plan.boneNames.some((name) => name.startsWith('eyes/')),
+      false,
+      'a surface-only part adds no bones'
+    );
+    const eyes = bake.surface.features.filter((feature) => feature.id === 'eye');
+    same(
+      eyes.map((eye) => [eye.side, eye.flip]),
+      [
+        ['left', false],
+        ['right', true],
+      ]
+    );
+    const head = bake.plan.boneIndex('head');
+    assert.ok(
+      eyes.every((eye) => eye.bone === head),
+      'on the bone of the socket the part sits in'
+    );
+    assert.ok(eyes[0].point[0] > 0.04 && eyes[1].point[0] < -0.04, 'left eye at +X, right at -X');
+    close(eyes[0].point[0], -eyes[1].point[0], 1e-6, 'mirrored');
+    const frame = { end: [0, 0.22, 0] };
+    close(Kit.surface.distance(bake.shapes[head], frame, ...eyes[0].point), 0, 1e-5, 'on the surface of the head');
+    assert.ok(eyes[0].normal[2] > 0.7, 'facing forward');
+    close(eyes[0].rotation, -eyes[1].rotation, 1e-9, 'the right copy turns the other way');
+    const skin = faced.species('human').colorIds.indexOf('skin');
+    same(
+      eyes[0].frames.open.map((layer) => [layer.ramp, layer.shade]),
+      [
+        [faced.species('human').colorIds.indexOf('cloth'), 4],
+        [skin, 4],
+      ],
+      'channels become ramp indices; shade 99 is clamped to the ramp'
+    );
+    same([Object.keys(eyes[0].frames), eyes[0].rest], [['open', 'half', 'closed'], 'open'], 'blink frames, resting open');
+    same(body.FRAME_SETS.blink, ['open', 'half', 'closed']);
+  });
+  test('features: dials move them (spacing, one side only, height in degrees); they follow a reshaped head (control: no eyes, no features)', () => {
+    const faced = body.catalog(SURFACED);
+    const bakery = faced.bakery();
+    const eyesOf = (overrides) => bakery.bakeRecipe({ species: 'human', seed: 2, overrides: { ...FACE, ...overrides } }).surface.features.filter((feature) => feature.id === 'eye');
+    const plain = eyesOf({});
+    assert.ok(eyesOf({ 'dial:eyeSpacing': 1.4 })[0].point[0] > plain[0].point[0] + 0.01, 'wider spacing');
+    const oneBig = eyesOf({ 'dial:eyeSize@left': 1.4 });
+    const editor = body.editor(faced);
+    const base = { species: 'human', seed: 2, overrides: FACE };
+    same(editor.changes(bakery.bakeRecipe(base), bakery.bakeRecipe(editor.setDial(base, 'eyeSize@left', 1.4))).features, ['eye'], 'changes names the feature to re-stamp');
+    same(editor.changes(bakery.bakeRecipe(base), bakery.bakeRecipe(editor.setDial(base, 'legLength', 1.1))).features, [], 'control: a leg dial re-stamps nothing');
+    same(
+      oneBig.map((eye) => Math.round((eye.size[0] / 0.03) * 100) / 100),
+      [1.4, 1],
+      'a sided size dial grows the left eye only'
+    );
+    assert.ok(eyesOf({ 'dial:eyeHeight': 10 })[0].point[1] > plain[0].point[1] + 0.01, 'an offset dial raises both eyes');
+    // A wider head (the sphere scaled in x) pushes the eyes outwards: placement follows the surface.
+    const wide = sampleVariant((spec) => (spec.plans.biped.bones.find((bone) => bone.name === 'head').shape.scale = [1.3, 1, 1]), SURFACED);
+    const wideEyes = body
+      .catalog(wide)
+      .bakery()
+      .bakeRecipe({ species: 'human', seed: 2, overrides: FACE })
+      .surface.features.filter((feature) => feature.id === 'eye');
+    assert.ok(wideEyes[0].point[0] > plain[0].point[0] + 0.0015, 'eyes ride the wider head');
+    const noFace = sampleVariant((spec) => (spec.nodes.humanoid.set.fills.eyes = { none: 1 }), SURFACED);
+    same(body.catalog(noFace).bakery().bakeRecipe({ species: 'human', seed: 2 }).surface.features, [], 'control: nothing in the socket, no features');
+    const nose = bakery.bakeRecipe({ species: 'human', seed: 2, overrides: { ...FACE, 'fill:eyes': 'nose' } }).surface.features;
+    same(
+      nose.map((feature) => [feature.id, feature.side, feature.shape.kind, feature.ramp]),
+      [['nose', null, 'sphere', faced.species('human').colorIds.indexOf('skin')]],
+      'a single solid feature'
+    );
+  });
+  test('regions: parts paint the wearer by role and their host bone; the topmost layer wins; none falls back to the bone (-1)', () => {
+    const faced = body.catalog(SURFACED);
+    const bakery = faced.bakery();
+    const dressed = bakery.bakeRecipe({ species: 'human', seed: 2, overrides: { ...FACE, 'fill:top': 'tee', 'fill:hair': 'crop' } });
+    const at = (bake, bone, along, angleDegrees = 0) => bake.surface.regionAt(bake.plan.boneIndex(bone), along, (angleDegrees * Math.PI) / 180, 0, 0, 1);
+    const kind = faced.species('human');
+    const [cloth, metal] = ['cloth', 'metal'].map((channel) => kind.colorIds.indexOf(channel));
+    same([at(dressed, 'chest', 0.5), at(dressed, 'upperArmLeft', 0.3), at(dressed, 'upperArmLeft', 0.8), at(dressed, 'handLeft', 0.2)], [cloth, cloth, -1, -1], 'shirt, sleeve, bare elbow, bare hand');
+    same([at(dressed, 'head', 0.9, 0), at(dressed, 'head', 0.5, 0), at(dressed, 'head', 0.5, 180)], [metal, -1, metal], 'a hairline high at the front, low at the back');
+    assert.strictEqual(dressed.plan.boneNames.includes('hair/fringe'), true, 'a hair part can bring bones too');
+    const bare = bakery.bakeRecipe({ species: 'human', seed: 2, overrides: { ...FACE, 'fill:top': null, 'fill:hair': null } });
+    same([at(bare, 'chest', 0.5), at(bare, 'head', 0.9)], [-1, -1], 'control: nothing worn, nothing painted');
+    const layered = sampleVariant((spec) => {
+      spec.plans.biped.sockets.push({ name: 'outer', bone: 'chest', type: 'outer' });
+      spec.parts.vest = {
+        fits: ['outer'],
+        bones: [],
+        regions: [{ id: 'vest', roles: ['spine'], where: { mask: { keep: { all: true }, cut: { band: { angle: [-25, 25] } } } }, paint: 'metal', layer: 3 }],
+      };
+    }, SURFACED);
+    const vested = body
+      .catalog(layered)
+      .bakery()
+      .bakeRecipe({ species: 'human', seed: 2, overrides: { ...FACE, 'fill:top': 'tee', 'fill:outer': 'vest' } });
+    same([at(vested, 'chest', 0.5, 0), at(vested, 'chest', 0.5, 90)], [cloth, metal], 'the vest (layer 3) covers the tee (layer 2) except where it is open');
+  });
+  test('surface: mistakes in features and regions are named at catalogue load', () => {
+    const broken = (edit) => () => body.catalog(sampleVariant(edit, SURFACED));
+    throwsWith(
+      broken((spec) => (spec.parts.roundEyes.features[0].frames.open[0].paint = null)),
+      /part "roundEyes": the feature "eye" of|frame "open": every layer needs/
+    );
+    throwsWith(
+      broken((spec) => (spec.parts.tee.regions[1].where = { ring: {} })),
+      /the region "sleeve".*unknown predicate "ring"/
+    );
+    throwsWith(
+      broken((spec) => delete spec.parts.nose.features[0].shape),
+      /neither `frames` \(a stamp\) nor a `shape`/
+    );
+    throwsWith(
+      broken((spec) => (spec.parts.roundEyes.sockets = [{ name: 'tear', bone: 'surface', type: 'gem' }])),
+      /a part with no bones cannot offer sockets/
+    );
+    throwsWith(
+      broken((spec) => (spec.parts.tee.regions[0].paint = undefined)),
+      /the region "body".*needs `paint`/
+    );
+    throwsWith(
+      () => body.surfaceLayout(body.plan({ id: 'blob', bones: [{ name: 'core' }], features: [{ id: 'spot', bone: 'shell', shape: { kind: 'sphere', radius: 0.01 } }] })),
+      /names the bone "shell", which this plan does not have/
+    );
+    body.catalog(SURFACED); // control
   });
 };

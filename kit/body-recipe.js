@@ -125,6 +125,8 @@
    * @property {Object} rest the proportioned rest pose (a `JointTransforms`); copy it, never write it
    * @property {ReadonlyArray<?Object>} shapes 1 per bone of `plan`: its shape row with the shape dials applied
    *   (null for the default capsule), from `Kit.body.shapesWithDials`
+   * @property {Object} surface the individual's surface features (placed) and painted regions, with
+   *   `regionAt(bone, along, angle, normalX, normalY, normalZ)` -> index in `ramps` or -1 (kit/body-surface.js)
    * @property {Readonly<Object<string, Object>>} colors channel -> the `Ramp` the individual uses for it
    * @property {Int16Array} boneRamp 1 per bone of `plan`: the index in `ramps` of the ramp the bone is painted
    *   with, or -1 when the bone names no paint channel or the species has no such channel
@@ -165,6 +167,8 @@
     const lineage = Kit.lineage({ nodes, traits, exclusive: ['fills'] });
     const compiledPlans = Object.fromEntries(Object.keys(plans).map((id) => [id, Kit.body.plan({ ...plans[id], id })]));
     const compiledParts = Object.fromEntries(Object.keys(parts).map((id) => [id, Kit.body.part({ ...parts[id], id })]));
+    // Features and regions are data too: check them now, not at the first bake that wears them.
+    [...Object.values(compiledPlans), ...Object.values(compiledParts)].forEach((compiled) => Kit.body.checkSurface(compiled.spec, `catalog: ${compiled.spec.fits ? 'part' : 'plan'} "${compiled.id}"`));
     const partHashes = Object.fromEntries(Object.keys(parts).map((id) => [id, fieldHash(`part${KEY_SEPARATOR}${id}`)]));
     /** @type {Map<number, string>} */
     const partByHash = new Map();
@@ -794,14 +798,17 @@
         }
         const kind = species(individual.species);
         const { plan, dialSet } = outfitOf(kind, individual.fills);
+        const shapes = Kit.body.shapesWithDials(plan, dialSet, individual.dials);
+        const ramps = Object.freeze(kind.colorIds.map((_channel, index) => kind.palettes[index][individual.colors[index]]));
         const fresh = Object.freeze({
           hash: key,
           species: kind.id,
           plan,
           rest: Kit.body.applyDials(plan, dialSet, individual.dials, Kit.body.createPose(plan)),
-          shapes: Kit.body.shapesWithDials(plan, dialSet, individual.dials),
+          shapes,
+          surface: Kit.body.surfaceOf(plan, shapes, dialSet, individual.dials, kind.colorIds, ramps),
           colors: Object.freeze(Object.fromEntries(kind.colorIds.map((channel, index) => [channel, kind.palettes[index][individual.colors[index]]]))),
-          ramps: Object.freeze(kind.colorIds.map((_channel, index) => kind.palettes[index][individual.colors[index]])),
+          ramps,
           // Per bone: which of the individual's ramps paints it. Indices, not colours: the shaders are palette-indexed.
           boneRamp: Int16Array.from(plan.bonePaint, (paint) => (paint ? kind.colorIds.indexOf(plan.paintChannels[paint - 1]) : -1)),
           individual,
