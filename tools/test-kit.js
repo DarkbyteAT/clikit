@@ -2184,9 +2184,9 @@ test('register: a workbench screen is registered and reachable by id but never l
   Kit.register({ id: 'kind-bench', name: 'Bench', theme: {}, kind: 'workbench', order: 5, create });
   Kit.register({ id: 'kind-maker', name: 'Maker', theme: {}, kind: 'maker', order: 4, create });
   Kit.register({ id: 'kind-game', name: 'Game', theme: {}, order: 3, create });
-  const idsOf = (screens) => screens.map((screen) => screen.id).filter((id) => id.startsWith('kind-'));
-  assert.deepStrictEqual(idsOf(Kit.listed({ workbench: false })), ['kind-game', 'kind-maker'], 'games and makers, in menu order');
-  assert.deepStrictEqual(idsOf(Kit.listed({ workbench: true })), ['kind-game', 'kind-maker', 'kind-bench'], 'asked for, workbenches are listed too');
+  const idsOf = (screens) => screens.map((screen) => screen.id).filter((id) => id.startsWith('kind-')).join();
+  assert.strictEqual(idsOf(Kit.listed({ workbench: false })), 'kind-game,kind-maker', 'games and makers, in menu order');
+  assert.strictEqual(idsOf(Kit.listed({ workbench: true })), 'kind-game,kind-maker,kind-bench', 'asked for, workbenches are listed too');
   assert.ok(Kit.games.some((screen) => screen.id === 'kind-bench'), 'control: the workbench is still registered, so tools can open it by id');
 });
 test('development aids: warnings only in development, once each; expectType names the call and an example', () => {
