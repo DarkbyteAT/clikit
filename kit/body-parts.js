@@ -37,9 +37,10 @@
    *   that is only `features` and / or `regions` (a pair of eyes, a printed shirt)
    * @property {Object[]} [sockets] the part's own sockets, as `SocketSpec` rows; other parts attach here
    * @property {Object[]} [features] surface features (kit/body-surface.js `FeatureSpec`); `bone` names one of
-   *   the part's bones, or is omitted (or '@host') for the bone of the socket the part sits in
+   *   the part's bones, a bone of the wearer (any name the part does not have), or is omitted (or '@host') for
+   *   the bone of the socket the part sits in
    * @property {Object[]} [regions] painted regions (kit/body-surface.js `RegionSpec`); `roles` select bones of
-   *   the whole wearer, `bones` names the part's own bones or '@host'
+   *   the whole wearer, `bones` names bones as a feature's `bone` does
    * @property {string} [label] what an editor calls the part (default: worked out from the id)
    * @property {string} [icon] the name of an icon an editor shows for it
    * @property {string[]} [capabilities] declared capabilities the part grants its wearer (such as 'hover')
@@ -133,8 +134,10 @@
   const graft = (attached, socket) => {
     const prefix = `${socket.name}${PATH_SEPARATOR}`;
     const mountName = `${prefix}${MOUNT_BONE}`;
-    // A part's own bone names gain the prefix; '@host' (or no bone at all) is the bone of the socket it sits in.
-    const boneOf = (name) => (name === undefined || name === HOST_BONE ? socket.bone : `${prefix}${name}`);
+    // A part's own bone names gain the prefix; '@host' (or no bone at all) is the bone of the socket it sits in;
+    // any other name is a bone of the wearer (a pair of trousers paints 'pelvis' and the legs).
+    const ownBones = new Set(attached.spec.bones.map((bone) => bone.name));
+    const boneOf = (name) => (name === undefined || name === HOST_BONE ? socket.bone : ownBones.has(name) ? `${prefix}${name}` : name);
     const source = { part: attached.id, socket: socket.name };
     const features = (attached.spec.features || []).map((feature) => ({ ...feature, bone: boneOf(feature.bone), ...source }));
     const regions = (attached.spec.regions || []).map((region) => ({ ...region, ...(region.bones ? { bones: region.bones.map(boneOf) } : {}), ...source }));
