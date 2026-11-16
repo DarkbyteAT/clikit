@@ -537,7 +537,8 @@
     const detail = options.detail || figureLayout.level;
     const now = options.now || (() => performance.now());
     const signature = sculptSignature(bake, figureLayout, detail);
-    const task = { signature, result: null };
+    /** @type {{step: function(number): boolean, finish: function(): Object, isDone: function(): boolean, result: ?Object, signature: string}} */
+    const task = { signature, result: null, step: () => false, finish: () => null, isDone: () => false };
     let steps = null;
     /** Takes the layers from the cache if they are there (another figure may have finished the same bake meanwhile). */
     const recall = () => {
@@ -661,7 +662,7 @@
    * The layers of the worn objects of a bake (bone rows with `wear`): one per object and paint, each on a grid of
    * its own. A solid is made in the sculpting pose and moved by its own bones. A drape is made at rest, where
    * it hangs as authored, given to the body solids beside it, and then carried into the sculpting pose by them.
-   * @returns {Array<{layer: SculptLayer, pieces: Object[]}>}
+   * @returns {Generator<undefined, Array<{layer: SculptLayer, pieces: Object[]}>, unknown>} yields between steps; returns the layers
    */
   function* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces, limbLead }) {
     const { plan } = bake;

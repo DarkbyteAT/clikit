@@ -558,7 +558,7 @@
    * @property {boolean} [responseShare] the geometry has a float `responseShare` attribute, 0..1 per vertex: how
    *   much of `response` the surface takes there, the rest being a form's (one skin that is a head and a body)
    * @property {{value: THREE.Vector2}} [anchor] from `shading.follow(root)`: the figure this part's dither moves with
-   * @property {THREE.DataTexture} [crowdBones] an InstancedMesh of one skinned surface: a float texture with a row of bone
+   * @property {THREE.Texture} [crowdBones] an InstancedMesh of one skinned surface: a float texture with a row of bone
    *   matrices per instance (4 texels a bone), which bend the geometry's `skinIndex`/`skinWeight` before the instance matrix places it (WebGL2)
    * @property {boolean} [instanceRamp] an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
    * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below

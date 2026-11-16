@@ -17,7 +17,7 @@ const project = require('./dev/project');
 
 const { ROOT } = project;
 /** Flags that take no value; every other `--flag` consumes the next argument. */
-const BOOLEAN_FLAGS = new Set(['landscape', 'summary', 'fast', 'force', 'fix', 'update', 'strict', 'all', 'smoke', 'totals', 'touch']);
+const BOOLEAN_FLAGS = new Set(['landscape', 'summary', 'fast', 'force', 'fix', 'update', 'strict', 'all', 'smoke', 'totals', 'touch', 'rigid']);
 
 /**
  * Splits command-line arguments into positionals and flags.

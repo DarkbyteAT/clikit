@@ -8022,7 +8022,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `[response='form']` *string* - a key of `Kit.look.RESPONSES`: how the part answers the light. 'face' is for skin that carries features (a head): the fill light keeps what is turned to the viewer at the ramp's own colour, and it is never dithered. Where a region map paints over the mesh (hair on a scalp) and on its raised shells, the part answers as a form again
   - `[responseShare]` *boolean* - the geometry has a float `responseShare` attribute, 0..1 per vertex: how much of `response` the surface takes there, the rest being a form's (one skin that is a head and a body)
   - `[anchor]` *{value: THREE.Vector2}* - from `shading.follow(root)`: the figure this part's dither moves with
-  - `[crowdBones]` *THREE.DataTexture* - an InstancedMesh of one skinned surface: a float texture with a row of bone matrices per instance (4 texels a bone), which bend the geometry's `skinIndex`/`skinWeight` before the instance matrix places it (WebGL2)
+  - `[crowdBones]` *THREE.Texture* - an InstancedMesh of one skinned surface: a float texture with a row of bone matrices per instance (4 texels a bone), which bend the geometry's `skinIndex`/`skinWeight` before the instance matrix places it (WebGL2)
   - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
   - `[inkClass=0]` *number* - 0..15. Where two classes meet on one surface (a sleeve and the skin below it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
   - `[regions]` *LookRegions* - the mesh is painted from a baked region map instead of one ramp
@@ -8094,6 +8094,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
 
 - **LookView**
   - `scene` *THREE.Scene* - add figures here (through `add`); only dressed meshes belong in it
+  - `isWebGL2` *boolean* - whether the renderer is WebGL2 (a sculpted crowd needs it)
   - `atlas` *ReturnType\<typeof Kit.palette.atlas\>* - the palette table; `atlas.load(palette)` gives a figure its rows
   - `shading` *Object* - from Kit.look.shading: `shading.dress(mesh, part)`
   - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor)

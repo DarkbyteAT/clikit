@@ -20,6 +20,7 @@
   /**
    * @typedef {Object} LookView
    * @property {THREE.Scene} scene add figures here (through `add`); only dressed meshes belong in it
+   * @property {boolean} isWebGL2 whether the renderer is WebGL2 (a sculpted crowd needs it)
    * @property {ReturnType<typeof Kit.palette.atlas>} atlas the palette table; `atlas.load(palette)` gives a figure its rows
    * @property {Object} shading from Kit.look.shading: `shading.dress(mesh, part)`
    * @property {function(THREE.Object3D): Object} add put a figure's root in the scene; returns its dither anchor (pass as part.anchor)

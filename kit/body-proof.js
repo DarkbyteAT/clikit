@@ -200,7 +200,7 @@
   const { html, signal } = Kit.ui;
 
   const BACKDROP_COLOR = 0x6a7399;
-  /** Palette rows: a page of 32 figures at `Kit.figure.RAMP_SLOTS` rows each, which is also all the indexed looks address (`Kit.look.INDEXED_ROWS`). */
+  /** Palette rows: an options page of 36 figures at `Kit.figure.RAMP_SLOTS` rows each, with room to spare (the indexed looks address the first `Kit.look.INDEXED_ROWS`, a page of 32). */
   const ATLAS_ROWS = 1024;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
   /** Room round a figure in its cell, as shares of the largest figure's size; `head` shows this share of the height, from the top. */
@@ -222,7 +222,7 @@
       const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAMERA.near, CAMERA.far);
       const cache = Kit.figure.geometryCache();
       const labels = signal({ columns: 1, rows: 1, texts: [] });
-      /** @type {Array<{figure: Object, cell: ProofCell, refusal: ?string}>} */
+      /** @type {Array<{figure: Object, cell: ProofCell, refusal: ?string, scale?: number}>} */
       let shown = [];
       let grid = { columns: 1, rows: 1, cellWidth: 1, cellHeight: 1 };
       const catalogs = new Map();
