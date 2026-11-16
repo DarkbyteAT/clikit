@@ -223,13 +223,16 @@
 
   // ---- sockets ----
 
-  /** Scrolls a strip so its checked card is in view (only when it is not, so a tap never moves the strip). */
+  /** Scrolls a strip so its checked card is centred, but only when the card is not fully in view (so a tap never moves the strip). */
   const revealChecked = (strip) => {
     const scroller = strip.closest('.ui-scroll');
     const checked = strip.querySelector('[aria-checked="true"]');
     if (!scroller || !checked) return;
-    const outside = checked.offsetLeft < scroller.scrollLeft || checked.offsetLeft + checked.offsetWidth > scroller.scrollLeft + scroller.clientWidth;
-    if (outside) scroller.scrollLeft = Math.max(0, checked.offsetLeft - (scroller.clientWidth - checked.offsetWidth) / 2);
+    // Bounding boxes, not offsetLeft: the strip's offset parent is not the scroller, so offsets would not share its origin.
+    const card = checked.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    const isOutside = card.left < box.left || card.right > box.right;
+    if (isOutside) scroller.scrollLeft += card.left - box.left - (box.width - card.width) / 2;
   };
 
   /**

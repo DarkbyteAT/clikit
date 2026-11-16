@@ -145,6 +145,11 @@ async function main() {
   const withKinds = totalKinds(kinds);
   check('controls: sliders, swatch rows and option strips are all generated', withKinds.dial > 20 && withKinds.color > 5 && withKinds.socket > 8, withKinds);
 
+  // ---- an option strip shows its checked card ----
+  await press('.cr-panel [role=tab]:nth-of-type(8)');
+  const hidden = await read(`[...document.querySelectorAll('#cr-pane .cr-strip')].map((strip) => { const card = strip.querySelector('[aria-checked=true]').getBoundingClientRect(); const box = strip.closest('.ui-scroll').getBoundingClientRect(); return card.left >= box.left - 1 && card.right <= box.right + 1; }).filter((isVisible) => !isVisible).length`);
+  check('option strips: the checked card of every strip is fully in view', hidden === 0, hidden);
+
   // ---- camera follows the group ----
   await press('.cr-panel [role=tab]:nth-of-type(3)');
   const faceTarget = await read(`Kit.currentGame.debugState().cameraTarget`);
@@ -335,6 +340,7 @@ async function main() {
 
   // ---- setup tab lower down, and the look settings ----
   await press('.cr-panel [role=tab]:nth-of-type(1)');
+  report.nodesSetupTab = await read(`document.getElementById('cr-panel').querySelectorAll('*').length`);
   await read(`document.getElementById('cr-pane').scrollTop = 99999`);
   await settle(300);
   await shot('setup-bottom');
