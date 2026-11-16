@@ -37,11 +37,19 @@
    * stay those of a small one. A solid thinner than `FEWEST_CELLS_ACROSS` cells cannot be meshed (`isTooThin`);
    * what to do with it then (kit/figure-sculpt.js leaves it a rigid piece) is the caller's choice, so one
    * earring never makes a whole body's grid finer.
+   *
+   * A level is made for a size on screen (kit/figure-detail.js): at the largest a level is drawn, its cell is
+   * about four pixels. `error` is how far a mesh of the level may then stand off the surface it was meshed on,
+   * as a share of the cell (`simplify`'s tolerance: about a third of a pixel at that size, less than the chord
+   * of one cell across a limb), and `triangles`, where given, the most a whole figure may have whatever that
+   * costs in error. `far` is meshed on the cell of `low` (a coarser grid would lose the limbs) and is for a
+   * figure a few dozen pixels tall: a crowd.
    */
   const DETAIL = Object.freeze({
-    high: Object.freeze({ cell: 0.011, most: 120 }),
-    medium: Object.freeze({ cell: 0.017, most: 80 }),
-    low: Object.freeze({ cell: 0.028, most: 48 }),
+    high: Object.freeze({ cell: 0.011, most: 120, error: 0.06 }),
+    medium: Object.freeze({ cell: 0.017, most: 80, error: 0.1 }),
+    low: Object.freeze({ cell: 0.028, most: 48, error: 0.13 }),
+    far: Object.freeze({ cell: 0.028, most: 48, error: 0.3, triangles: 600 }),
   });
   /** A solid thinner than this many cells may fall between samples. */
   const FEWEST_CELLS_ACROSS = 1.6;
@@ -954,6 +962,8 @@
     [3, 7],
   ];
   const FULL_MASK = (1 << CORNER_COUNT) - 1;
+  /** What a `cover` says of a node (`surface`): nothing, that a layer was asked about it and does not lie there, or that one does. */
+  const COVER = Object.freeze({ unknown: 0, bare: 1, hidden: 2 });
 
   /**
    * @typedef {Object} SurfaceArrays
@@ -976,8 +986,14 @@
    * faces wholly deeper than that are dropped (a layer does not carry what is buried in the body it lies on).
    * `walls: false` also drops the faces a cut makes through the thickness, leaving an open sheet that lies on
    * the surface (paint, not cloth).
+   *
+   * What lies under an opaque layer is not meshed. A cut surface given a `cover` (a byte per node of the field,
+   * zeroed by the caller) writes into it, once it is meshed, where it lies: `COVER.hidden` at the nodes it
+   * holds, `COVER.bare` at those within its shell that it does not. A surface made afterwards at a smaller offset with `under: cover`
+   * makes no vertex in a cell whose inside corners are all hidden with no bare node beside them, so it stops
+   * about a cell inside the upper layer's edge, behind that layer's wall. Make the layers from the outermost in.
    * @param {Field} field
-   * @param {{offset?: number, cut?: function(number, number, number): boolean, near?: ArrayLike<number>, depth?: number, walls?: boolean}} [options]
+   * @param {{offset?: number, cut?: function(number, number, number): boolean, near?: ArrayLike<number>, depth?: number, walls?: boolean, cover?: Uint8Array, under?: Uint8Array}} [options]
    *   `depth`: metres (default 0.002), used only with a `cut`; `near`: per solid of the field, non-zero when the
    *   cut can hold at points nearest that solid (a sleeve's cut holds only near the arm's solids): the cut is
    *   then not asked anywhere else, which is most of a body
@@ -985,8 +1001,9 @@
    * @complexity O(nodes of the field's band) time (a `cut` is called once per band node within the shell, and 7
    *   times per grid edge it crosses); O(surface cells) memory for the mesh
    * @example const skin = Kit.sculpt.surface(field); const sleeve = Kit.sculpt.surface(field, { offset: 0.008, cut: isSleeve });
+   * @example const cover = new Uint8Array(field.values.length); const coat = Kit.sculpt.surface(field, { offset: 0.02, cut: isCoat, cover }); const skin = Kit.sculpt.surface(field, { under: cover });
    */
-  const surface = (field, { offset = 0, cut = null, near = null, depth = 0.002, walls = true } = {}) => {
+  const surface = (field, { offset = 0, cut = null, near = null, depth = 0.002, walls = true, cover = null, under = null } = {}) => {
     const { values, size, origin, cell, band, nearest } = field;
     if (offset > field.margin + EPSILON) fail('surface', `an offset of ${offset} m is past the field's margin of ${field.margin} m; sample the field with { margin: ${offset} } or more.`);
     const [sizeX, sizeY, sizeZ] = size;
@@ -1074,6 +1091,19 @@
       return (low + high) / 2;
     };
 
+    /** The six nodes beside a node. */
+    const besideStep = [1, -1, stepY, -stepY, stepZ, -stepZ];
+    /** Is a cell wholly under a layer above: each of its inside corners hidden there, and no node beside one bare? */
+    const isCellHidden = (hiddenAt, base, mask) => {
+      for (let index = 0; index < CORNER_COUNT; index++) {
+        if (!((mask >> index) & 1)) continue;
+        const node = base + cornerStep[index];
+        if (hiddenAt[node] !== COVER.hidden) return false;
+        for (let side = 0; side < besideStep.length; side++) if (hiddenAt[node + besideStep[side]] === COVER.bare) return false;
+      }
+      return true;
+    };
+
     const positions = growingList(Float32Array, 1 << 13);
     /** Per vertex: 1 when it sits where a cut meets the pushed-out surface (it is then moved onto that surface whatever its distance). */
     const rims = growingList(Uint8Array, 1 << 11);
@@ -1089,6 +1119,7 @@
       let mask = 0;
       for (let index = 0; index < CORNER_COUNT; index++) mask |= inside[base + cornerStep[index]] << index;
       if (mask === 0 || mask === FULL_MASK) continue;
+      if (under && isCellHidden(under, base, mask)) continue;
       // Crossings of the cut are averaged apart from the rest (the field's surface, or a shell's floor).
       let sumX = 0;
       let sumY = 0;
@@ -1174,6 +1205,17 @@
       if (here !== inside[node + 1]) quad(node, 1, stepY, stepZ);
       if (here !== inside[node + stepY]) quad(node, stepY, stepZ, 1);
       if (here !== inside[node + stepZ]) quad(node, stepZ, 1, stepY);
+    }
+
+    // What this layer hides of the layers below, written only now so that it does not hide itself: hidden where
+    // it holds, bare where it was asked (the same nodes as above) and does not, unless another layer hides that.
+    if (cut && cover) {
+      for (let item = 0; item < band.length; item++) {
+        const node = band[item];
+        if (values[node] >= offset || values[node] < floor) continue;
+        if (inside[node]) cover[node] = COVER.hidden;
+        else if (cover[node] === COVER.unknown) cover[node] = COVER.bare;
+      }
     }
 
     // A cut layer keeps the faces that are not buried in what it lies on; paint keeps only those along the surface.
@@ -1355,6 +1397,456 @@
     return { normals, isSmooth };
   };
 
+  // ---- fewer triangles: edge collapse within an error, and several meshes as one --------------------------------------
+
+  /** Tunables of `simplify`. */
+  const SIMPLIFY = Object.freeze({
+    /** An open edge (a hem, the rim of a hole) resists leaving its line as a face of this many times its length squared would. */
+    borderWeight: 2,
+    /** A collapse may not turn a triangle further than to this cosine of its old normal (it would fold the surface). */
+    leastTurn: 0.2,
+    /** No edge a collapse leaves may span more than this share of a full change of owners: a joint keeps the loops it bends on. */
+    mostShareStep: 0.5,
+    /** Collapses between two pauses of `simplifySteps` (about a millisecond's work each hundred). */
+    slice: 1200,
+  });
+  /** Numbers of a quadric: the upper triangle of a symmetric 4 x 4, row by row. */
+  const QUADRIC = 10;
+
+  /**
+   * A binary heap of (cost, item, stamp) on typed arrays, cheapest first, growing by doubling.
+   * @param {number} capacity entries to start with room for
+   * @returns {{push: function(number, number, number): void, pop: function(): boolean, size: function(): number, cost: number, item: number, stamp: number}}
+   *   `pop` moves the cheapest entry into `cost`, `item` and `stamp`; false when empty
+   */
+  const costHeap = (capacity) => {
+    let costs = new Float64Array(capacity);
+    let items = new Int32Array(capacity);
+    let stamps = new Int32Array(capacity);
+    let count = 0;
+    const heap = {
+      cost: 0,
+      item: 0,
+      stamp: 0,
+      size: () => count,
+      push: (cost, item, stamp) => {
+        if (count === costs.length) {
+          const [moreCosts, moreItems, moreStamps] = [new Float64Array(count * 2), new Int32Array(count * 2), new Int32Array(count * 2)];
+          moreCosts.set(costs);
+          moreItems.set(items);
+          moreStamps.set(stamps);
+          [costs, items, stamps] = [moreCosts, moreItems, moreStamps];
+        }
+        // Sift up: parents dearer than the new entry move down a level.
+        let at = count++;
+        while (at > 0) {
+          const parent = (at - 1) >> 1;
+          if (costs[parent] <= cost) break;
+          costs[at] = costs[parent];
+          items[at] = items[parent];
+          stamps[at] = stamps[parent];
+          at = parent;
+        }
+        costs[at] = cost;
+        items[at] = item;
+        stamps[at] = stamp;
+      },
+      pop: () => {
+        if (count === 0) return false;
+        heap.cost = costs[0];
+        heap.item = items[0];
+        heap.stamp = stamps[0];
+        count -= 1;
+        const cost = costs[count];
+        const item = items[count];
+        const stamp = stamps[count];
+        // Sift down: the last entry sinks from the root past every cheaper child.
+        let at = 0;
+        for (;;) {
+          let child = at * 2 + 1;
+          if (child >= count) break;
+          if (child + 1 < count && costs[child + 1] < costs[child]) child += 1;
+          if (costs[child] >= cost) break;
+          costs[at] = costs[child];
+          items[at] = items[child];
+          stamps[at] = stamps[child];
+          at = child;
+        }
+        costs[at] = cost;
+        items[at] = item;
+        stamps[at] = stamp;
+        return true;
+      },
+    };
+    return heap;
+  };
+
+  /**
+   * @typedef {Object} Simplified
+   * @property {Float32Array} positions 3 per kept vertex (each where it was: no vertex is moved)
+   * @property {Float32Array} normals
+   * @property {Uint16Array|Uint32Array} indices
+   * @property {Uint32Array} kept per kept vertex, its index in the mesh given (rising): `pick` carries any other attribute over
+   * @property {number} error the largest error of a collapse made, metres (root mean square distance to the planes a vertex stood for)
+   */
+
+  /**
+   * A mesh with fewer triangles and the same form. Edges are collapsed onto one of their ends, cheapest first,
+   * where the cost of moving a vertex is how far that takes it off the planes of the triangles it has stood
+   * for (a quadric per vertex, added up as vertices merge): a flat thigh gives up most of its vertices and a
+   * nose, a finger or a hem almost none, at one error for all. A vertex is never moved, only removed, so every
+   * kept vertex is still on the surface it was meshed on and keeps its normal, its owners and its weights as
+   * they are (carry them over with `pick` and `kept`).
+   *
+   * What a collapse may not do: open or pinch the surface (a closed mesh stays closed, with every edge shared
+   * by two triangles), fold a triangle over, pull an open edge off its line more cheaply than a face, or (with
+   * `skin`) leave an edge across which more than `SIMPLIFY.mostShareStep` of the ownership changes, so a knee
+   * keeps the loops it bends on.
+   * @param {{positions: Float32Array, normals: Float32Array, indices: ArrayLike<number>}} mesh not changed
+   * @param {{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike<number>, weights: ArrayLike<number>}}} [options]
+   *   `tolerance`: collapses up to this error are always made, metres (default 0: only those that cost nothing);
+   *   `most`: then the cheapest further ones until at most this many triangles are left (default 0: no such
+   *   budget), whatever they cost; `skin`: 4 owners and 4 shares per vertex
+   * @returns {Generator<undefined, Simplified, undefined>} yields every `SIMPLIFY.slice` collapses; its return value is the mesh
+   * @complexity O(vertices x log vertices) time (a heap entry per vertex and about ten per collapse), O(vertices + triangles) memory
+   * @example const steps = Kit.sculpt.simplifySteps(mesh, { tolerance: 0.001 }); let step = steps.next(); while (!step.done) step = steps.next();
+   */
+  function* simplifySteps(mesh, { tolerance = 0, most = 0, skin = null } = {}) {
+    const { positions, normals } = mesh;
+    const vertexCount = positions.length / VECTOR;
+    const faces = Uint32Array.from(mesh.indices);
+    const faceCount = faces.length / VECTOR;
+    const isDead = new Uint8Array(faceCount);
+    let alive = faceCount;
+    // Each vertex's corners as a linked list through `next`: a collapse hands one list to another without copying.
+    const head = new Int32Array(vertexCount).fill(-1);
+    const next = new Int32Array(faces.length);
+    for (let corner = 0; corner < faces.length; corner++) {
+      next[corner] = head[faces[corner]];
+      head[faces[corner]] = corner;
+    }
+    const quadrics = new Float64Array(vertexCount * QUADRIC);
+    /** Per vertex: the summed weight of the planes in its quadric (areas), so an error is a mean over them. */
+    const weight = new Float64Array(vertexCount);
+    const isBorder = new Uint8Array(vertexCount);
+    /** Adds the plane through `at` (an offset into `positions`) with unit normal (nx, ny, nz) to a vertex's quadric. */
+    const addPlane = (vertex, nx, ny, nz, at, share) => {
+      const distance = -(nx * positions[at] + ny * positions[at + 1] + nz * positions[at + 2]);
+      const into = vertex * QUADRIC;
+      quadrics[into] += share * nx * nx;
+      quadrics[into + 1] += share * nx * ny;
+      quadrics[into + 2] += share * nx * nz;
+      quadrics[into + 3] += share * nx * distance;
+      quadrics[into + 4] += share * ny * ny;
+      quadrics[into + 5] += share * ny * nz;
+      quadrics[into + 6] += share * ny * distance;
+      quadrics[into + 7] += share * nz * nz;
+      quadrics[into + 8] += share * nz * distance;
+      quadrics[into + 9] += share * distance * distance;
+      weight[vertex] += share;
+    };
+    const normal = new Float64Array(VECTOR);
+    for (let face = 0; face < faces.length; face += VECTOR) {
+      faceNormal(positions, faces[face] * VECTOR, faces[face + 1] * VECTOR, faces[face + 2] * VECTOR, normal);
+      const twiceArea = Math.sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+      if (twiceArea < EPSILON * EPSILON) continue;
+      // Hot loops from here on: plain locals, nothing allocated per triangle, vertex or collapse.
+      const nx = normal[0] / twiceArea;
+      const ny = normal[1] / twiceArea;
+      const nz = normal[2] / twiceArea;
+      for (let corner = 0; corner < VECTOR; corner++) addPlane(faces[face + corner], nx, ny, nz, faces[face] * VECTOR, twiceArea / 2);
+      // An edge no other triangle walks the other way is open: both ends get a plane through it, square to the face.
+      for (let corner = 0; corner < VECTOR; corner++) {
+        const from = faces[face + corner];
+        const to = faces[face + ((corner + 1) % VECTOR)];
+        let hasTwin = false;
+        for (let other = head[from]; other >= 0 && !hasTwin; other = next[other]) hasTwin = faces[other - (other % VECTOR) + (((other % VECTOR) + 2) % VECTOR)] === to;
+        if (hasTwin) continue;
+        const ex = positions[to * VECTOR] - positions[from * VECTOR];
+        const ey = positions[to * VECTOR + 1] - positions[from * VECTOR + 1];
+        const ez = positions[to * VECTOR + 2] - positions[from * VECTOR + 2];
+        const mx = ey * nz - ez * ny;
+        const my = ez * nx - ex * nz;
+        const mz = ex * ny - ey * nx;
+        const length = Math.sqrt(mx * mx + my * my + mz * mz);
+        isBorder[from] = isBorder[to] = 1;
+        if (length < EPSILON) continue;
+        addPlane(from, mx / length, my / length, mz / length, from * VECTOR, SIMPLIFY.borderWeight * length * length);
+        addPlane(to, mx / length, my / length, mz / length, from * VECTOR, SIMPLIFY.borderWeight * length * length);
+      }
+    }
+    yield undefined;
+
+    /** The mean squared distance from where `target` is to the planes `vertex` stands for. */
+    const errorAt = (vertex, target) => {
+      const from = vertex * QUADRIC;
+      const x = positions[target * VECTOR];
+      const y = positions[target * VECTOR + 1];
+      const z = positions[target * VECTOR + 2];
+      const sum =
+        quadrics[from] * x * x +
+        quadrics[from + 4] * y * y +
+        quadrics[from + 7] * z * z +
+        2 * (quadrics[from + 1] * x * y + quadrics[from + 2] * x * z + quadrics[from + 5] * y * z + quadrics[from + 3] * x + quadrics[from + 6] * y + quadrics[from + 8] * z) +
+        quadrics[from + 9];
+      return Math.max(0, sum) / (weight[vertex] || 1);
+    };
+    /** How much of the ownership differs between two vertices: 0 the same owners in the same shares, 1 none in common. */
+    const shareStep = (first, second) => {
+      let common = 0;
+      for (let slot = 0; slot < OWNERS; slot++) {
+        const share = skin.weights[first * OWNERS + slot];
+        if (share === 0) continue;
+        const owner = skin.owners[first * OWNERS + slot];
+        for (let other = 0; other < OWNERS; other++) if (skin.owners[second * OWNERS + other] === owner) common += Math.min(share, skin.weights[second * OWNERS + other]);
+      }
+      return 1 - common;
+    };
+
+    /** Marks of the vertices round the one being looked at: `mark[n] === round` says n was seen this round. */
+    const mark = new Int32Array(vertexCount);
+    let round = 0;
+    /** The neighbours of the vertex last gathered, and what moving it onto each would cost. */
+    let around = new Int32Array(32);
+    let aroundCost = new Float64Array(32);
+    let aroundCount = 0;
+    /**
+     * Gathers the vertices that share a live triangle with `vertex` into `around`; returns its live triangles.
+     * Corners of dead triangles are unlinked on the way, so a list stays as long as the vertex has triangles.
+     */
+    const gather = (vertex) => {
+      round += 1;
+      aroundCount = 0;
+      let liveFaces = 0;
+      let previous = -1;
+      for (let corner = head[vertex]; corner >= 0; corner = next[corner]) {
+        const base = corner - (corner % VECTOR);
+        if (isDead[base / VECTOR]) {
+          if (previous < 0) head[vertex] = next[corner];
+          else next[previous] = next[corner];
+          continue;
+        }
+        previous = corner;
+        liveFaces += 1;
+        for (let other = base; other < base + VECTOR; other++) {
+          const neighbour = faces[other];
+          if (neighbour === vertex || mark[neighbour] === round) continue;
+          mark[neighbour] = round;
+          if (aroundCount === around.length) {
+            const [more, moreCost] = [new Int32Array(aroundCount * 2), new Float64Array(aroundCount * 2)];
+            more.set(around);
+            moreCost.set(aroundCost);
+            [around, aroundCost] = [more, moreCost];
+          }
+          around[aroundCount++] = neighbour;
+        }
+      }
+      return liveFaces;
+    };
+
+    const before = new Float64Array(VECTOR);
+    const after = new Float64Array(VECTOR);
+    /**
+     * May `vertex` be moved onto `target` (a neighbour)? `around` holds the neighbours of `vertex` and
+     * `liveFaces` its live triangles. Uses a fresh round of marks, so `around` must not be gathered again after.
+     */
+    const canCollapse = (vertex, target, liveFaces) => {
+      // The triangles on the edge go; every other triangle of the vertex must keep its facing.
+      let shared = 0;
+      for (let corner = head[vertex]; corner >= 0; corner = next[corner]) {
+        const base = corner - (corner % VECTOR);
+        if (isDead[base / VECTOR]) continue;
+        if (faces[base] === target || faces[base + 1] === target || faces[base + 2] === target) {
+          shared += 1;
+          continue;
+        }
+        const a = faces[base] * VECTOR;
+        const b = faces[base + 1] * VECTOR;
+        const c = faces[base + 2] * VECTOR;
+        faceNormal(positions, a, b, c, before);
+        const moved = target * VECTOR;
+        faceNormal(positions, a === vertex * VECTOR ? moved : a, b === vertex * VECTOR ? moved : b, c === vertex * VECTOR ? moved : c, after);
+        const turn = before[0] * after[0] + before[1] * after[1] + before[2] * after[2];
+        const sizes = (before[0] * before[0] + before[1] * before[1] + before[2] * before[2]) * (after[0] * after[0] + after[1] * after[1] + after[2] * after[2]);
+        if (!(turn > 0 && turn * turn > SIMPLIFY.leastTurn * SIMPLIFY.leastTurn * sizes)) return false;
+      }
+      // A vertex on an open edge moves only along that edge (one triangle on it); one inside, across an edge of two.
+      if (shared !== (isBorder[vertex] ? 1 : 2)) return false;
+      // The two must have in common exactly the vertices opposite the edge, or the surface would be pinched there.
+      round += 1;
+      for (let index = 0; index < aroundCount; index++) mark[around[index]] = round;
+      let common = 0;
+      let targetFaces = 0;
+      const seen = round + 1;
+      for (let corner = head[target]; corner >= 0; corner = next[corner]) {
+        const base = corner - (corner % VECTOR);
+        if (isDead[base / VECTOR]) continue;
+        targetFaces += 1;
+        for (let other = base; other < base + VECTOR; other++) {
+          const neighbour = faces[other];
+          if (neighbour === target || mark[neighbour] !== round) continue;
+          mark[neighbour] = seen;
+          common += 1;
+        }
+      }
+      round = seen;
+      if (common !== shared) return false;
+      // Fewer than three triangles round a vertex inside a surface is two sheets back to back (the end of a tetrahedron).
+      if (!isBorder[target] && targetFaces + liveFaces - 2 * shared < VECTOR) return false;
+      if (!skin) return true;
+      for (let index = 0; index < aroundCount; index++) if (around[index] !== target && shareStep(target, around[index]) > SIMPLIFY.mostShareStep) return false;
+      return true;
+    };
+
+    const limit = tolerance * tolerance;
+    /** Is a collapse of this cost wanted now: within the tolerance, or the budget not yet met? */
+    const isWanted = (cost) => cost <= limit || (most > 0 && alive > most);
+    const heap = costHeap(vertexCount + 16);
+    /** Per vertex: how often it has been queued; an entry with an older stamp is out of date. */
+    const stampOf = new Int32Array(vertexCount);
+    /** Per vertex: its cheapest move as last found (the neighbour and the cost), and whether that move was refused. */
+    const cheapestTo = new Int32Array(vertexCount).fill(-1);
+    const cheapestCost = new Float64Array(vertexCount).fill(Infinity);
+    const isParked = new Uint8Array(vertexCount);
+    /** Queues a vertex at a cost, replacing any entry it has. */
+    const queueAt = (vertex, target, cost) => {
+      cheapestTo[vertex] = target;
+      cheapestCost[vertex] = cost;
+      isParked[vertex] = 0;
+      stampOf[vertex] += 1;
+      if (target >= 0 && isWanted(cost)) heap.push(cost, vertex, stampOf[vertex]);
+    };
+    /** Finds a vertex's cheapest move among its neighbours and queues it. */
+    const queue = (vertex) => {
+      gather(vertex);
+      let target = -1;
+      let cheapest = Infinity;
+      for (let index = 0; index < aroundCount; index++) {
+        const cost = errorAt(vertex, around[index]);
+        if (cost >= cheapest) continue;
+        cheapest = cost;
+        target = around[index];
+      }
+      queueAt(vertex, target, cheapest);
+    };
+    for (let vertex = 0; vertex < vertexCount; vertex++) if (head[vertex] >= 0) queue(vertex);
+    yield undefined;
+
+    let worst = 0;
+    let sinceYield = 0;
+    /** Neighbours to queue again after a collapse (the target's, as they are afterwards). */
+    let again = new Int32Array(64);
+    while (heap.pop()) {
+      const vertex = heap.item;
+      if (heap.stamp !== stampOf[vertex]) continue;
+      if (!isWanted(heap.cost)) break;
+      const liveFaces = gather(vertex);
+      for (let index = 0; index < aroundCount; index++) aroundCost[index] = errorAt(vertex, around[index]);
+      // The cheapest neighbour the surface allows; a refused one is passed over for the next.
+      let target = -1;
+      let cost = 0;
+      for (;;) {
+        let pick = -1;
+        for (let index = 0; index < aroundCount; index++) if (aroundCost[index] < Infinity && (pick < 0 || aroundCost[index] < aroundCost[pick])) pick = index;
+        if (pick < 0 || !isWanted(aroundCost[pick])) break;
+        if (canCollapse(vertex, around[pick], liveFaces)) {
+          target = around[pick];
+          cost = aroundCost[pick];
+          break;
+        }
+        aroundCost[pick] = Infinity;
+      }
+      if (target < 0) {
+        // Refused for now; a collapse beside it may change that.
+        isParked[vertex] = 1;
+        continue;
+      }
+      // The collapse: triangles on the edge die, the rest of the vertex's corners become the target's.
+      for (let corner = head[vertex]; corner >= 0; ) {
+        const following = next[corner];
+        const base = corner - (corner % VECTOR);
+        if (!isDead[base / VECTOR]) {
+          if (faces[base] === target || faces[base + 1] === target || faces[base + 2] === target) {
+            isDead[base / VECTOR] = 1;
+            alive -= 1;
+          } else {
+            faces[corner] = target;
+            next[corner] = head[target];
+            head[target] = corner;
+          }
+        }
+        corner = following;
+      }
+      head[vertex] = -1;
+      stampOf[vertex] += 1;
+      for (let index = 0; index < QUADRIC; index++) quadrics[target * QUADRIC + index] += quadrics[vertex * QUADRIC + index];
+      weight[target] += weight[vertex];
+      worst = Math.max(worst, cost);
+      // The target stands for more now, so its moves cost more. A neighbour's own costs are as they were (nothing
+      // moved): it is looked at again only if its cheapest move was onto the vertex that went or was refused;
+      // otherwise the target may be a new, cheaper neighbour to it.
+      gather(target);
+      if (again.length < aroundCount) again = new Int32Array(aroundCount * 2);
+      again.set(around.subarray(0, aroundCount));
+      const count = aroundCount;
+      queue(target);
+      for (let index = 0; index < count; index++) {
+        const neighbour = again[index];
+        if (cheapestTo[neighbour] === vertex || isParked[neighbour]) queue(neighbour);
+        else {
+          const onto = errorAt(neighbour, target);
+          if (onto < cheapestCost[neighbour]) queueAt(neighbour, target, onto);
+        }
+      }
+      if (++sinceYield >= SIMPLIFY.slice) {
+        sinceYield = 0;
+        yield undefined;
+      }
+    }
+
+    // What is left, in the order it came in.
+    const renumbered = new Int32Array(vertexCount).fill(-1);
+    for (let face = 0; face < faceCount; face++) if (!isDead[face]) for (let corner = 0; corner < VECTOR; corner++) renumbered[faces[face * VECTOR + corner]] = 0;
+    let used = 0;
+    for (let vertex = 0; vertex < vertexCount; vertex++) if (renumbered[vertex] === 0) renumbered[vertex] = used++;
+    const kept = new Uint32Array(used);
+    for (let vertex = 0; vertex < vertexCount; vertex++) if (renumbered[vertex] >= 0) kept[renumbered[vertex]] = vertex;
+    const indices = used > MOST_SHORT_INDEX ? new Uint32Array(alive * VECTOR) : new Uint16Array(alive * VECTOR);
+    for (let face = 0, out = 0; face < faceCount; face++) if (!isDead[face]) for (let corner = 0; corner < VECTOR; corner++) indices[out++] = renumbered[faces[face * VECTOR + corner]];
+    return { positions: pick(positions, VECTOR, kept), normals: pick(normals, VECTOR, kept), indices, kept, error: Math.sqrt(worst) };
+  }
+
+  /**
+   * `simplifySteps` run to its end in one go (see it for the method and the options).
+   * @param {{positions: Float32Array, normals: Float32Array, indices: ArrayLike<number>}} mesh
+   * @param {{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike<number>, weights: ArrayLike<number>}}} [options]
+   * @returns {Simplified}
+   * @complexity as `simplifySteps`
+   * @example const light = Kit.sculpt.simplify(skin, { tolerance: 0.001 }); const weights = Kit.sculpt.pick(skinWeights, 4, light.kept);
+   */
+  const simplify = (mesh, options) => {
+    const steps = simplifySteps(mesh, options);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    return step.value;
+  };
+
+  /**
+   * The values of the vertices kept: `size` numbers per vertex, for the vertices `kept` names, in that order.
+   * @template {Float32Array|Uint16Array|Uint8Array} Values
+   * @param {Values} values `size` per vertex of the mesh before
+   * @param {number} size numbers per vertex
+   * @param {ArrayLike<number>} kept vertex indices (`Simplified.kept`)
+   * @returns {Values} a new array of the same type
+   * @complexity O(kept x size)
+   * @example const owners = Kit.sculpt.pick(layer.owners, 4, light.kept);
+   */
+  const pick = (values, size, kept) => {
+    const picked = /** @type {any} */ (new /** @type {any} */ (values.constructor)(kept.length * size));
+    for (let index = 0; index < kept.length; index++) for (let item = 0; item < size; item++) picked[index * size + item] = values[kept[index] * size + item];
+    return picked;
+  };
+
   // ---- weights: who moves each vertex ---------------------------------------------------------------------------------
 
   /**
@@ -1438,6 +1930,11 @@
     slopeAt,
     nearestAt,
     surface,
+    simplify,
+    simplifySteps,
+    pick,
+    SIMPLIFY,
+    COVER,
     weights,
   };
 })();

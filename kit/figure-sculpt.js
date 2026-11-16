@@ -57,11 +57,16 @@
     drapeSpread: 0.16,
     /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
     drapeSharpness: 5,
-    /** Sculpted bakes kept for reuse (`sculptCache`): about 2 MB each at high detail. */
+    /** Sculpted bakes kept for reuse (`sculptCache`): at most this many, and at most `keptBytes` of arrays between them. */
     kept: 24,
+    keptBytes: 12e6,
   });
+  /** Numbers per vertex of a surface's `paint`: the ramp slot and the ink group. */
+  const PAINT = 2;
   /** Owners per vertex of a layer. */
   const OWNERS = 4;
+  /** The largest vertex index a 16-bit index buffer can hold. */
+  const MOST_SHORT_INDEX = 65535;
   const MATRIX = 16;
   /** Numbers of an affine map kept as three rows of four. */
   const ROW_AFFINE = 12;
@@ -342,11 +347,28 @@
 
   /**
    * @typedef {Object} Sculpted
-   * @property {SculptLayer[]} layers shared between equal bakes: never write to their arrays
+   * @property {SculptLayer[]} layers shared between equal bakes: never write to their arrays (views of `surface`'s, a layer each)
+   * @property {SculptSurface} surface every layer as one mesh: what a figure draws
+   * @property {number} bytes what the arrays take, bytes
    * @property {Set<string>} replaced ids of the layout pieces the layers stand in for (do not draw them)
    * @property {Float32Array} matrices the bone matrices the layers were made in (the bind pose), 16 per bone
    * @property {{leads: Int16Array, turns: Float32Array}} clearance see `limbClearance`
    * @property {string} signature what the layers depend on (see `sculptSignature`)
+   */
+
+  /**
+   * @typedef {Object} SculptSurface
+   * The layers of a bake as one skinned mesh: a figure is one draw however many garments it wears. A layer is a
+   * run of vertices and a run of triangles (`ranges`); no vertex is shared between two.
+   * @property {Float32Array} positions 3 per vertex, in the bake's sculpting pose
+   * @property {Float32Array} normals
+   * @property {Uint16Array|Uint32Array} indices
+   * @property {Uint16Array} owners 4 bone indices per vertex
+   * @property {Float32Array} weights 4 shares per vertex
+   * @property {Float32Array} faceShare per vertex, how much of it the head's bones move where its layer is a body surface, else 0
+   * @property {Uint8Array} paint 2 per vertex: its layer's ramp slot (also its line class) and ink group
+   * @property {Array<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}>} ranges
+   * @property {number} error the furthest the mesh was allowed off the surfaces it was meshed on, metres (`Kit.sculpt.simplify`)
    */
 
   /** The solid of a layout piece in the sculpting pose, with the fillets its thickness earns. */
@@ -478,47 +500,63 @@
    * @param {Object} bake from a bakery
    * @param {Object} figureLayout `Kit.figure.layout(bake)`
    * @param {string} [detail] default the layout's level
+   * @param {{cull?: boolean, simplify?: boolean}} [options] as `sculptLayers`
    * @returns {string}
    * @complexity O(pieces + bones)
    * @example Kit.figure.sculptSignature(bake, layout) === Kit.figure.sculptSignature(recoloured, Kit.figure.layout(recoloured)) // true
    */
-  const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
+  const sculptSignature = (bake, figureLayout, detail = figureLayout.level, options = {}) => {
     const { wears, hangs } = wearOf(bake.plan);
     const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) =>
       [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone]].join('~')
     );
     const rest = bake.rest || Kit.body.createPose(bake.plan);
     const pose = [rest.translation, rest.rotation, rest.scale].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
-    return [detail, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
+    const made = `${detail}${options.cull === false ? '~whole' : ''}${options.simplify === false ? '~dense' : ''}`;
+    return [made, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
   };
 
   /** @type {Map<string, Sculpted>} sculpted bakes by signature, most recently used last */
   const kept = new Map();
+  /** The bytes of every array `kept` holds. */
+  let keptBytes = 0;
   /**
    * The sculpted layers kept for reuse: equal bakes (a crowd of one look, a recoloured body, an undo) share one
-   * set of arrays. The `SCULPT.kept` most recently used are held.
-   * @type {{clear: function(): void, size: function(): number}}
+   * set of arrays. The most recently used are held: at most `SCULPT.kept` of them and `SCULPT.keptBytes` bytes,
+   * and always the last one made. What a figure still draws stays alive with the figure, kept here or not.
+   * @type {{clear: function(): void, size: function(): number, bytes: function(): number}}
    */
-  const sculptCache = { clear: () => kept.clear(), size: () => kept.size };
+  const sculptCache = {
+    clear: () => {
+      kept.clear();
+      keptBytes = 0;
+    },
+    size: () => kept.size,
+    bytes: () => keptBytes,
+  };
+  /** Keeps a sculpted bake, and lets the least recently used go while there are too many or they are too large. */
+  const keep = (sculpted) => {
+    kept.set(sculpted.signature, sculpted);
+    keptBytes += sculpted.bytes;
+    while (kept.size > 1 && (kept.size > SCULPT.kept || keptBytes > SCULPT.keptBytes)) {
+      const [oldest, dropped] = kept.entries().next().value;
+      kept.delete(oldest);
+      keptBytes -= dropped.bytes;
+    }
+  };
 
   /**
    * Sculpts a bake. Equal bakes return the same layers (see `sculptCache`).
    * @param {Object} bake from a bakery
    * @param {Object} figureLayout `Kit.figure.layout(bake)`
-   * @param {{detail?: string}} [options] a key of `Kit.sculpt.DETAIL` (default: the layout's level)
+   * @param {{detail?: string, cull?: boolean, simplify?: boolean}} [options] `detail`: a key of `Kit.sculpt.DETAIL` (default: the
+   *   layout's level); `cull: false` also meshes what a garment hides (every skin is then closed); `simplify: false`
+   *   keeps every vertex the grid made. Both are for measuring and testing: a figure draws the default
    * @returns {Sculpted}
    * @complexity O(body surface area / cell^2) distance evaluations and vertices, once per distinct bake; O(pieces) for a bake seen before
    * @example const { layers, replaced } = Kit.figure.sculptLayers(bake, Kit.figure.layout(bake));
    */
   const sculptLayers = (bake, figureLayout, options = {}) => {
-    const detail = options.detail || figureLayout.level;
-    const signature = sculptSignature(bake, figureLayout, detail);
-    const known = kept.get(signature);
-    if (known) {
-      kept.delete(signature);
-      kept.set(signature, known);
-      return known;
-    }
     return sculptTask(bake, figureLayout, options).finish();
   };
 
@@ -528,7 +566,7 @@
    * the `Sculpted` once done (at once for a bake seen before). Its layers go to the same `sculptCache`.
    * @param {Object} bake from a bakery
    * @param {Object} figureLayout `Kit.figure.layout(bake)`
-   * @param {{detail?: string, now?: function(): number}} [options] `now`: a clock in milliseconds (default `performance.now`)
+   * @param {{detail?: string, cull?: boolean, simplify?: boolean, now?: function(): number}} [options] as `sculptLayers`; `now`: a clock in milliseconds (default `performance.now`)
    * @returns {{step: function(number): boolean, finish: function(): Sculpted, isDone: function(): boolean, result: ?Sculpted, signature: string}}
    * @complexity as `sculptLayers` in total; one `step` runs pieces of a few milliseconds until its time is used
    * @example const task = Kit.figure.sculptTask(bake, layout); // each frame: if (task.step(6)) show(task.result);
@@ -536,7 +574,7 @@
   const sculptTask = (bake, figureLayout, options = {}) => {
     const detail = options.detail || figureLayout.level;
     const now = options.now || (() => performance.now());
-    const signature = sculptSignature(bake, figureLayout, detail);
+    const signature = sculptSignature(bake, figureLayout, detail, options);
     /** @type {{step: function(number): boolean, finish: function(): Object, isDone: function(): boolean, result: ?Object, signature: string}} */
     const task = { signature, result: null, step: () => false, finish: () => null, isDone: () => false };
     let steps = null;
@@ -550,12 +588,11 @@
       return true;
     };
     const advance = () => {
-      steps = steps || sculptSteps(bake, figureLayout, detail);
+      steps = steps || sculptSteps(bake, figureLayout, detail, options);
       const step = steps.next();
       if (!step.done) return false;
       task.result = { ...step.value, signature };
-      kept.set(signature, task.result);
-      if (kept.size > SCULPT.kept) kept.delete(kept.keys().next().value);
+      keep(task.result);
       return true;
     };
     task.isDone = () => task.result !== null;
@@ -580,7 +617,7 @@
   };
 
   /** Sculpts a bake afresh (see `sculptLayers`), pausing (a `yield`) between pieces of work of a few milliseconds each. */
-  function* sculptSteps(bake, figureLayout, detail) {
+  function* sculptSteps(bake, figureLayout, detail, options = {}) {
     const { plan } = bake;
     const matrices = restMatrices(bake, spreadPose(bake));
     const frames = bake.surface && Kit.body.surfaceLayout ? Kit.body.surfaceLayout(plan).frames : null;
@@ -633,30 +670,148 @@
         ...mesh,
         ...Kit.sculpt.weights(mesh.positions, group.solids, { spread: SCULPT.weightSpread, reach: offset + cell }),
       });
-      const bare = Kit.sculpt.surface(field);
-      yield undefined;
-      const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
-      skin.faceShare = shareOf(skin, isHeadBone);
-      layers.push(skin);
-      yield undefined;
-      for (const { garment, offset, host, isPaint } of specs) {
+      // What a layer hides is not meshed (kit/sculpt.js `surface`): the garments are made from the outermost in
+      // and the skin last, each marking where it lies. They are listed as before: the skin, then in paint order.
+      const cover = options.cull !== false && specs.length ? new Uint8Array(field.values.length) : undefined;
+      const outermostFirst = specs.map((_spec, index) => index).sort((first, second) => specs[second].offset - specs[first].offset || second - first);
+      const cloths = specs.map(() => null);
+      for (const index of outermostFirst) {
+        const { garment, offset, host, isPaint } = specs[index];
         const own = cutOf(garment, field, frames);
         const within = host ? cutOf(host, field, frames) : null;
         const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
         // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
         const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
-        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: SCULPT.buriedDepth, walls: !isPaint });
-        if (cloth.indices.length) layers.push(layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
+        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: SCULPT.buriedDepth, walls: !isPaint, cover, under: cover });
+        if (cloth.indices.length) cloths[index] = layerOf(`region:${garment.key}`, garment.ramp, cloth, offset);
         yield undefined;
       }
+      const bare = Kit.sculpt.surface(field, { under: cover });
+      yield undefined;
+      const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
+      skin.faceShare = shareOf(skin, isHeadBone);
+      layers.push(skin, ...cloths.filter(Boolean));
+      yield undefined;
     }
     const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead });
     worn.forEach(({ layer, pieces }) => {
       layers.push(layer);
       pieces.forEach((piece) => replaced.add(piece.id));
     });
-    return { layers, replaced, matrices, clearance };
+    const level = Kit.sculpt.DETAIL[detail];
+    const whole = joinLayers(layers);
+    yield undefined;
+    const tolerance = (cell || level.cell) * level.error;
+    const light = options.simplify === false ? null : yield* Kit.sculpt.simplifySteps(whole, { tolerance, most: level.triangles || 0, skin: whole });
+    const surface = light ? lightened(whole, light) : { ...whole, error: 0 };
+    const views = layerViews(surface, layers);
+    return { layers: views, surface, bytes: bytesOf(surface, views), replaced, matrices, clearance };
   }
+
+  /**
+   * Layers as one mesh (a `SculptSurface` before it is simplified): their arrays end to end, each triangle
+   * naming vertices of the whole, and per vertex the paint of the layer it came from.
+   * @complexity O(vertices + triangles)
+   */
+  const joinLayers = (layers) => {
+    const vertexCount = layers.reduce((sum, layer) => sum + layer.positions.length / VECTOR, 0);
+    const indexCount = layers.reduce((sum, layer) => sum + layer.indices.length, 0);
+    const whole = {
+      positions: new Float32Array(vertexCount * VECTOR),
+      normals: new Float32Array(vertexCount * VECTOR),
+      indices: new Uint32Array(indexCount),
+      owners: new Uint16Array(vertexCount * OWNERS),
+      weights: new Float32Array(vertexCount * OWNERS),
+      faceShare: new Float32Array(vertexCount),
+      paint: new Uint8Array(vertexCount * PAINT),
+      ranges: [],
+    };
+    let [vertexStart, indexStart] = [0, 0];
+    layers.forEach((layer) => {
+      const count = layer.positions.length / VECTOR;
+      whole.positions.set(layer.positions, vertexStart * VECTOR);
+      whole.normals.set(layer.normals, vertexStart * VECTOR);
+      whole.owners.set(layer.owners, vertexStart * OWNERS);
+      whole.weights.set(layer.weights, vertexStart * OWNERS);
+      if (layer.faceShare) whole.faceShare.set(layer.faceShare, vertexStart);
+      for (let vertex = vertexStart; vertex < vertexStart + count; vertex++) {
+        whole.paint[vertex * PAINT] = layer.ramp;
+        whole.paint[vertex * PAINT + 1] = layer.inkGroup;
+      }
+      // Hot loop over every corner: an index write each.
+      for (let corner = 0; corner < layer.indices.length; corner++) whole.indices[indexStart + corner] = layer.indices[corner] + vertexStart;
+      whole.ranges.push({ id: layer.id, vertexStart, vertexCount: count, indexStart, indexCount: layer.indices.length });
+      vertexStart += count;
+      indexStart += layer.indices.length;
+    });
+    return whole;
+  };
+
+  /** A joined surface after `Kit.sculpt.simplify`: the kept vertices' attributes, and each layer's runs found again. */
+  const lightened = (whole, light) => {
+    const { kept, indices } = light;
+    /** The first kept vertex at or after a vertex of the dense mesh (`kept` rises). */
+    const firstFrom = (vertex) => {
+      let [low, high] = [0, kept.length];
+      while (low < high) {
+        const middle = (low + high) >> 1;
+        if (kept[middle] < vertex) low = middle + 1;
+        else high = middle;
+      }
+      return low;
+    };
+    let corner = 0;
+    const ranges = whole.ranges.map((range) => {
+      const vertexStart = firstFrom(range.vertexStart);
+      const vertexEnd = firstFrom(range.vertexStart + range.vertexCount);
+      // Triangles keep their order, and a triangle's corners are all of one layer.
+      const indexStart = corner;
+      while (corner < indices.length && indices[corner] < vertexEnd) corner += VECTOR;
+      return { id: range.id, vertexStart, vertexCount: vertexEnd - vertexStart, indexStart, indexCount: corner - indexStart };
+    });
+    return {
+      positions: light.positions,
+      normals: light.normals,
+      indices,
+      owners: Kit.sculpt.pick(whole.owners, OWNERS, kept),
+      weights: Kit.sculpt.pick(whole.weights, OWNERS, kept),
+      faceShare: Kit.sculpt.pick(whole.faceShare, 1, kept),
+      paint: Kit.sculpt.pick(whole.paint, PAINT, kept),
+      ranges,
+      error: light.error,
+    };
+  };
+
+  /**
+   * The layers of a surface as layers again: each a view of its run of the surface's arrays (nothing copied
+   * but its triangles, which name its own vertices). A layer nothing is left of is not listed.
+   */
+  const layerViews = (surface, layers) =>
+    surface.ranges
+      .map((range, index) => {
+        const { vertexStart, indexStart } = range;
+        const vertexEnd = vertexStart + range.vertexCount;
+        const { id, ramp, inkGroup, inkClass, faceShare } = layers[index];
+        const indices = new Uint16Array(range.indexCount);
+        for (let corner = 0; corner < range.indexCount; corner++) indices[corner] = surface.indices[indexStart + corner] - vertexStart;
+        const view = {
+          id,
+          ramp,
+          inkGroup,
+          inkClass,
+          positions: surface.positions.subarray(vertexStart * VECTOR, vertexEnd * VECTOR),
+          normals: surface.normals.subarray(vertexStart * VECTOR, vertexEnd * VECTOR),
+          indices: range.vertexCount > MOST_SHORT_INDEX ? Uint32Array.from(indices, (_value, corner) => surface.indices[indexStart + corner] - vertexStart) : indices,
+          owners: surface.owners.subarray(vertexStart * OWNERS, vertexEnd * OWNERS),
+          weights: surface.weights.subarray(vertexStart * OWNERS, vertexEnd * OWNERS),
+        };
+        return faceShare ? { ...view, faceShare: surface.faceShare.subarray(vertexStart, vertexEnd) } : view;
+      })
+      .filter((layer) => layer.indices.length > 0);
+
+  /** The bytes of a surface's arrays and of its layers' own triangles. */
+  const bytesOf = (surface, layers) =>
+    [surface.positions, surface.normals, surface.indices, surface.owners, surface.weights, surface.faceShare, surface.paint, ...layers.map((layer) => layer.indices)].reduce((sum, values) => sum + values.byteLength, 0);
 
   /**
    * The layers of the worn objects of a bake (bone rows with `wear`): one per object and paint, each on a grid of

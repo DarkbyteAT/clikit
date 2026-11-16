@@ -30,11 +30,13 @@
    *   high:   a figure a few hundred pixels tall (the creator, a close-up)
    *   medium: a figure on a game screen
    *   low:    the pixel look's low-resolution target, or a crowd
+   *   far:    a figure a few dozen pixels tall (a crowd in the distance; kit/figure-detail.js chooses it)
    */
   const LEVELS = Object.freeze({
     high: Object.freeze({ edge: 0.022, minAround: 8, maxAround: 32, minRings: 3, smoothSteps: 4 }),
     medium: Object.freeze({ edge: 0.045, minAround: 6, maxAround: 14, minRings: 2, smoothSteps: 2 }),
     low: Object.freeze({ edge: 0.09, minAround: 5, maxAround: 8, minRings: 1, smoothSteps: 1 }),
+    far: Object.freeze({ edge: 0.18, minAround: 4, maxAround: 6, minRings: 1, smoothSteps: 1 }),
   });
   /** Floats per vertex of a stamp's paint (slot, tone, size rule, order) and of its centre (x, y, z, half extent). */
   const PAINT = 3;

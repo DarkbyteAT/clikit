@@ -232,6 +232,8 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         const bake = bakery.bakeRecipe({ species, seed: 1 });
         const layout = figure.layout(bake, { level: 'low' });
         const sculpted = figure.sculptLayers(bake, layout);
+        // What a garment hides of a skin is not meshed, so a skin is closed only when it is sculpted whole.
+        const whole = figure.sculptLayers(bake, layout, { cull: false });
         assert.ok(sculpted.layers.length > 0, `${where}: something is sculpted`);
         const boneCount = bake.plan.boneNames.length;
         sculpted.layers.forEach((layer) => {
@@ -250,8 +252,9 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
             if (Math.abs(sum - 1) > 1e-4) assert.fail(`${where} ${layer.id}: weights of vertex ${vertex} sum to ${sum}`);
           }
           if (layer.id.startsWith('skin:') || layer.id.startsWith('worn:')) {
-            assert.deepStrictEqual(edgesOf(layer), { open: 0, pinched: 0 }, `${where} ${layer.id}: closed, every edge shared by exactly two triangles`);
-            assert.ok(sixVolumes(layer) > 0, `${where} ${layer.id}: wound outward`);
+            const closed = whole.layers.find((other) => other.id === layer.id);
+            assert.deepStrictEqual(edgesOf(closed), { open: 0, pinched: 0 }, `${where} ${layer.id}: closed, every edge shared by exactly two triangles`);
+            assert.ok(sixVolumes(closed) > 0, `${where} ${layer.id}: wound outward`);
           }
         });
         // What is replaced is exactly what was meshed: every such piece has a shape, and its bone owns vertices.
