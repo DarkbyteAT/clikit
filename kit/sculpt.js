@@ -13,6 +13,16 @@
  * Does not own: what the solids are (a body's bones, a part), which layers a figure has (kit/figure-sculpt.js),
  *        THREE, or drawing.
  *
+ * The field is the contract, and both of its ends can be replaced:
+ *   Sources. A solid is anything that answers a signed distance at a point (`Solid.distance`), with bounds, a
+ *     thinness and an owner. The analytic shapes are rows of `KINDS`; so is `grid`, distances stored on a grid
+ *     (a field sampled earlier, a bake kept between sessions, the output of a learned implicit evaluated once).
+ *     A new source is a new row of `KINDS` (or a `Solid` made by hand); nothing downstream asks what it was.
+ *   The field. `sample` blends solids into a `Field`; `valueAt` (distance), `nearestAt` (which solid, so whose
+ *     paint and whose bones) and `weights` (owners of any points) read it. None of them knows of triangles.
+ *   Consumers. `surface` (surface nets) is one consumer and the only place a mesh is made. Another (points or
+ *     splats laid on the zero set, a ray marcher) would read the same three functions and the band.
+ *
  * Conventions: metres; a field's grid is axis-aligned in the space the solids were placed in (a body's rest
  * pose). Distances are negative inside. Triangles wind counter-clockwise seen from outside.
  *
@@ -296,7 +306,30 @@
         return Math.sqrt(outPlane * outPlane + outDepth * outDepth) + Math.min(Math.max(inPlane, overDepth), 0);
       };
     },
+    /**
+     * Distances kept on a grid, read between nodes like `valueAt`: `values` (x fastest, then y, then z), `size`
+     * in nodes, `origin` and `cell` in metres, in the shape's own space. A `Field` is such a shape as it stands
+     * (`{ kind: 'grid', ...field }`), true within its band. Outside the grid the distance is that of the nearest
+     * point of its box plus the way there.
+     */
+    grid: (shape) => {
+      const { size, origin, cell } = shape;
+      const far = [origin[0] + (size[0] - 1) * cell, origin[1] + (size[1] - 1) * cell, origin[2] + (size[2] - 1) * cell];
+      return (x, y, z) => {
+        const inX = Math.max(origin[0], Math.min(far[0], x));
+        const inY = Math.max(origin[1], Math.min(far[1], y));
+        const inZ = Math.max(origin[2], Math.min(far[2], z));
+        const outside = Math.sqrt((x - inX) * (x - inX) + (y - inY) * (y - inY) + (z - inZ) * (z - inZ));
+        return valueAt(shape, inX, inY, inZ) + outside;
+      };
+    },
   });
+  /** The corners of a grid shape's box, as points: its bounds need no built mesh. */
+  const gridCorners = ({ size, origin, cell }) => {
+    const points = [];
+    for (let corner = 0; corner < 8; corner++) for (let axis = 0; axis < VECTOR; axis++) points.push(origin[axis] + ((corner >> axis) & 1) * (size[axis] - 1) * cell);
+    return points;
+  };
   /** Kinds whose distance function writes `SLOPE`. */
   const SLOPED = Object.freeze({ capsule: true, sphere: true, lathe: true });
 
@@ -426,7 +459,7 @@
    */
   const solid = (shape, matrix, { owner = 0, blend = 0, positions } = {}) => {
     const stretches = [0, 1, 2].map((column) => Math.hypot(matrix[column * 4], matrix[column * 4 + 1], matrix[column * 4 + 2]));
-    const points = positions || Kit.figure.buildShape(shape, 'low').positions;
+    const points = positions || (shape.kind === 'grid' ? gridCorners(shape) : Kit.figure.buildShape(shape, 'low').positions);
     const min = [Infinity, Infinity, Infinity];
     const max = [-Infinity, -Infinity, -Infinity];
     const localMin = [Infinity, Infinity, Infinity];

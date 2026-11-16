@@ -8399,6 +8399,16 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
 > Does not own: what the solids are (a body's bones, a part), which layers a figure has (kit/figure-sculpt.js),
 >        THREE, or drawing.
 >
+> The field is the contract, and both of its ends can be replaced:
+>   Sources. A solid is anything that answers a signed distance at a point (`Solid.distance`), with bounds, a
+>     thinness and an owner. The analytic shapes are rows of `KINDS`; so is `grid`, distances stored on a grid
+>     (a field sampled earlier, a bake kept between sessions, the output of a learned implicit evaluated once).
+>     A new source is a new row of `KINDS` (or a `Solid` made by hand); nothing downstream asks what it was.
+>   The field. `sample` blends solids into a `Field`; `valueAt` (distance), `nearestAt` (which solid, so whose
+>     paint and whose bones) and `weights` (owners of any points) read it. None of them knows of triangles.
+>   Consumers. `surface` (surface nets) is one consumer and the only place a mesh is made. Another (points or
+>     splats laid on the zero set, a ray marcher) would read the same three functions and the band.
+>
 > Conventions: metres; a field's grid is axis-aligned in the space the solids were placed in (a body's rest
 > pose). Distances are negative inside. Triangles wind counter-clockwise seen from outside.
 >
@@ -8795,7 +8805,6 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
   - `world` *Object* - the world transforms of the last `pose()`, in figure space
   - `measured` *Object* - the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
   - `rest` *function(): void* - copies the bake's rest pose into `local`
-  - `cost` *{triangles: number, meshes: number, isSculpted: boolean}* - triangles per member, instanced meshes for the whole crowd
   - `pose` *function(): void* - forward kinematics over `local` and a matrix write per mesh; no allocation
   - `setBake` *function(Object, Object=, {settle?: boolean}=): Object* - draws another bake with the fewest changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is still moving (a dial being dragged): the sculpted surfaces are bent to the new proportions by the skeleton at once, and sculpted again by `settle()`
   - `settle` *function(number=): boolean* - sculpts the surfaces for the bake shown if they were only bent to it (or, built with `sculpt: 'steps'`, not sculpted yet); true when it did. With a number it works for about that many milliseconds and returns false until the work, spread over as many calls as it takes, is done
@@ -8808,7 +8817,8 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
   - `count` *number*
   - `locals` *Object[]* - one pose buffer per member (write it, then `pose`)
   - `places` *Float32Array* - 4 per member: x, y, z, heading (radians); written by the caller
-  - `pose` *function(): void* - forward kinematics and an instance matrix per member per piece; no allocation
+  - `cost` *{triangles: number, meshes: number, isSculpted: boolean}* - triangles per member, instanced meshes for the whole crowd
+  - `pose` *function(): void* - forward kinematics, an instance matrix per member per rigid piece and a bone texture row per member; no allocation
   - `dispose` *function(): void*
 
 ## figure-show.js

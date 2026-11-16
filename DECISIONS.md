@@ -873,6 +873,19 @@ machine at load 20 to 40, so only the ratios mean anything.
   Rejected: a Worker for the first sculpt (time slices met the 100 ms limit without loading the pure modules
   twice); splitting vertices in ambiguous cells (parting the chequer is three lines and moves the surface by
   less than a cell).
+  *The field is the contract, kept apart from both ends* (owner's note: a learned implicit or a baked grid as a
+  source, points or Gaussian splats as a consumer, later). Sources answer a signed distance at a point and are
+  rows of `Kit.sculpt.KINDS`; `grid` is one (distances on a grid, so a kept field is a solid). Sampling,
+  blending, `valueAt`, `nearestAt` and `weights` never mention triangles; `Kit.sculpt.surface` is the one
+  function that makes a mesh. To add (a) a baked or learned field as a shape kind: evaluate it onto a grid once
+  and pass `{ kind: 'grid', values, size, origin, cell }`, or add a row to `KINDS` that calls it per point
+  (slow in the band walk; a row in `SLOPED` if it gives a gradient), and state its bounds through `positions`;
+  owners and paint come from the solid it is wrapped in, so a source that carries several owners must be split
+  per owner or `weights` extended to ask the source. (b) A point or splat emitter: a second function beside
+  `surface` that walks `field.band`, projects each crossing cell's point onto the zero set with `valueAt`,
+  takes the normal from the field's gradient, the owners from `weights` and the paint from `nearestAt`; the
+  layers of kit/figure-sculpt.js would call it where they now call `surface`, which today is three call sites
+  in `sculptSteps` and `wornSteps` and should become one `mesher` argument when a second consumer exists.
   Not done, and why: faces (nose, ears, brow, lips as blended shapes) are still the catalogue's stamps and
   spheres; the warm targets of 150 / 60 / 20 ms are missed for the eight-layer person (about 245 / 95 / 38);
   low-detail drapes thinner than the least share fall back to a rigid board; the look view does not yet pick

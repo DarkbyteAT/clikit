@@ -99,6 +99,22 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.strictEqual(edgesOf({ positions: mesh.positions, indices: mesh.indices.subarray(VECTOR) }).open, VECTOR, 'a missing triangle is seen as a hole');
   });
 
+  test('sculpt: a field kept on a grid is a solid like any other (a baked source), and reads as the shape it was sampled from', () => {
+    const baked = sculpt.sample([ball()], { detail: 'high', margin: 0.03 });
+    // The band's far side holds a sentinel; a kept field is made true there by clamping to what the band measured.
+    const reach = baked.cell * 2;
+    const values = Float32Array.from(baked.values, (value) => Math.max(-reach, Math.min(reach, value)));
+    const kept = sculpt.solid({ kind: 'grid', values, size: baked.size, origin: baked.origin, cell: baked.cell, at: [0, 0, 0] }, IDENTITY, { owner: 3 });
+    close(kept.distance(RADIUS, 0, 0), 0, baked.cell * 0.1, 'on the surface');
+    assert.ok(kept.distance(0, 0, 0) < 0 && kept.distance(RADIUS * 3, 0, 0) > RADIUS, 'inside is negative, far outside is far');
+    const mesh = sculpt.surface(sculpt.sample([kept], { detail: 'medium' }));
+    assert.ok(mesh.positions.length > 0);
+    for (let vertex = 0; vertex < mesh.positions.length; vertex += VECTOR) close(Math.hypot(mesh.positions[vertex], mesh.positions[vertex + 1], mesh.positions[vertex + 2]), RADIUS, baked.cell * 0.5, 'the kept ball');
+    assert.deepStrictEqual(edgesOf(mesh), { open: 0, pinched: 0 });
+    // Control: an unknown kind is refused by name.
+    assert.throws(() => sculpt.solid({ kind: 'cloud', at: [0, 0, 0] }, IDENTITY, { positions: [0, 0, 0] }), /kind "cloud"/);
+  });
+
   test('sculpt: an offset surface lies that far off the solid, and an offset past the sampled margin is refused', () => {
     const field = sculpt.sample([ball()], { detail: 'medium', margin: 0.02 });
     const mesh = sculpt.surface(field, { offset: 0.02 });

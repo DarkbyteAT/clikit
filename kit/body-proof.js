@@ -201,7 +201,7 @@
 
   const BACKDROP_COLOR = 0x6a7399;
   /** Palette rows: a page of 32 figures at `Kit.figure.RAMP_SLOTS` rows each, which is also all the indexed looks address (`Kit.look.INDEXED_ROWS`). */
-  const ATLAS_ROWS = 512;
+  const ATLAS_ROWS = 1024;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
   /** Room round a figure in its cell, as shares of the largest figure's size; `head` shows this share of the height, from the top. */
   /** `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail); `mostAspect`: the widest a cell is made for a long body, in body heights. */

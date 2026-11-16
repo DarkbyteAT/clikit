@@ -222,7 +222,6 @@
    * @property {Object} world the world transforms of the last `pose()`, in figure space
    * @property {Object} measured the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
    * @property {function(): void} rest copies the bake's rest pose into `local`
-   * @property {{triangles: number, meshes: number, isSculpted: boolean}} cost triangles per member, instanced meshes for the whole crowd
    * @property {function(): void} pose forward kinematics over `local` and a matrix write per mesh; no allocation
    * @property {function(Object, Object=, {settle?: boolean}=): Object} setBake draws another bake with the fewest
    *   changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is
@@ -537,7 +536,8 @@
    * @property {number} count
    * @property {Object[]} locals one pose buffer per member (write it, then `pose`)
    * @property {Float32Array} places 4 per member: x, y, z, heading (radians); written by the caller
-   * @property {function(): void} pose forward kinematics and an instance matrix per member per piece; no allocation
+   * @property {{triangles: number, meshes: number, isSculpted: boolean}} cost triangles per member, instanced meshes for the whole crowd
+   * @property {function(): void} pose forward kinematics, an instance matrix per member per rigid piece and a bone texture row per member; no allocation
    * @property {function(): void} dispose
    */
 
