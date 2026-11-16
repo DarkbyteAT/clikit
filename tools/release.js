@@ -75,7 +75,7 @@ if (!tests.ok || !menu.ok) {
 }
 
 // 4. Smoke every registered game; a game that fails is removed from the snapshot rather than blocking the rest.
-const registered = (menu.output.match(/games registered = \[(.*)\]/) || [, ''])[1].split(',').map((id) => id.trim()).filter(Boolean);
+const registered = (menu.output.match(/games registered = \[(.*)\]/) || ['', ''])[1].split(',').map((id) => id.trim()).filter(Boolean);
 const wanted = ONLY ? registered.filter((id) => ONLY.split(',').includes(id)) : registered;
 const games = wanted.map((id) => {
   const smoke = run('smoke.js', [id, '--secs', SMOKE_SECONDS]);

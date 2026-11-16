@@ -23,6 +23,9 @@
    * @param {function(MouseEvent): void} [props.onClick]
    * @param {boolean} [props.disabled]
    * @param {?string} [props.sound='tap'] Kit.sfx name played on a press
+   * @param {string} [props.id]
+   * @param {string} [props.class] extra CSS classes
+   * @param {*} [props.children] extra content inside the card
    * @example html`<${Card} mark="3" title="Deep Vein" text="Break ore, pick a shaft" tag="Relics change the rules" onClick=${play} />`
    */
   const Card = ({ title, text, tag, mark, color, onClick, disabled, sound = 'tap', id, class: className, children }) => {
@@ -55,7 +58,10 @@
    * @property {string} label accessible name of the collection
    */
 
-  /** The shared listbox behind List and Grid; `layout` picks the arrangement. */
+  /**
+   * The shared listbox behind List and Grid; `layout` picks the arrangement.
+   * @param {CollectionProps & {layout: string, minWidth?: string, class?: string}} props
+   */
   const Collection = ({ layout, items, render = (item) => item.label || item.name, selected, multiple = false, onSelect, idOf = (item) => item.id, isDisabled = () => false, label, minWidth, class: className }) => {
     const own = useSignal(isSignal(selected) ? undefined : selected);
     const state = isSignal(selected) ? selected : own;

@@ -416,6 +416,7 @@
    * @property {Marble} [marble]    every type but pulse and gate.
    * @property {LivePart} [part]    the part touched, pulsing or switching.
    * @property {LivePart} [exit]    touch on a portal: the portal the marble came out of.
+   * @property {boolean} [isCounted] touch on a counter: whether this touch was a new marble (not a repeat bounce).
    * @property {Outcome} [outcome]  landed, fell, stuck, old: the marble's record.
    */
 

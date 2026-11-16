@@ -33,6 +33,9 @@
    * @param {string} [props.hint] a line of help under the field
    * @param {string|Object} [props.error] a problem to show instead of the hint (marks the field invalid)
    * @param {number} [props.maxLength]
+   * @param {boolean} [props.hideLabel=false] keep the label for screen readers only
+   * @param {string} [props.id]
+   * @param {string} [props.class] extra CSS classes
    * @example html`<${TextField} label="Find a game" type="search" value=${query} placeholder="Search" hideLabel />`
    */
   const TextField = ({ label, value, onInput, type = 'text', placeholder, hint, error, maxLength, hideLabel = false, id, class: className }) => {
@@ -93,6 +96,9 @@
    * @param {number} [props.step=0.01]
    * @param {function(number): void} [props.onInput] called with the number as it moves
    * @param {function(number): string} [props.format] how the value is written beside the label (default: a percentage of the range)
+   * @param {boolean} [props.disabled]
+   * @param {string} [props.id]
+   * @param {string} [props.class] extra CSS classes
    * @example html`<${Slider} label="Music" value=${musicVolume} />`
    */
   const Slider = ({ label, value, min = 0, max = 1, step = 0.01, onInput, format, disabled, id, class: className }) => {

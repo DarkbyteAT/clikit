@@ -361,6 +361,7 @@
    * @property {string} id
    * @property {string} name
    * @property {string} [chapter] - campaign beds only
+   * @property {string} [tier] - forged beds only: the wild difficulty tier it was forged at
    * @property {number} par - fewest moves that open every flower (proved by scratch/prism/solve.js, which fails if it drifts)
    * @property {string} [tip] - one line shown until the first move
    * @property {string[]} rows - board text, see LEGEND

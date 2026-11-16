@@ -95,7 +95,7 @@
 
   const estimateBytes = (message) => JSON.stringify(message).length * BYTES_PER_CHAR;
   const hasVersion = (entry) => Boolean(entry) && Array.isArray(entry.ver);
-  const valueOf = (entry) => (entry.del ? undefined : entry.v);
+  const entryValue = (entry) => (entry.del ? undefined : entry.v);
   /** Copy through JSON, as a real transport or database would. */
   const serialise = (data) => JSON.parse(JSON.stringify(data));
 
@@ -196,11 +196,11 @@
     const accept = (key, entry, from, shouldValidate) => {
       const current = entries.get(key);
       if (!newer(entry.ver, current && current.ver)) return false;
-      if (shouldValidate && validate && !validate(key, valueOf(entry), from, current)) return false;
+      if (shouldValidate && validate && !validate(key, entryValue(entry), from, current)) return false;
       entries.set(key, entry);
       // Advance our clock past every counter we have seen, so our next write beats this one.
       lamportClock = Math.max(lamportClock, entry.ver[0]);
-      stateBus.emit('*', { key, value: valueOf(entry), from });
+      stateBus.emit('*', { key, value: entryValue(entry), from });
       return true;
     };
 
