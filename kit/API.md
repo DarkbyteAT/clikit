@@ -61,7 +61,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [columns.js](#columnsjs) (1) - Kit columns: many small records as typed-array columns (a struct of arrays) with slots that are reused through a free list, so a population 
 - [seeded.js](#seededjs) (7) - Kit seeded: values that depend only on (seed, field name), not on how many values were read before them.
 - [pack.js](#packjs) (4) - Kit pack: small records as bytes, and bytes as text.
-- [palette.js](#palettejs) (4) - Kit palette: colour ramps as data.
+- [palette.js](#palettejs) (14) - Kit palette: colour ramps as data.
 - [rig.js](#rigjs) (9) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
 - [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
 - [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
@@ -73,6 +73,11 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [body-samples.js](#body-samplesjs) (0) - Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a one-bone sword with grip and gem soc
 - [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
 - [body-gallery.js](#body-galleryjs) (0) - Kit body gallery: the `bodies` screen (`Kit.play('bodies')`).
+- [look-settings.js](#look-settingsjs) (12) - Kit look settings: the look as data and small pure functions.
+- [look-toon.js](#look-toonjs) (0) - Kit look toon: the materials of the stylised look.
+- [look-ink.js](#look-inkjs) (0) - Kit look ink: the indexed pipeline.
+- [look-view.js](#look-viewjs) (0) - Kit look view: the thin composition that draws a scene of dressed meshes in a chosen look.
+- [look-show.js](#look-showjs) (0) - Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from primitives, each with its own 
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -6158,7 +6163,11 @@ Kit.pack.fromText('AQID') // Uint8Array [1, 2, 3]
 > lit a surface is; a character stores only which ramp it uses.
 >
 > Owns:  `Kit.palette.ramp` (build a ramp from a hue), `Kit.palette.shade` (the shade of a ramp for a light
->        level) and `Kit.palette.toCss`.
+>        level) and `Kit.palette.toCss`; OKLCH conversion and `Kit.palette.tones` (2-6 perceptually even tones
+>        plus an ink colour, from one base colour or from an existing ramp); named sets of ramps
+>        (`Kit.palette.set`, `Kit.palette.SETS`); and `Kit.palette.atlas`, the packed tone x ramp table that
+>        becomes the palette texture of the look shaders (kit/look-toon.js). Shading never invents RGB: a pixel
+>        is (ramp row, tone column) and colour appears only when that pair is looked up in the table.
 > Does not own: blending two colours or rows (`Kit.blend`, whose `hsl` this is built on), a game's interface
 >        colours (`Kit.theme`), or which ramps exist (a catalogue's `palettes` table, kit/body-recipe.js).
 >
@@ -6213,11 +6222,162 @@ The shade of a ramp for a light level: the banding step of a toon or pixel shade
 Kit.palette.shade(skinRamp, 0.5) // the middle shade
 ```
 
+### `Kit.palette.TONE_SLOTS`
+
+Width of the packed table in texels: six tone columns, one spare, and the ink column last. A power of two.
+
+### `Kit.palette.INK_COLUMN`
+
+Column that holds a ramp's outline colour.
+
+### `Kit.palette.TONE_SHAPE`
+
+Defaults chosen by eye against the linear formula this replaces (shadow = base * 0.66 + violet * 0.16):
+equal lightness steps in OKLCH read as equal steps, where equal RGB steps crush the darks.
+
+### `Kit.palette.SETS`
+
+Named palettes for a humanoid: the same nine ramps in the same order, so any of them recolours any character.
+`eye` is authored (a dark pupil tone and a light glint); `ground` is the contact shadow under a figure, one
+flat colour whatever the tone.
+
+### `Kit.palette.rgbOf(color)`
+
+Reads a colour as three sRGB bytes.
+
+- `color` *string\|number\|number[]* - '#rrggbb', 0xRRGGBB, or [red, green, blue] bytes
+
+**Returns** *number[]* [red, green, blue], 0..255
+
+```js
+Kit.palette.rgbOf('#ff8000') // [255, 128, 0]
+```
+
+### `Kit.palette.hexOf(rgb)`
+
+Writes three sRGB bytes as '#rrggbb'.
+
+- `rgb` *number[]* - [red, green, blue], 0..255
+
+**Returns** *string*
+
+### `Kit.palette.toOklch(rgb)`
+
+Converts sRGB bytes to OKLCH: perceptual lightness, chroma and hue.
+
+- `rgb` *number[]* - [red, green, blue], 0..255
+
+**Returns** *{lightness: number, chroma: number, hue: number}* lightness 0..1, chroma 0..about 0.4, hue in degrees 0..360
+
+### `Kit.palette.fromOklch(color)`
+
+Converts OKLCH to sRGB bytes. A colour the screen cannot show keeps its lightness and hue and gives up
+chroma until it fits (bisection), so a ramp's lightness steps survive the conversion.
+
+- `color` *{lightness: number, chroma: number, hue: number}*
+
+**Returns** *number[]* [red, green, blue], 0..255
+
+**Complexity** O(1): at most 14 bisection steps
+
+### `Kit.palette.set(name, ramps)`
+
+Makes a palette from named ramps.
+
+- `name` *string*
+- `ramps` *Record\<string, RampSpec\|string\|number\>* - ramp name -> spec or base colour; the key order is the row order
+
+**Returns** *PaletteSet*
+
+```js
+const ember = Kit.palette.set('ember', { skin: '#e9b48c', cloth: '#c8453a', eye: { tones: ['#1b1626', '#f4f0ff'] } });
+```
+
+### `Kit.palette.atlas(options = {})`
+
+Creates the packed palette table. Each loaded palette gets a block of rows; a character's materials point
+at rows, so recolouring a character is rewriting its rows (no material is touched), and two characters
+with different palettes are two blocks of one table.
+
+- `[options]` *{rows?: number, toneCount?: number}* - `rows` is the capacity in ramps (default 64); `toneCount` 2..6 (default 4)
+
+**Returns** *PaletteAtlas*
+
+**Complexity** load / write: O(ramps in the palette); writeRamp: O(1); retone: O(rows in use); space O(rows)
+
+```js
+const atlas = Kit.palette.atlas();
+const hero = atlas.load(Kit.palette.SETS.ember);   // hero.rows.skin is the row a skin material stores
+atlas.write(hero, Kit.palette.SETS.tide);          // the hero is recoloured; nothing else changes
+const worn = atlas.load(bake.ramps);                // a body bake: bone i is drawn with row worn.rows[bake.boneRamp[i]]
+```
+
+#### `Kit.palette.atlas().load(given)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().write(block, given)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().writeRamp(block, rampId, spec)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().retone(toneCount)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().colorAt(row, column)`
+
+_Undocumented: add a JSDoc block in the source._
+
 ### Types
 
 - **Ramp**
   - `id` *string* - name of the ramp ('umber', 'teal')
   - `shades` *string[]* - CSS colours, darkest first
+- **RampShape** - How a ramp departs from its base colour.
+  - `shadowDepth` *number* - share of the base lightness the darkest tone loses, 0..1
+  - `shadowCurve` *number* - exponent of the darkening: below 1 spends the darkness early, above 1 late
+  - `highlightLift` *number* - share of the distance to white the lightest tone climbs, 0..1
+  - `highlightMaxStep` *number* - most lightness the highlight gains, so a dark base does not get a chalk-white glint
+  - `shadowHue` *number* - hue the shadows lean toward
+  - `shadowHueShift` *number* - most degrees the darkest tone turns toward `shadowHue`
+  - `highlightHue` *number* - hue the highlight leans toward
+  - `highlightHueShift` *number* - most degrees the highlight turns toward `highlightHue`
+  - `shadowChroma` *number* - chroma multiplier of the darkest tone (above 1: richer shadows)
+  - `highlightChroma` *number* - chroma multiplier of the highlight (below 1: paler highlights)
+  - `neutralChroma` *number* - chroma given to the ends of a ramp whose base is a grey, so greys still lean cool and warm
+  - `inkDepth` *number* - lightness of the ink colour as a share of the darkest tone
+  - `inkFloor` *number* - lowest ink lightness, so ink on a black ramp is still a colour and not a hole
+- **RampSpec** - One ramp: either generated from a base colour, or authored tone by tone.
+  - `[base]` *string\|number* - the colour of an ordinarily lit surface; the ramp is built around it
+  - `[tones]` *Array\<string\|number\>* - authored tones, darkest first (2 or more); resampled to the tone count asked for
+  - `[ink]` *string\|number* - outline colour; derived from the darkest tone when left out
+  - `[shape]` *Partial\<RampShape\>* - overrides of TONE_SHAPE for this ramp
+- **ToneRamp**
+  - `tones` *number[][]* - [red, green, blue] bytes, darkest first
+  - `ink` *number[]* - [red, green, blue] bytes of the outline colour
+- **PaletteSet** - A named set of ramps.
+  - `name` *string*
+  - `rampIds` *string[]* - ramp names, in row order
+  - `ramps` *Record\<string, RampSpec\|string\|number\>* - ramp name -> spec or base colour
+- **PaletteBlock** - The rows one palette occupies in an atlas.
+  - `offset` *number* - first row
+  - `rampIds` *string[]* - ramp names in row order
+  - `rows` *Record\<string, number\>* - ramp name -> absolute row in the atlas
+- **PaletteAtlas** - The packed table: `width` tone columns by `height` ramp rows of RGBA bytes, ready to be a texture.
+  - `width` *number* - texels per row (8: tones 0..5, a spare, ink)
+  - `height` *number* - rows
+  - `data` *Uint8Array* - RGBA bytes, row by row
+  - `toneCount` *number* - tones currently written per ramp
+  - `version` *number* - rises with every write, so a texture knows when to upload again
+  - `load` *function(PaletteSet\|Ramp[]): PaletteBlock* - reserve rows for a palette and write them
+  - `write` *function(PaletteBlock, PaletteSet\|Ramp[]): void* - replace a block's colours with another palette of the same ramps
+  - `writeRamp` *function(PaletteBlock, string, RampSpec\|string\|number): void* - replace one ramp of a block
+  - `retone` *function(number): void* - rebuild every loaded block at a new tone count
+  - `colorAt` *function(number, number): number[]* - (row, column) -> [red, green, blue]
 
 ## rig.js
 
@@ -7043,6 +7203,278 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > It is registered like a game (near the end of the menu), so the shell gives it a HUD, a back button and
 > clean-up, and the smoke and play tools reach it like any other.
+
+## look-settings.js
+
+> Kit look settings: the look as data and small pure functions. What a tone band is, how dither thresholds are
+> laid out, how a figure sits on a texel grid, and the three presets with the knobs each exposes.
+>
+> Owns:  the band lookup and ordered-dither tables the shaders mirror (`bandOf`, `edgesFor`, `bayerAt`); the grid
+>        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`);
+>        and the presets and knobs (`PRESETS`, `KNOBS`, `settings`).
+> Does not own: colour (kit/palette.js: ramps, tones and the packed atlas), textures, materials or passes
+>        (look-toon.js, look-ink.js), or the frame (look-view.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.look.BAND_EDGES`
+
+Band edges on the light value n.L (-1 facing away .. 1 facing the light), by tone count. A pixel's tone is
+the number of edges at or below its light. The top edge is high so the highlight stays a small accent, and
+the shadow edges sit below zero so a face turned a little from the light is not half dark.
+
+### `Kit.look.BAYER_4`
+
+The 4 x 4 ordered-dither matrix (thresholds 0..15), row by row.
+
+### `Kit.look.PRESETS`
+
+The three looks, as data. `label` and `about` are for an editor; the rest are LookSettings.
+
+### `Kit.look.KNOBS`
+
+The settings an editor can offer, in display order. Adding a knob is adding a row.
+
+### `Kit.look.bandOf(light, edges)`
+
+The tone of a light value: how many band edges lie at or below it.
+
+- `light` *number* - n.L, -1..1 (plus any dither offset)
+- `edges` *number[]* - ascending band edges
+
+**Returns** *number* tone index, 0 (darkest) .. edges.length
+
+**Complexity** O(edges)
+
+```js
+Kit.look.bandOf(-0.05, [-0.05, 0.62]) // 1: a value on an edge belongs to the lighter band
+```
+
+### `Kit.look.edgesFor(toneCount)`
+
+The default band edges for a tone count, padded to the shader's fixed length with an unreachable edge.
+
+- `toneCount` *number* - 2..6
+
+**Returns** *number[]* five numbers: `toneCount - 1` real edges, then padding
+
+### `Kit.look.bayerAt(column, row)`
+
+The ordered-dither threshold of a pixel, 0..1, repeating every 4 pixels both ways.
+
+- `column` *number* - pixel x (any integer)
+- `row` *number* - pixel y (any integer)
+
+**Returns** *number* one of 0, 1/16 .. 15/16
+
+```js
+const adjusted = light + (Kit.look.bayerAt(x, y) - 0.5) * 0.12;
+```
+
+### `Kit.look.snapToTexel(value, texelSize)`
+
+Rounds a coordinate to the texel grid, so a sprite moves by whole texels and keeps one shape while it moves.
+
+- `value` *number* - a coordinate along a screen axis, world units
+- `texelSize` *number* - world units one texel covers
+
+**Returns** *number* the nearest multiple of texelSize
+
+### `Kit.look.stepYaw(angle, steps)`
+
+Rounds a turn to one of `steps` facings, like the 8 or 16 drawn directions of a sprite sheet.
+
+- `angle` *number* - radians
+- `steps` *number* - facings per full turn; 0 leaves the angle alone
+
+**Returns** *number* radians
+
+### `Kit.look.texelScale(bufferHeight, rows)`
+
+How many screen pixels one texel covers when a view is drawn at about `rows` texels tall: always a whole
+number, because a fractional upscale makes texels of uneven size.
+
+- `bufferHeight` *number* - height of the screen buffer, device pixels
+- `rows` *number* - wanted internal height in texels; 0 means native resolution
+
+**Returns** *number* whole pixels per texel, 1 or more
+
+### `Kit.look.weldNormals(positions, normals, tolerance = 1e-4)`
+
+Averages the normals of vertices that share a position. An inverted-hull outline pushes vertices along
+their normals; where a mesh has hard edges (a box, a cylinder's cap) the copies of a corner would part
+and open a gap in the line, so the hull uses these welded normals instead.
+
+- `positions` *ArrayLike\<number\>* - x, y, z per vertex
+- `normals` *ArrayLike\<number\>* - x, y, z per vertex
+- `[tolerance=1e-4]` *number* - positions closer than this (per axis) count as the same point
+
+**Returns** *Float32Array* x, y, z per vertex, unit length
+
+**Complexity** O(vertices) time and space (one hash lookup per vertex)
+
+### `Kit.look.settings(presetId, overrides = {})`
+
+Resolves a preset plus overrides into complete settings.
+
+- `presetId` *string* - a key of PRESETS
+- `[overrides]` *Partial\<LookSettings\>* - knob values that differ from the preset
+
+**Returns** *LookSettings & {preset: string, isIndexed: boolean}* `isIndexed`: the view draws tone indices into a target and resolves colour afterwards (needed for screen-space ink and for any resolution below native)
+
+```js
+Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
+```
+
+### Types
+
+- **LookSettings** - Everything that decides how a view draws.
+  - `toneCount` *number* - tones per ramp, 2..6 (the band count)
+  - `dither` *number* - strength of the ordered dither on the light value, 0 (off) .. 0.3
+  - `ditherSpace` *'screen'\|'anchored'\|'object'* - what the dither pattern is fixed to: the screen, the figure's snapped screen position, or the surface itself
+  - `softness` *number* - half-width of the blend across a band edge, in light units; 0 is a hard edge. Only drawn at native resolution without screen-space ink (tone indices cannot be blended)
+  - `outline` *'none'\|'hull'\|'ink'* - no lines, an inverted hull per mesh, or screen-space ink over an index target
+  - `inkWidth` *number* - hull line width, CSS pixels (screen-space ink is always one texel)
+  - `pixelRows` *number* - internal height in texels; 0 is native resolution
+  - `snap` *boolean* - move figures by whole texels when drawn below native resolution
+  - `yawSteps` *number* - facings per turn a caller should round a figure's turn to (see stepYaw); 0 is continuous
+  - `rim` *boolean* - lift grazing, lit edges one tone
+- **LookKnob**
+  - `id` *string* - the LookSettings field it edits
+  - `label` *string*
+  - `type` *'choice'\|'range'\|'toggle'*
+  - `[options]` *Array\<{value: \*, label: string}\>* - for a choice
+  - `[min]` *number* - for a range
+  - `[max]` *number* - for a range
+  - `[step]` *number* - for a range
+
+## look-toon.js
+
+> Kit look toon: the materials of the stylised look. A toon material turns n.L into a tone band and looks the
+> colour up in the palette texture; a hull material draws the mesh's outline in its ramp's ink colour.
+>
+> Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
+>        lookup, hull extrusion) as named strings; `Kit.look.shading`: the uniforms every material of one look
+>        shares, `dress(mesh, part)` to put a mesh in the look, and `apply(settings, frame)` to change the look
+>        of every dressed mesh at once.
+> Does not own: colours (kit/palette.js), screen-space ink and low-resolution targets (look-ink.js), or
+>        when anything is drawn (look-view.js).
+>
+> Why a ShaderMaterial and not a patched MeshToonMaterial: the palette contract needs the fragment's last
+> word (a tone index or a table colour, never lit RGB, never tone mapped), and the standard material's
+> lighting, fog and tone-mapping chunks would all have to be cut back out through string patches that break
+> with the next three.js release. The cost: no scene lights, shadows or fog; the look has one key light of its own.
+>
+> GLSL here is WebGL1-safe (constant loop bounds, no integer bit operations, no MRT); three.js converts it for
+> WebGL2. Skinned and instanced meshes are supported through three.js's own vertex chunks; morph targets are not.
+> Needs THREE, so it is exercised in the browser (Kit.play('look')) rather than by unit tests.
+
+### Types
+
+- **LookPart** - What a mesh is, to the look.
+  - `ramp` *number* - row of the palette atlas (`block.rows.skin`)
+  - `[inkGroup=1]` *number* - 1..255. Screen-space ink draws a line where two groups meet; 0 means the part is never outlined and never drawn over by ink (eyes, glows)
+  - `[shiny]` *boolean* - takes the lightest tone where it mirrors the light (hair, metal, gems)
+  - `[emissive]` *boolean* - always the lightest tone; its ink group defaults to 0
+  - `[tone]` *number* - a fixed tone, 0 (darkest) .. 1 (lightest) of the ramp, instead of shading
+  - `[anchor]` *{value: THREE.Vector2}* - from `shading.follow(root)`: the figure this part's dither moves with
+  - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
+- **DressedMesh**
+  - `mesh` *THREE.Mesh*
+  - `toon` *THREE.Material*
+  - `hull` *THREE.Material*
+  - `setRamp` *function(number): void* - point both materials at another atlas row (O(1))
+- **LookFrame** - What `apply` must know about the target being drawn into.
+  - `width` *number* - target width, device pixels (or texels)
+  - `height` *number* - target height
+  - `lineWidth` *number* - hull line width in pixels of that target
+  - `[depthRange]` *number[]* - [near, far] view depths packed into the index target's alpha
+
+## look-ink.js
+
+> Kit look ink: the indexed pipeline. A scene of dressed meshes is drawn as (ramp, tone, ink group, depth)
+> into a small target, a second pass turns that into colour and adds one-texel ink lines, and a last pass
+> copies the result to the screen with whole-number scaling.
+>
+> Owns:  `Kit.look.inkPass`: the two render targets and their sizes, the resolve shader (palette lookup plus
+>        silhouette and inner ink) and the upscale shader.
+> Does not own: what writes the index target (the materials in look-toon.js, with LOOK_INDEX_OUTPUT), the
+>        settings (look-settings.js), or the frame around it: clearing, cameras, snapping (look-view.js).
+>
+> Why one RGBA8 target and no depth texture or MRT: ramp, tone and ink group are a byte each, and the view
+> depth fits the fourth byte because its range is fitted round the figures. So the pipeline needs nothing
+> beyond WebGL1, one colour attachment and five texture reads per texel. What it gives up: normal-based
+> crease lines (there is no normal target), and anti-aliasing (indices cannot be averaged).
+> Needs THREE and WebGL, so it is exercised in the browser (Kit.play('look')) rather than by unit tests.
+
+### Types
+
+- **InkPass**
+  - `resize` *function(number, number, number): void* - (bufferWidth, bufferHeight, scale): size the targets for a screen buffer in device pixels drawn at `scale` pixels per texel
+  - `draw` *function(THREE.WebGLRenderer, THREE.Scene, THREE.Camera, Object): void* - index pass, resolve pass, then the upscale onto whatever target is current. Leaves the renderer's clear colour at transparent black
+  - `size` *function(): {width: number, height: number, scale: number}* - the targets' size in texels and the scale
+  - `readTexels` *function(THREE.WebGLRenderer): Uint8Array* - the resolved colour target as RGBA bytes, bottom row first
+  - `dispose` *function(): void*
+
+## look-view.js
+
+> Kit look view: the thin composition that draws a scene of dressed meshes in a chosen look. It joins the
+> palette atlas, the shading and the indexed pipeline, and decides per frame which path a look needs.
+>
+> Owns:  `Kit.look.view`: a scene for the figures, the current settings (preset plus knob overrides), the
+>        choice between the direct path (colour straight to the screen, hull outlines, anti-aliased) and the
+>        indexed path (look-ink.js), texel snapping and dither anchoring of figures, the depth range fitted
+>        round them, and the cheaper fallback for slow devices (`degrade`).
+> Does not own: the pieces it composes (kit/palette.js, look-settings.js, look-toon.js, look-ink.js), the camera, animation
+>        (a caller rounds a turn with Kit.look.stepYaw), or the background behind the figures.
+>
+> Colour: the view writes palette bytes straight to the screen, so it must be drawn outside the kit's HDR
+> post chain (a game does that by returning `render` from create(); see kit/shell.js).
+> Needs THREE and WebGL, so it is exercised in the browser (Kit.play('look')) rather than by unit tests.
+
+### Types
+
+- **LookView**
+  - `scene` *THREE.Scene* - add figures here (through `add`); only dressed meshes belong in it
+  - `atlas` *ReturnType\<typeof Kit.palette.atlas\>* - the palette table; `atlas.load(palette)` gives a figure its rows
+  - `shading` *Object* - from Kit.look.shading: `shading.dress(mesh, part)`
+  - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
+  - `use` *function(string, Object=): Object* - switch to a preset, with optional knob overrides; returns the settings
+  - `set` *function(string, \*): Object* - change one knob; returns the settings
+  - `settings` *function(): Object* - the settings in force (after any degrade)
+  - `render` *function(THREE.Camera, {clearColor?: number}=): void* - draw one frame onto the current target
+  - `degrade` *function(): boolean* - drop to the cheaper variant of the current look; false when there is none
+  - `stats` *function(): Object* - `{ path, scale, targets }` of the last frame
+  - `readTexels` *function(): {width: number, height: number, data: Uint8Array}\|null* - the indexed path's resolved texels (bottom row first), or null on the direct path
+  - `dispose` *function(): void*
+
+## look-show.js
+
+> Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from
+> primitives, each with its own palette, slowly turning, with controls for the preset, the palettes and every knob.
+>
+> Owns:  the `look` screen; the stand-in figures as data (`PARTS`, `FIGURES`); the control panel generated from
+>        `Kit.look.KNOBS`; and the measurements a tool can ask for (`Kit.currentGame.measure()`): exact-colour
+>        readback, cost per look, shimmer under rotation and motion, skinned and instanced meshes.
+> Does not own: the look itself (kit/palette.js, look-settings.js, look-toon.js, look-ink.js, look-view.js) or real characters
+>        (the body system builds those; this screen only needs something with a head, limbs and a held prop).
+>
+> It is registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and
+> play tools reach it like any other. It draws its own frame (see `render` in kit/shell.js).
+
+### Types
+
+- **PartRow** - One primitive of a figure.
+  - `shape` *string* - a key of SHAPES
+  - `size` *number[]* - what that shape reads
+  - `at` *number[]* - centre, [x, y, z]
+  - `[turn]` *number[]* - rotation, [x, y, z] radians
+  - `[stretch]` *number[]* - scale along the part's own axes
+  - `ramp` *string* - ramp name in the figure's palette
+  - `[group]` *number* - ink group (default 1; 0 is never outlined)
+  - `[shiny]` *boolean*
+  - `[emissive]` *boolean*
+  - `[tone]` *number* - fixed tone 0..1
 
 ## ui/gallery.js
 

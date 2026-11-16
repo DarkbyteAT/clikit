@@ -432,10 +432,12 @@
       return { flickerPercent: percent(flips, filled * (frames.length - 2)), changePercent: percent(changes, filled * (frames.length - 1)) };
     };
     /**
-     * Share of filled texels that differ from the first frame slid along by whole texels, while the figures
-     * move sideways a fraction of a texel per frame. 0 means the sprite keeps one shape as it moves.
+     * Share of filled texels that differ from the first frame slid along by whole texels, while one figure
+     * moves sideways a fraction of a texel per frame. 0 means the sprite keeps one shape as it moves.
      */
     const measureMoveDrift = () => {
+      // One figure only: each figure snaps to the grid on its own, so two of them do not move as one image.
+      figures.slice(1).forEach((figure) => (figure.root.visible = false));
       const first = texelsNow();
       const texelWorld = (camera.top - camera.bottom) / first.height;
       const filled = countFilled(first.data);
@@ -446,6 +448,7 @@
         return Math.min(...shifts.map((shift) => countDifferentShifted(moved, first.data, first.width, shift)));
       });
       swayOffset = 0;
+      figures.forEach((figure) => (figure.root.visible = true));
       return {
         driftPercent: percent(
           worst.reduce((total, count) => total + count, 0),
