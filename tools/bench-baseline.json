@@ -1,0 +1,28 @@
+{
+  "bun": {
+    "savedOn": "bun 1.4.4",
+    "note": "relative scores (ops/s divided by the calibration loop of the same run)",
+    "scores": {
+      "path.sample": 5.121049969780194,
+      "grid.path": 0.012422130009747371,
+      "grid.flood": 0.004487719541114476,
+      "line.nearest": 0.0385453645111502,
+      "loot.roll": 0.45111990044626316,
+      "net.set+accept": 0.9789617659976074,
+      "stats.get": 1.2274513766634245
+    }
+  },
+  "node": {
+    "savedOn": "node v22.23.4",
+    "note": "relative scores (ops/s divided by the calibration loop of the same run)",
+    "scores": {
+      "path.sample": 1.6357350805289248,
+      "grid.path": 0.004427786975956531,
+      "grid.flood": 0.002543923864327384,
+      "line.nearest": 0.01073855457568554,
+      "loot.roll": 0.4311775416550545,
+      "net.set+accept": 0.6489771661647356,
+      "stats.get": 1.8343570973608674
+    }
+  }
+}

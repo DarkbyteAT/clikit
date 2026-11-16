@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2019",
+    "lib": ["ES2019", "DOM", "DOM.Iterable"],
+    "module": "commonjs",
+    "moduleDetection": "force",
+    "strict": false,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["kit/*.js", "games/*.js", "tools/dev/types/globals.d.ts"]
+}

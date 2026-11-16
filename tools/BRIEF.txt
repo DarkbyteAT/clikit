@@ -1,0 +1,206 @@
+READ ROOT/AGENTS.md FIRST: it states the project's principles, code standard and definition of done, and wins over this brief where they disagree.
+This brief is the running operational detail; later sections override earlier ones.
+
+SHARED BRIEF FOR GAME BUILDERS (Five Loop Lab)
+
+Project root (ROOT): /tmp/claude-0/-home-user-mantle/80095b78-64e9-5bd7-a836-a223a82971b3/scratchpad/arcade
+A phone-first 3D web page with five playable core-loop demos on one shared kit (three.js r128 global THREE; cannon.js 0.6.2 global CANNON is also loaded).
+The owner will play each demo for about a minute on a phone to decide which idea to build out. Each demo is ONE polished slice of a core loop:
+high visual fidelity and juicy interactivity matter more than content breadth. Progression is hinted with one real hook, not a full system.
+
+READ FIRST (all short, commented): ROOT/kit/core.js, input.js, fx.js, sfx.js, make.js, ui.js, post.js, physics.js, shell.js, and ROOT/tools/example-game.js (uses every API).
+
+The contract: your file calls Kit.register({ id, name, tagline, hook, color, order, create(ctx) }) and create returns { update(dt, t), dispose?() }.
+ctx gives: THREE, scene, camera, size{w,h,aspect,portrait}, math, fmt, input, fx, sfx, ui, save, make, pool, after/every/tween (game-time), on('resize'), restart(), exit(), paused, timeScale.
+
+Rules of the kit:
+- Colours: the renderer outputs sRGB. Always build materials through ctx.make.* (make.mat, make.box, ...) or convert with make.color(hex). A raw new THREE.Color(hex) will look washed out.
+- input.stick.y is screen-space (positive = down the screen = toward the camera in a top-down view).
+- The shell disposes the scene, HUD, input and timers on exit/restart. Use ctx.after/every/tween, never setTimeout/setInterval/requestAnimationFrame. Do not add window/document listeners.
+- HUD only through ctx.ui (stat, progress, actions, choose, banner, toast, hint, el). No emoji anywhere. Keep at most 3 stats so the top row fits a 390px phone.
+- Top ~110px and bottom ~90px of the screen are HUD; keep the action in between. Design for portrait 390x780 first; it must still work in landscape.
+- Performance: phones. Pool anything spawned repeatedly (ctx.pool), share geometries/materials, use THREE.InstancedMesh for crowds, keep live meshes under ~200, one shadow-casting sun (make.stage).
+- Feel: every player action gets feedback within one frame: sound (ctx.sfx.play), particles (fx.burst), and where it fits shake/hitstop/ring/floater/tween squash. Camera should move smoothly (math.damp).
+- A player who taps nothing for 3 seconds should still understand what to do (ui.hint, hide it after first input).
+- End states use ui.banner(...).then(() => ctx.restart()). Save a best score with ctx.save.
+
+Code style: one file, plain ES2019 classic script wrapped in an IIFE or just the Kit.register call. Tunable DATA TABLES at the top
+(upgrades, enemy types, levels, costs as plain objects/arrays) and small pure functions that read them, so adding content later means adding a row.
+Aim for roughly 250-450 lines. Clear names, short comments only where the why is not obvious.
+
+Writable paths (nothing else): ROOT/games/<your id>.js and ROOT/scratch/<your id>/ for any scratch files. The smoke tool writes ROOT/shots/<id>-mid.png and -end.png.
+The kit files and index.html are read-only for you. If the kit lacks something or has a bug, work around it inside your file and report it in "Kit gaps" (a later pass folds good ideas into the kit).
+
+Verify (required): from ROOT run
+  node tools/smoke.js <id> --secs 12 --gesture <drag|tap|swipe|mix>
+It must print OK (exit 0). Then view shots/<id>-mid.png and shots/<id>-end.png with the Read tool and fix anything that looks wrong
+(black screen, action hidden behind HUD, washed-out colours, objects off-screen). Software GL in the test is slow (15-40 fps is normal there). Cap yourself at about 4 smoke runs; be quick.
+
+UPDATE (2D and 2.5D are welcome): demos do not all have to be perspective 3D. ctx.ortho(span, 'height'|'width') swaps ctx.camera to an
+orthographic camera that the shell keeps fitted on resize (use it before reading ctx.camera; do not destructure camera from ctx earlier).
+Point it straight down for flat 2D, at the classic 35.264deg/45deg angles for isometric, or side-on for a cutaway. input.ground(), fx.floater and fx.shake all follow ctx.camera.
+make.glow sprites are depth-tested: one sitting at floor level gets cut by the floor, so lift it or pass { depthTest: false }.
+
+SECOND PASS (review + improve). The kit was upgraded since the first drafts: three.js 0.147 with HDR bloom, vignette and ACES tone mapping
+(ctx.post.bloom(strength, radius, threshold), ctx.post.vignette, ctx.post.exposure: anything emissive or make.unlit(..., { bright: 2 }) now really glows),
+make.unlit, make.prism, fx.burst({ flat }), fx.slowmo, math.pickWeighted / shuffle / ease.outBounce, ctx.fmtTime, ctx.distanceForWidth,
+ctx.ortho(span or (size) => span, fit), and Kit.physics (cannon wrapper). The HUD stats row now stays on one line (keep stat labels and values short).
+The smoke tool plays with bloom off for speed and switches it on for the two screenshots; it also closes modals before exiting.
+For anything the random smoke gestures cannot reach (level-up, game over, shop, later levels, landscape), write a short Playwright script in your scratch
+folder modelled on tools/smoke.js (same local server and launch args; you can drive the game through window.Kit.current, which is the live ctx) and look at its screenshots.
+
+RESTRAINT (supersedes any earlier wording that reads like a checklist). Bloom, shake, hitstop, rings, floaters and particles are tools, not goals.
+The kit's default bloom is now barely there; raise it only if this game's art direction truly wants glow, and use ctx.post.bloom(0) if it wants none.
+Do not put every effect on every action: pick the two or three that suit this game's mood and make those excellent. The six demos should feel
+different from each other. Any "at least N" counts in your brief are ceilings for this slice, not targets: fewer, better-tuned rows beat more rows.
+The real test is a person playing for one minute at 60fps on a phone: favour readable action, fair difficulty for a human thumb, and good pacing over
+anything that only shows up in a screenshot.
+
+TOOLS FIRST (latest word from the owner; overrides the "counts are ceilings" line above). Content breadth inside a limited, reasoned scope is wanted:
+keep your "at least N" rows. What the owner values most is quality tooling: small, individually useful interfaces and data models composed in clever ways.
+The kit now has that layer; read ROOT/kit/model.js and ROOT/kit/flow.js (pure, unit-tested by `node tools/test-kit.js`) and the adapters at the end of ROOT/kit/ui.js:
+  Kit.curve.of(spec)          numbers from data: constants, [[x,y]...] ramps, { base, growth } costs, { steps } tiers
+  Kit.table(rows)             rows with unique ids (.byId)
+  Kit.stats(base)             base values + keyed modifiers (add / mul)
+  Kit.wallet(initial, save)   currencies with can / spend / add, persisted
+  Kit.upgrades(rows, { stats, wallet, save })   buy / grant / offer(n) / cost / level; rows carry cost curves, per-level stat mods, requires, onLevel
+  Kit.goals(rows, { save, onDone })             track(event, amount, payload)
+  Kit.fsm(states, initial)    enter / update / exit;  Kit.spawnTable(rows).pick(t)  with from / until / weight
+  Kit.path.*                  composable (t) => {x,y} motion: lissajous, weave, zigzag, darts, wobble + add / scale / offset / warp / sequence / blend
+  ui.shop(upgrades, { wallet })   ui.offer(upgrades, { n, title })   ui.checklist(goals)
+Where your game has upgrades, costs, currencies, goals, spawn tables, timed difficulty or scripted motion, express them through these instead of hand-rolled
+equivalents, so the game file is mostly data tables plus the code that is truly unique to it. If a model lacks something you need, say exactly what in your
+report (the dispatcher extends the kit); do not fork a private copy. Restraint about effects and bloom still stands.
+
+SPACE TOOLS: ROOT/kit/space.js adds Kit.grid (cells, neighbours, ray, flood, shortest path, text-level parse, world mapping, snapshot),
+Kit.line (polyline length / at / resample / simplify / nearest / closed / contains, for drawn routes, traces and lassos) and Kit.history (undo / redo).
+
+LOOT TOOLS: ROOT/kit/loot.js adds Kit.rng(seed) (seedable, forkable random source), Kit.loot (base x rarity x affixes -> item with merged stat mods,
+level gates, luck, describe), Kit.inventory (bag + equipment slots feeding Kit.stats, compare, persist) and Kit.stats.power / merge.
+Kit.upgrades rows may use requires: [ids] to describe a skill tree. ui.panel({ title, build(body, close) }) is a scrollable sheet for inventories and trees; ui.h(tag, cls, text) makes elements.
+
+CONTRIBUTE TO THE KIT (latest word from the owner; replaces every earlier "kit is read-only, report proposals" line). Every agent is a mindful, active
+contributor to the shared codebase. When your game needs something generic, or you find you have written something another game could use, put it in the kit
+yourself instead of keeping a private copy or only reporting it:
+  - Prefer ADDING: a new option with a default that preserves current behaviour, a new function, or a new kit file. Other agents are editing sibling games and
+    the kit at the same time, so make small targeted edits (never rewrite or reformat a shared file), re-read the lines around your edit just before you make it,
+    and do not change the meaning of an existing call unless it is truly broken (then say so in your report).
+  - Pure logic goes in a pure kit file with a test added to tools/test-kit.js. Keep each piece individually useful with a short header comment like its neighbours.
+  - A new kit file needs a script tag in ROOT/index.html: add it yourself with one small edit next to the other kit tags.
+  - Before and after a kit edit run `node tools/test-kit.js`, and after it run `node tools/smoke.js menu` plus your own game's smoke. If your change could affect
+    another game, smoke that game too. Leave everything at least as green as you found it.
+  - In your report list every kit change (file, function, why) so the dispatcher can tell the others.
+
+NET TOOLS: ROOT/kit/net.js adds Kit.net.session(transport, { validate }) - shared key -> value state (last writer wins per key), events, presence,
+rate-limited outbox, optional durable store - and Kit.net.loopback (in-memory hub with drop and store options) for tests and same-page bots.
+
+CODE STANDARD (the owner's review of the code so far: sloppy. This section is binding for every file you write or touch.)
+  Names     - Say what a thing is. No single letters or abbreviations outside tiny lambdas and loop indices: `enemy`, `spawnInterval`, `options`,
+              not `e`, `si`, `o`. Functions are verb phrases (`rollAffixes`), booleans read as questions (`isMaxed`, `canAfford`), constants are UPPER_SNAKE.
+  Docs      - Every exported or shared function, factory and data table has a JSDoc block: one sentence on what it is for, @param / @returns with
+              types and units, and an @example when the call shape is not obvious. Row shapes get a @typedef. Each file opens with what it owns and what it does not.
+  Comments  - Explain the logic and the why at each non-obvious step (the invariant, the edge case, the reason for a constant), so a reader can follow
+              what is happening without running it. Never restate the code; never leave a clever line unexplained.
+  Structure - Small functions that do one thing, composed. Prefer pure functions over closures that mutate shared state; keep simulation (plain data
+              in, plain data out) apart from rendering and input. If two places do the same thing, extract it; if a helper is generic, it goes in the kit.
+  Higher-order - Use map / filter / reduce / flatMap and functions that take or return functions (pipelines, combinators, curried builders, strategy
+              tables keyed by id) instead of index loops, flag variables and switch ladders, except in measured hot paths (say so in a comment).
+  Data      - Tunables live in named tables and curves at the top, never as literals buried in logic. One source of truth per fact.
+  Hygiene   - No dead code, no commented-out code, no unused variables, no magic numbers, no copy-paste blocks, consistent formatting, early returns
+              over nesting, errors that name the cause. Leave any file you touch cleaner than you found it.
+  Tests     - Pure logic is covered in tools/test-kit.js with cases that would fail if the logic were wrong (edges, not just the happy path).
+Review your own diff against this list before you report, and say in the report what you cleaned up.
+
+SHARED MACHINE: about ten agents work in ROOT at once on 4 cores. Headless runs are slow (often 5-15 fps) and game time runs slower than real time; a
+Playwright timeout under load is not a game bug. Keep test runs few and short, never run more than one browser at a time yourself, and do not loop on a
+flaky run: read the error, and if it is a timeout with no page error, say so and move on.
+KIT STEWARD: one agent is refactoring the internals of the existing kit files to the CODE STANDARD without changing any public call. If you need to add to
+a kit file, add a new function near the end or a new file, re-read the region right before each edit, and never reformat lines you did not write.
+
+THEME (the owner's review: every game's UI looks the same; implementers had no way to make native-looking UI). The kit now has a customisation layer:
+read ROOT/kit/theme.js (short, documented). Every game MUST give itself a HUD that belongs to its own world by adding `theme` to its Kit.register call:
+  theme: {
+    skin: 'glass' | 'neon' | 'pixel' | 'paper' | 'stone' | 'toy' | 'air' | 'parchment',   // a starting point, not the answer
+    fonts: ['Family Name:wght@500;700'],            // Google Fonts only
+    tokens: { '--accent': '#...', '--panel': '...', '--radius': '...', '--display': '...' },  // any token in Kit.theme.TOKEN_DEFAULTS, or your own
+    layout: { stats: 'top-right' | 'top-center' | 'top-left', actions: 'bottom' | 'bottom-right' },
+    css: '& .stat { ... }',                         // extra CSS scoped to your game ("&" = your game's HUD root)
+    components: { stat: ({ label, value, h }) => el, action: ({ id, label, sub, h }) => buttonEl },  // rebuild a component; keep the live elements you are given
+  }
+Do not stop at picking a skin: two games on the same skin must still look different. Choose type, colour, shape and placement from your game's fiction
+(a mine's carved signage, a pixel village's wooden signboards, a vector arena's instrument readouts), restyle modals and banners through tokens and scoped css,
+and use components / ui.el for anything the defaults cannot express (a heart row instead of an HP number, a soul gauge, a compass). Preview any skin on any game:
+`node tools/smoke.js <id> --skin <name>`. If the theme layer cannot express what you need (a new token, a new component hook, a new layout slot, a new skin
+worth sharing), add it to kit/theme.js, the base stylesheet in index.html or kit/ui.js as a small documented addition and report it.
+
+DEVELOPER EXPERIENCE (the owner: bake intuitive, easy UX automation into the developer experience of every layer and abstraction). See AGENTS.md
+principle 9. For anything you add or touch: give it defaults that already look and behave well with no options; make views bind to models and update
+themselves; validate inputs and throw errors that name the cause and the fix; add an @example. A dedicated agent is building tools/dev.js (scaffold,
+check, play, sheet, lint, docs) and runtime validation in Kit.register; use those once they exist instead of writing one-off scripts.
+
+PERFORMANCE AND DECISIONS (the owner: bake optimisation in; no-compromise tooling one well-made brick at a time; prefer robust, performant, flexible,
+portable, lightweight tools; always weigh options with pros and cons and time/space complexity). See AGENTS.md principles 10 to 12 and ROOT/DECISIONS.md.
+  - Tools now run on Bun (`bun tools/smoke.js ...`, `bun tools/test-kit.js`) with Node as fallback; `make help` lists the targets.
+  - Put `@complexity` in the docstring of anything whose cost grows with entities, cells or messages, and pick data structures for the access pattern.
+  - When you choose between real alternatives, add a short entry to DECISIONS.md (options, costs, choice, when to revisit).
+
+DEPTH (the owner's review: every game so far lacks any depth in gameplay or progression). See AGENTS.md principle 5; this replaces every earlier
+"one-minute slice" framing. Every game must have depth at three timescales and state it in its file header:
+  seconds - mastery: the basic action can be done well or badly and skill shows.
+  minutes - decisions with trade-offs and systems that interact (synergies, counters, risk against reward) so runs and builds differ.
+  hours   - a long arc that changes how you play: unlockable mechanics, tools, modes, places or characters, goals that pull you back, difficulty that
+            grows with the player's power. Bigger numbers alone do not count.
+Kit pieces for this (read the headers): Kit.profile (kit/meta.js: lifetime statistics, permanent unlocks, achievements, account level, run history),
+Kit.synergy (kit/meta.js: tag-based set bonuses feeding Kit.stats), Kit.upgrades with requires (trees), Kit.loot / Kit.inventory, Kit.goals, Kit.curve,
+Kit.spawnTable. Design the depth first as a short plan in the file header (the three scales, the interacting rules, what unlocks when), then build it,
+preferring a rule that interacts with existing rules over a row that does not. Prove the pacing: keep the game's economy and progression as pure
+functions and simulate hours of play headlessly with simple bot policies (a script in your scratch folder, or contribute a shared simulator to tools/),
+then report the curve (time to each unlock, when the player runs out of new things). The first minute must stay as inviting as it is now.
+
+NORTH STAR AND FRICTION LOG (the owner: the method is co-evolution of tooling and platforms at every layer, to improve cost of development, quality
+produced and time required). See the North star section of AGENTS.md and ROOT/METRICS.md. End every report with a friction log: what slowed you down
+(a missing tool, an unclear interface, a flaky check, a requirement that arrived late), roughly how much time or how many runs it cost, and what tool
+or kit piece would have saved it. If the fix is small and generic, make it yourself and say so. Add a row for your work to METRICS.md.
+
+ORCHESTRATION (the owner: the strongest model should lead - plan and orchestrate tiers of agents by subtask complexity, then review, rework and refactor -
+keeping core, performance-critical, design and layout, geometric reasoning and QA for itself, and biasing toward many lower-effort tasks). See "How work is
+orchestrated" in AGENTS.md; it has the routing table and the six-step loop. If you hold a game or a kit area, you are its lead for all remaining work:
+plan the remaining work as small pieces, keep the hard ones, and dispatch the rest with the Agent tool, setting `model` (haiku, sonnet, opus, fable) and
+`effort` (low, medium, high) per piece. At most three leaves in flight at once (the machine is shared), leaves never run browsers or smoke, and every
+leaf brief names its writable paths. If you have no Agent tool, apply the same discipline yourself: split the work into small steps and say which you
+would have routed where. Record tier, effort and tokens per piece in METRICS.md so the saving can be measured.
+
+BROWSER LIMIT: the machine reached a load of 42 on 4 cores and runs were being killed. tools/smoke.js now waits for one of 3 machine-wide browser slots
+before launching (KIT_BROWSER_SLOTS overrides). Your own Playwright scripts must do the same: start them through the smoke or play tools where you can,
+or wrap them so only one of yours runs at a time, and prefer headless node checks of pure rules over browser runs. A waiting run is not a hung run.
+
+WEB-NATIVE UX (the owner: really solid, competent UX; we are web-native, so use native HTML/HTML5 with clean templating; where is the proper scrollable
+pane?). See AGENTS.md principle 6 (Web-native UX) and the "UI components" entry in DECISIONS.md. A UI lead is building a component library under kit/ui/
+(scroll pane, sheet and dialog, tabs, list, cards, buttons, meters, toasts) on Preact + htm + signals over native elements, keeping today's ctx.ui.* calls
+working. Until it lands: do not hand-roll scroll areas (use ui.panel's sheet body, which is a native scroller), make every control a real <button> or
+<input>, keep everything reachable by touch and keyboard, and note in your report any view you built that should move onto the component library.
+Report-ending friction logs now also say what the framework learned from your piece of work.
+
+DEV TOOLS HOW-TO (tools/dev.js; every command is also a make target, `make help`). Use these instead of one-off scripts.
+  node tools/dev.js new game <id> [--skin neon]     a working game that already meets the standard: header with the depth plan, tables, theme,
+                                                    Kit.fsm phases, Kit.upgrades + Kit.profile, a headless model, debugState(), its script tag,
+                                                    scratch/<id>/play.json and scratch/<id>/PLAN.md (the lead's plan). Undo: remove game <id>.
+  node tools/dev.js new module <name>               a pure kit file with header, one documented function, its test stub and its script tag.
+  node tools/dev.js check [id...] [--fast]          ONE table: unit tests, script tags, lint, Biome, type ratchet, smoke, frame budgets. Exit 1 on FAIL.
+                                                    With ids, only your files can fail it; problems in other files show as WARN. --fast = no browser.
+  node tools/dev.js play <id> --script <file>       scripted playtest. Steps (text or JSON objects): tap <point> [xN], drag <p> <p> [in s], swipe <dir>,
+                                                    hold <p> <s>, key <name>, press <HUD label>, choose <index|label>, wait <game s>,
+                                                    until <predicate> [timeout s], assert <predicate>, log <expr>, timescale <n>, shot <name>, restart.
+                                                    Points: center left right top bottom, or x,y (0..1 = fraction, else pixels). Predicates are JS over
+                                                    `state` (your debugState()), `hud` (label -> value), `time`, `modal`. Shots go to scratch/<id>/.
+                                                    Inline: play miner "tap center x5" "wait 2" "assert hud.Depth >= 1". Flags: --landscape --skin --touch.
+  node tools/dev.js sheet | skins <id>              contact sheet of every game, or one game under every skin, into shots/.
+  node tools/dev.js lint [paths] [--summary]        file:line, rule, one-line fix. `lint rules` lists the rules. Hard rules (header, TODO, console.log,
+                                                    raw timers / listeners in games) fail check; the rest are heuristics and warn.
+  node tools/dev.js docs                            regenerates kit/API.md from the JSDoc (signature, params, returns, @complexity, examples).
+  node tools/sim.js <id> [--hours 2]                plays headless.progression with greedy / random / saver bots; see AGENTS.md "Headless model".
+  node tools/dev.js types [file] | tags [--fix] | format <your files> | bench | metrics | snapshot <file> + replace <file> --with <copy>
+In your game: return debugState() from create() next to update(); it feeds play predicates and the developer overlay (backquote key in the page).
+Kit.register now throws at load for a missing or duplicate id, a create that is not a function, or an unknown skin, and warns (development only)
+for a missing theme, a fourth stat, a HUD element off-screen, a THREE.Color passed to make.*, or a wrong argument type to ui.* / ctx.after / every / tween.
+Browser tools take one of the machine-wide browser slots, like smoke. `make setup` installs Biome and TypeScript (dev only; check SKIPs them if absent).

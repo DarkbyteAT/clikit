@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": { "includes": ["kit/**/*.js", "games/**/*.js", "tools/**/*.js"] },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 200 },
+  "javascript": {
+    "formatter": { "quoteStyle": "single", "semicolons": "always", "trailingCommas": "es5", "arrowParentheses": "always" },
+    "globals": ["Kit", "THREE", "CANNON", "Bun"]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": { "noUnusedVariables": "warn", "noUnusedFunctionParameters": "warn", "noUndeclaredVariables": "error" },
+      "complexity": { "useOptionalChain": "off", "noExcessiveCognitiveComplexity": { "level": "warn", "options": { "maxAllowedComplexity": 25 } } },
+      "performance": { "noAccumulatingSpread": "warn" },
+      "style": { "useTemplate": "off", "useExponentiationOperator": "off", "useNodejsImportProtocol": "off", "noMagicNumbers": "off" },
+      "suspicious": { "noRedundantUseStrict": "off", "noAssignInExpressions": "off", "useIterableCallbackReturn": "off" }
+    }
+  },
+  "overrides": [
+    { "includes": ["kit/**/*.js", "games/**/*.js"], "linter": { "rules": { "suspicious": { "noConsole": { "level": "error", "options": { "allow": ["warn", "error"] } } } } } },
+    { "includes": ["games/**/*.js"], "linter": { "rules": { "correctness": { "noUndeclaredVariables": "warn" } } } }
+  ]
+}

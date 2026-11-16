@@ -1,0 +1,9 @@
+{
+  "name": "pocket-loop-lab",
+  "private": true,
+  "description": "Development tooling only. The page itself has no build step and no runtime dependencies. Jobs run through the Makefile.",
+  "devDependencies": {
+    "@biomejs/biome": "2.6.8",
+    "typescript": "5.9.3"
+  }
+}
