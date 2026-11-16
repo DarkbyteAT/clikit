@@ -12,4 +12,6 @@ declare namespace THREE {
   type BufferGeometry = any; type InstancedMesh = any; type Sprite = any; type Points = any; type DirectionalLight = any; type HemisphereLight = any;
   type WebGLRenderer = any; type Quaternion = any; type Euler = any; type Box3 = any; type Line = any; type Intersection = any; type Light = any;
 }
+/** Cannon types used in JSDoc, loose like THREE's: the physics library's own shapes are not what we check. */
+declare namespace CANNON { type Body = any; type World = any; type Material = any; type Vec3 = any; }
 interface Window { Kit: any; KIT_DEV?: boolean; KIT_LOCK_QUALITY?: boolean; [key: string]: any; }
