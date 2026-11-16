@@ -53,7 +53,10 @@ const BROWSER_ARGS = ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--
 const SETTLE_MS = 400;
 const LAUNCH_MS = 600;
 const BLOOM_MS = 350;
-const PAGE_SHELL = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style></head><body>';
+/** How long one screenshot may take, milliseconds. */
+const SHOT_TIMEOUT_MS = 180000;
+const PAGE_SHELL =
+  '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style></head><body>';
 
 /**
  * The machine-wide browser limit, shared with tools/smoke.js (same folder, same protocol): a run takes one of a
@@ -214,7 +217,8 @@ async function openArcade({ landscape = false, touch = false, size: ownSize } = 
     });
     await page.waitForTimeout(BLOOM_MS);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    await page.screenshot({ path: file });
+    // A screen full of figures can take a software renderer well over the default half minute to photograph.
+    await page.screenshot({ path: file, timeout: SHOT_TIMEOUT_MS });
     await page.evaluate((shouldResume) => {
       if (Kit.post_) Kit.post_.disable();
       if (shouldResume && Kit.current) Kit.current.paused = false;

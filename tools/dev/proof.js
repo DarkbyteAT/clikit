@@ -17,25 +17,28 @@ const OUT = path.join(ROOT, 'shots', 'proof');
 
 /** Stacks PNG buffers of equal width into one file, top to bottom, on a 2D canvas in the page (no image library needed). */
 async function stack(session, strips, file) {
-  const encoded = await session.page.evaluate(async (sources) => {
-    const images = await Promise.all(
-      sources.map(
-        (source) =>
-          new Promise((resolve, reject) => {
-            const image = new Image();
-            image.onload = () => resolve(image);
-            image.onerror = reject;
-            image.src = source;
-          })
-      )
-    );
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(...images.map((image) => image.width));
-    canvas.height = images.reduce((sum, image) => sum + image.height, 0);
-    const context = canvas.getContext('2d');
-    images.reduce((top, image) => (context.drawImage(image, 0, top), top + image.height), 0);
-    return canvas.toDataURL('image/png').split(',')[1];
-  }, strips.map((strip) => `data:image/png;base64,${strip.toString('base64')}`));
+  const encoded = await session.page.evaluate(
+    async (sources) => {
+      const images = await Promise.all(
+        sources.map(
+          (source) =>
+            new Promise((resolve, reject) => {
+              const image = new Image();
+              image.onload = () => resolve(image);
+              image.onerror = reject;
+              image.src = source;
+            })
+        )
+      );
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(...images.map((image) => image.width));
+      canvas.height = images.reduce((sum, image) => sum + image.height, 0);
+      const context = canvas.getContext('2d');
+      images.reduce((top, image) => (context.drawImage(image, 0, top), top + image.height), 0);
+      return canvas.toDataURL('image/png').split(',')[1];
+    },
+    strips.map((strip) => `data:image/png;base64,${strip.toString('base64')}`)
+  );
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, Buffer.from(encoded, 'base64'));
 }
