@@ -186,7 +186,7 @@
       const theirTaker = actorOf(DATA.rivalRecipe(stage.catalog, match.rival, 'taker'), { seat: 'keeper', z: MARKS.rivalTaker.wait.z });
       match.cast = { you: { taker: yourTaker, keeper: yourKeeper }, them: { taker: theirTaker, keeper: theirKeeper } };
       // The order the stage was given them in: the order of `stage.framing().figures`.
-      match.order = [match.cast.you.taker, match.cast.you.keeper, match.cast.them.taker, match.cast.them.keeper];
+      match.order = [yourTaker, theirKeeper, yourKeeper, theirTaker];
     };
     /** The two actors of the kick in play: `[taker, keeper]`. */
     const onPitch = () => (play.role === 'taker' ? [match.cast.you.taker, match.cast.them.keeper] : [match.cast.them.taker, match.cast.you.keeper]);
