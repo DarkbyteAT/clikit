@@ -866,3 +866,55 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Revisit if** one skinned mesh carries head and body (then `response` must be per vertex or per region, not
   per mesh); a catalogue passes 511 palette rows; a contrast rule proves unsatisfiable for a palette (the roll
   falls back a tier and `clashes` reports it: 48 of 5000 wardrobe rolls miss harmony, none miss contrast).
+
+## Spot Kick Showdown round 3: a finer picture, and the layers under it moved into the kit (football branch)
+
+- **The pixel grid is sized by the subject, not by the screen (`Kit.pixelGrid`).** A grain (chunky, standard,
+  fine) states how many texel rows a standing character should get; `fit` turns the character's height on screen
+  into whole device pixels per texel. Rejected: rows per screen by orientation (the old 300 / 200 gave a
+  character 80 rows on a tall phone, 52 on its side and 110 on a small phone, three different pictures) and a
+  texel size in CSS pixels (the same texel is coarse on a far subject and fine on a near one). At a pixel ratio
+  of 2 the default grain gives 422 rows at 390x844 (was 281), 390 at 844x390 (was 195) and 427 at 360x640
+  (was 320): a character stands 111, 124 and 115 rows tall (was 80, 52 and 110). Cost: a texel is a whole
+  number of pixels, so the steps are coarse where the subject is small: on a phone on its side standard and
+  fine are the same 2 pixels, and at a pixel ratio of 1 standard is the screen's own pixels there. The shell
+  caps the ratio at 2, so a 3x phone shows these texels scaled by its browser.
+- **A grain carries its tones and its level of detail.** Standard and fine draw 5 and 6 tones per ramp (chunky
+  keeps 4) and as much dither as their texels can hold (`Kit.look.ditherAt`). Characters stay at the kit's `low`
+  level at standard: at 110 rows `medium` could not be told from it in a side-by-side and cost 4.9 thousand
+  triangles each against 1.7.
+- **Scenery is painted, not lit (`Kit.paint`).** A book of flat quads, each naming its own ramp and tone, is
+  one mesh on the look's stamp path. A whole end (terraces, aisles, rails, back wall, roof and pillars, boards
+  with lettering, floodlights, a banded sky with clouds) is one draw call, as is the pitch (mown stripes,
+  mottling, worn patches, lines); the ground's 9 scenery meshes became 3 while its detail went up. Rejected:
+  textures (the look has no textured path for scenery, and a texture is a second place for colour to live),
+  and more dressed meshes (a draw call per colour). Cost: paint has no outline and no light; the goal frame and
+  the ball stay lit meshes for that reason (a post has a shaded side, the ball its round shading).
+- **A ground is data (`Kit.stadium`).** `END`, `SURFACE` and `CROWD` are rows of numbers; `end` and `surface`
+  paint them into a book and return who sits where. A spectator is two to four cards of one instanced quad
+  (body, head, hair, scarf), so a full end of 400 people is one call and people differ in size, hair and scarf.
+  The lively ones bob in two-frame steps of about a texel; nobody moves by part of a texel.
+- **Boards carry invented shop signs in a 3 x 5 pixel face** (PIES, TAXI, TEA, BIKES): no trader, club or
+  maker is named. A word is a quad per run of lit dots.
+- **Floodlights are on or off by palette.** Their halo is painted in a `glow` ramp that a ground gives the
+  sky's own colour when its lamps are off; the lamps stand in the sky band painted in the sky ramp's own colour
+  so that this is exact.
+- **The strip is parts of the wardrobe catalogue's own kind, added by the game** (games/penalty-data.js
+  `STRIP_PARTS`): a shirt with collar, cuffs, a front stripe and a block on the back, a keeper's hooped shirt,
+  shorts with a side stripe, socks with a band. Trim is the `hat` colour channel, which draws from the same
+  dyes and which nobody on a pitch uses. Wardrobe recipes are unchanged (the same seed rolls the same person).
+  Open, for the figure owner: the boots hardly show under the sock on these short legs, and a number cannot be
+  painted (regions are bands, stripes and checkers).
+- **Seats and their promises are a kit module (`Kit.seat`)**: `solve` (rule + screen + interface band),
+  `span` (how tall a subject stands, which is what the grid is fitted to), screen rectangles and `watch`.
+  The game keeps only its three rules and its table of promises.
+- **What is snapped and what cannot be.** Cameras never move within a seat, so the ground is the same texels
+  every frame. Each character's root and the ball are stood on the texel grid of their own depth for the frame
+  (`Kit.pixelGrid.snapShift`), so a body that walks keeps one outline; the crowd moves in whole-texel steps.
+  Not snapped: limbs turning (a rotating edge changes texels by nature), a body whose depth changes (the
+  taker's run-up, the ball coming at the keeper: its size on screen changes), the net while it swings (lines),
+  and the face layers, whose least-size rule needs one texel size (the look view passes none for a
+  perspective camera; for the look owner). A cut replaces the whole picture, so nothing can shimmer across it;
+  every seat of a screen shares one texel size.
+- **Play tool**: `--dpr 1|2|3` draws at a phone's pixel ratio (the grid rule cannot be judged at 1), and `log`
+  waits for a promise, so `log Kit.debug.probe(3)` prints frame times.

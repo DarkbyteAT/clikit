@@ -27,37 +27,59 @@
 
   // =================================================== looks and seats ===================================================
 
-  /** Ramps every ground has, in atlas order. `crowd0..5` and `bit0..3` must stay together: instances index into them. */
-  const WORLD_RAMPS = ['grass', 'stripe', 'line', 'frame', 'net', 'stand', 'step', 'board', 'boardAlt', 'shade', 'ballPanel', 'ballPatch', 'aim', 'sky', 'haze', 'flag', 'lamp', 'skin0', 'skin1', 'skin2', 'crowd0', 'crowd1', 'crowd2', 'crowd3', 'crowd4', 'crowd5', 'bit0', 'bit1', 'bit2', 'bit3'];
-  const CROWD_COLORS = 6;
-  const SKIN_COLORS = 3;
+  /**
+   * Ramps every ground has, in atlas order: the stadium's (kit/stadium.js `RAMPS`, its crowd runs kept together)
+   * and the game's own. `ballPanel, ballPatch` and `bit0..3` must also stay together: one mesh reaches each run
+   * by an offset from its first.
+   */
+  const CROWD_RAMPS = Kit.stadium.RAMPS.crowd.flatMap((run) => Array.from({ length: Kit.stadium.CROWD.colors[run] }, (_unused, index) => run + index));
+  const WORLD_RAMPS = [...Kit.stadium.RAMPS.surface, ...Kit.stadium.RAMPS.end, ...CROWD_RAMPS, 'frame', 'net', 'shade', 'ballPanel', 'ballPatch', 'aim', 'bit0', 'bit1', 'bit2', 'bit3'];
 
-  /** Colours every ground shares: the frame, the ball's defaults, skins, confetti. */
-  const SHARED_COLORS = { line: '#f2f1e4', frame: '#f7f6ef', net: '#e3eaf0', ballPanel: '#f4f1e8', ballPatch: '#2b2f3a', aim: '#ffe86b', skin0: '#e9b48c', skin1: '#b9794f', skin2: '#6b4630', bit0: '#ffd84a', bit1: '#ff5f6d', bit2: '#58d0ff', bit3: '#f7f6ef' };
+  /** Colours every ground shares: the frame, the ball's defaults, skins, hair, confetti. */
+  const SHARED_COLORS = {
+    line: '#f2f1e4', frame: '#f7f6ef', net: '#e3eaf0', ballPanel: '#f4f1e8', ballPatch: '#2b2f3a', aim: '#ffe86b',
+    skin0: '#e9b48c', skin1: '#b9794f', skin2: '#6b4630', hair0: '#2a2018', hair1: '#6b4424', hair2: '#d9b65c',
+    bit0: '#ffd84a', bit1: '#ff5f6d', bit2: '#58d0ff', bit3: '#f7f6ef',
+  };
 
   /**
    * @typedef {Object} GroundLook
    * @property {number} sky the colour behind everything (0xRRGGBB)
-   * @property {Object<string, string>} colors ramp name -> base colour, over SHARED_COLORS
+   * @property {Object<string, string>} colors ramp name -> base colour, over SHARED_COLORS. `glow` is the halo
+   *   round a floodlight: the sky's own colour where the lamps are off, so the halo is not there
    * @property {number} crowd share of the seats that are taken, 0..1
-   * @property {boolean} lamps are the floodlights on?
    */
 
   /** The grounds, by `CupRow.look`. A ground is a palette: the same meshes, recoloured by rewriting atlas rows. */
   const LOOKS = {
     park: {
-      sky: 0x8fd0f2, crowd: 0.45, lamps: false,
-      colors: { grass: '#57a843', stripe: '#4c9a3c', stand: '#8a7a68', step: '#a39382', board: '#e8e2d0', boardAlt: '#3f8f6a', shade: '#2f6b33', sky: '#8fd0f2', haze: '#c9ecf7', flag: '#ff6b4a', lamp: '#8a7a68', crowd0: '#d9573f', crowd1: '#3f78c4', crowd2: '#e9c84a', crowd3: '#eeeeea', crowd4: '#5aa66a', crowd5: '#8a5fb5' },
+      sky: 0x8fd0f2, crowd: 0.45,
+      colors: {
+        grass: '#57a843', stripe: '#4c9a3c', worn: '#8f9648', stand: '#8a7a68', step: '#a39382', rail: '#e4dfd0', roof: '#5f6f7a', board: '#e8e2d0', boardAlt: '#3f8f6a', shade: '#2f6b33',
+        sky: '#8fd0f2', haze: '#c9ecf7', cloud: '#ffffff', glow: '#8fd0f2', flag: '#ff6b4a', lamp: '#7f8c96',
+        crowd0: '#d9573f', crowd1: '#3f78c4', crowd2: '#e9c84a', crowd3: '#eeeeea', crowd4: '#5aa66a', crowd5: '#8a5fb5', scarf0: '#3f8f6a', scarf1: '#f2f1e4',
+      },
     },
     harbour: {
-      sky: 0x9fb6c4, crowd: 0.7, lamps: false,
-      colors: { grass: '#4a9a66', stripe: '#418c5c', stand: '#51667a', step: '#64798c', board: '#1f4f78', boardAlt: '#e9eef0', shade: '#2a6146', sky: '#9fb6c4', haze: '#d5e2e6', flag: '#ffd23f', lamp: '#51667a', crowd0: '#2f6ea8', crowd1: '#e8eef2', crowd2: '#e2733a', crowd3: '#2b3a52', crowd4: '#7fc2d6', crowd5: '#f0c64a' },
+      sky: 0x9fb6c4, crowd: 0.7,
+      colors: {
+        grass: '#4a9a66', stripe: '#418c5c', worn: '#7f9460', stand: '#51667a', step: '#64798c', rail: '#c9d3da', roof: '#34465a', board: '#1f4f78', boardAlt: '#e9eef0', shade: '#2a6146',
+        sky: '#9fb6c4', haze: '#d5e2e6', cloud: '#eef2f3', glow: '#9fb6c4', flag: '#ffd23f', lamp: '#6f8090',
+        crowd0: '#2f6ea8', crowd1: '#e8eef2', crowd2: '#e2733a', crowd3: '#2b3a52', crowd4: '#7fc2d6', crowd5: '#f0c64a', scarf0: '#1f4f78', scarf1: '#ffd23f',
+      },
     },
     lights: {
-      sky: 0x141a33, crowd: 1, lamps: true,
-      colors: { grass: '#3f9f58', stripe: '#36904d', stand: '#2a2f4a', step: '#363c5c', board: '#b3202e', boardAlt: '#f3d24a', shade: '#1d5a35', sky: '#141a33', haze: '#27305a', flag: '#f3d24a', lamp: '#fff6c8', crowd0: '#c9354a', crowd1: '#f3d24a', crowd2: '#e9e9f2', crowd3: '#3b4f9a', crowd4: '#7a3fb0', crowd5: '#e8843a' },
+      sky: 0x141a33, crowd: 1,
+      colors: {
+        grass: '#3f9f58', stripe: '#36904d', worn: '#74904a', stand: '#2a2f4a', step: '#363c5c', rail: '#8088b0', roof: '#1c2038', board: '#b3202e', boardAlt: '#f3d24a', shade: '#1d5a35',
+        sky: '#141a33', haze: '#27305a', cloud: '#232b52', glow: '#4a5aa0', flag: '#f3d24a', lamp: '#fff6c8',
+        crowd0: '#c9354a', crowd1: '#f3d24a', crowd2: '#e9e9f2', crowd3: '#3b4f9a', crowd4: '#7a3fb0', crowd5: '#e8843a', scarf0: '#b3202e', scarf1: '#f3d24a',
+      },
     },
   };
+
+  /** The settings of the picture a game is built with. `grain`: how fine the pixel grid is, a key of `Kit.pixelGrid.GRAINS`. */
+  const LOOK = { grain: 'standard' };
 
   /**
    * How much of the top of the screen the HUD covers, CSS pixels: the scoreboard and its chips. A seat tilts the
@@ -68,85 +90,54 @@
   const HUD_BAND = Object.freeze({ portrait: 204, landscape: 66 });
 
   /**
-   * @typedef {Object} SeatLens
-   * @property {number} [fov] vertical field of view, degrees (a seat that fits by distance)
-   * @property {number} [height] the camera's height, metres (a seat that fits by distance)
-   * @property {number[]} [fovRange] [least, most] vertical field of view, degrees (a seat with a fixed place)
-   * @property {number} rows texel rows of the picture: fewer rows are bigger texels
-   */
-
-  /**
-   * @typedef {Object} SeatRule A camera seat as rules, solved for the screen's shape by `solveSeat`.
+   * @typedef {Object} StageSeat A `SeatRule` of kit/seat.js, plus what the stage shows from it.
    * @property {('goal'|'taker')} faces the end the camera looks at (that end's stand is drawn; the other is behind the camera)
-   * @property {{z: number, halfWidth: number}} fit the plane across the pitch that must be seen this wide
-   * @property {{y: number, z: number, at?: number}} anchor the point the tilt is set by: it sits just below the HUD band
-   *   (the highest thing that matters), or, with `at`, that share of the screen's height down from the top
-   * @property {number} [least] least distance from the fit plane, metres (fit by distance)
-   * @property {number[]} [at] the camera's fixed place [x, y, z] (fit by opening the lens)
    * @property {number} ballScale how much bigger than life the ball is drawn from here (a far ball must still read)
-   * @property {SeatLens} portrait @property {SeatLens} landscape
    */
 
   /**
    * The camera seats. `aim`: raised behind the ball, the taker standing whole beside it and the goal clear above
    * their head. `flight`: a cut to just past the taker at the strike, so nothing stands between the lens and the
    * ball, the keeper and the goal. `keeper`: above and behind the bar, the player's keeper in front of the lens.
-   * @type {Object<string, SeatRule>}
+   * @type {Object<string, Object>} each a `SeatRule` of kit/seat.js and a `StageSeat`
    */
   const SEATS = {
     aim: {
-      faces: 'goal', fit: { z: SIM.LINE_Z, halfWidth: 3.1 }, anchor: { y: goal.height + 0.2, z: SIM.LINE_Z }, least: 15, ballScale: 1,
-      portrait: { fov: 50, height: 4.0, rows: 300 },
-      landscape: { fov: 42, height: 4.0, rows: 200 },
+      faces: 'goal', toward: -1, fit: { z: SIM.LINE_Z, halfWidth: 3.1 }, anchor: { y: goal.height + 0.2, z: SIM.LINE_Z }, least: 15, ballScale: 1,
+      portrait: { fov: 50, height: 4.0 },
+      landscape: { fov: 42, height: 4.0 },
     },
     flight: {
-      faces: 'goal', fit: { z: SIM.LINE_Z, halfWidth: 2.9 }, anchor: { y: goal.height + 0.25, z: SIM.LINE_Z }, at: [0.6, 1.5, -0.15], ballScale: 1,
-      portrait: { fovRange: [40, 76], rows: 300 },
-      landscape: { fovRange: [40, 76], rows: 200 },
+      faces: 'goal', toward: -1, fit: { z: SIM.LINE_Z, halfWidth: 2.9 }, anchor: { y: goal.height + 0.25, z: SIM.LINE_Z }, at: [0.6, 1.5, -0.15], ballScale: 1,
+      portrait: { fovRange: [40, 76] },
+      landscape: { fovRange: [40, 76] },
     },
     keeper: {
-      faces: 'taker', fit: { z: SIM.KEEPER_Z, halfWidth: 2.95 }, anchor: { y: 0, z: SIM.KEEPER_Z, at: 0.76 }, least: 9, ballScale: 1.5,
-      portrait: { fov: 56, height: 5.8, rows: 300 },
-      landscape: { fov: 40, height: 5.0, rows: 200 },
+      faces: 'taker', toward: 1, fit: { z: SIM.KEEPER_Z, halfWidth: 2.95 }, anchor: { y: 0, z: SIM.KEEPER_Z, at: 0.76 }, least: 9, ballScale: 1.5,
+      portrait: { fov: 56, height: 5.8 },
+      landscape: { fov: 40, height: 5.0 },
     },
   };
 
-  /**
-   * Solves a seat for a screen: where the camera is, where it looks and its lens.
-   * @param {SeatRule} seat
-   * @param {{w: number, h: number, aspect: number, portrait: boolean}} size the screen, CSS pixels
-   * @returns {{at: number[], look: number[], fov: number, rows: number}}
-   * @complexity O(1)
-   * @example solveSeat(SEATS.aim, { w: 390, h: 844, aspect: 390 / 844, portrait: true }).at // [0, 3.6, 7]
-   */
-  const solveSeat = (seat, size) => {
-    const lens = seat[size.portrait ? 'portrait' : 'landscape'];
-    // The camera looks along -z at the goal end and along +z at the taker's end.
-    const forward = seat.faces === 'goal' ? -1 : 1;
-    let at, fov;
-    if (seat.at) {
-      // A fixed place: the lens opens until the fit plane is in from edge to edge.
-      at = seat.at;
-      const depth = Math.abs(seat.fit.z - at[2]);
-      const halfAngle = Math.atan(seat.fit.halfWidth / depth) + Math.atan(Math.abs(at[0]) / depth);
-      fov = clamp((2 * Math.atan(Math.tan(halfAngle) / size.aspect)) / RADIANS, lens.fovRange[0], lens.fovRange[1]);
-    } else {
-      // A fixed lens: the camera backs off until the fit plane is in from edge to edge.
-      fov = lens.fov;
-      const distance = Math.max(seat.least, seat.fit.halfWidth / (Math.tan((fov / 2) * RADIANS) * size.aspect));
-      at = [0, lens.height, seat.fit.z - forward * distance];
-    }
-    // Tilt: the anchor sits just under the HUD band, or at its own share of the way down the screen.
-    const halfFov = (fov / 2) * RADIANS;
-    const anchorAngle = Math.atan((at[1] - seat.anchor.y) / Math.abs(seat.anchor.z - at[2]));
-    const down = seat.anchor.at === undefined ? HUD_BAND[size.portrait ? 'portrait' : 'landscape'] / size.h : seat.anchor.at;
-    const pitch = anchorAngle + Math.atan((1 - 2 * down) * Math.tan(halfFov));
-    const lookDepth = Math.abs(seat.fit.z - at[2]);
-    return { at, look: [0, at[1] - lookDepth * Math.tan(pitch), seat.fit.z], fov, rows: lens.rows };
-  };
+  /** Solves a seat for a screen, its tilt set to keep the HUD's band clear (`Kit.seat.solve`). */
+  const solveSeat = (seat, size) => Kit.seat.solve(seat, size, HUD_BAND[size.portrait ? 'portrait' : 'landscape']);
 
-  /** The kit's level of detail for characters in a low-resolution picture (kit/figure-shapes.js `LEVELS`). */
-  const FIGURE_LEVEL = 'low';
+  /** A standing character's height, metres (the wardrobe's people at `FIGURE_SCALE`). */
+  const FIGURE_HEIGHT = 1.75;
+
+  /**
+   * The pixel grid of a screen at a grain, fitted to the character who waits beside the ball in the aim seat:
+   * they get as near the grain's rows as whole device pixels allow, on a tall phone, a small one or a phone on
+   * its side alike, and every seat of that screen then shares the one texel size.
+   * @param {string} grain a key of `Kit.pixelGrid.GRAINS`
+   * @param {{w: number, h: number, aspect: number, portrait: boolean}} size the screen, CSS pixels
+   * @param {number} bufferHeight the drawing buffer's height, device pixels
+   * @returns {Object} a `PixelGrid` of kit/pixel-grid.js
+   * @example gridOf('standard', { w: 390, h: 844, aspect: 390 / 844, portrait: true }, 1688).texelPixels // 4
+   */
+  const gridOf = (grain, size, bufferHeight) =>
+    Kit.pixelGrid.fit(grain, { subjectPixels: Kit.seat.span(solveSeat(SEATS.aim, size), { z: TAKER_WAIT.z, to: FIGURE_HEIGHT }, bufferHeight), subjectHeight: FIGURE_HEIGHT, bufferHeight });
+
   /** Wardrobe characters stand about 1.1 m; a footballer here stands about 1.75 m. */
   const FIGURE_SCALE = 1.6;
   /**
@@ -157,41 +148,40 @@
   /** Where the player's taker waits beside the ball: this far behind it, and as far to the side as the picture allows. */
   const TAKER_WAIT = Object.freeze({ z: 1.4, halfWidth: 0.5, side: [0.75, 1.9] });
 
-  /** The surroundings, metres. Stands and boards sit behind each end; each is hidden when the camera is behind it. */
+  /** The taker's end stands this far behind the spot, and the flags beside the goal. */
   const SURROUND = Object.freeze({
-    pitchHalfWidth: 26,
-    pitchDepth: 60,
-    turfThickness: 0.2,
-    stripes: 8,
-    stripeDepth: 2.4,
-    boardZ: 3.4, // behind the goal line (and mirrored the same distance behind the taker's end)
-    board: { height: 0.8, width: 3.2, depth: 0.12, gap: 0.1, count: 12 },
-    standZ: 4.6,
-    tiers: 7,
-    tier: { rise: 0.55, run: 0.8, halfWidth: 17 },
-    wall: { height: 14, depth: 0.5, tone: 0.33 },
-    seat: { spacing: 0.72, setBack: 0.45, body: [0.42, 0.5, 0.3], head: 0.26 },
-    takerEndZ: 9.5, // how far behind the spot the far boards stand
-    lamp: { x: 13, height: 9, size: 1.6, pole: 0.25, headWidth: 2.2, headDepth: 0.3, setForward: 0.6 },
+    takerEndZ: 6.1,
     flag: { beside: 1.6, pole: 0.03, height: 1.5, cloth: [0.5, 0.3, 0.03], sides: 6, slack: -1.35, flutter: 0.12, flutterRate: [4, 13], fullWind: 12, ease: 6 },
   });
-
-  /** Pitch markings: line width, the six-yard box, the spot and the arc, metres. `slab` is how thick a painted line or a mown stripe is. */
-  const MARKS = Object.freeze({ width: 0.09, lift: 0.012, slab: 0.004, boxHalfWidth: 4.2, boxDepth: 2.6, spotRadius: 0.11, spotSides: 8, arcRadius: 3.4, arcSteps: 14, arcSpan: 1.5, arcBeyondBox: 3.2 });
-  /** Flat tone of the turf (lit evenly, so the mown stripes read as colour, not as shading). */
-  const TURF_TONE = 0.66;
+  /** Pitch markings: the six-yard box, the spot and the arc, metres. */
+  const MARKS = Object.freeze({ boxHalfWidth: 4.2, boxDepth: 2.6, spot: 0.11, arcRadius: 3.4, arcSteps: 14, arcSpan: 1.5, arcBeyondBox: 3.2 });
+  /** How far the turf runs behind the goal line and beyond the spot, metres. */
+  const PITCH = Object.freeze({ behindLine: 4.8, beyondSpot: 44 });
+  /** Patches worn to earth where boots stand: by the spot, and along the keeper's line. `z` is from the spot or, with `fromLine`, from the goal line. */
+  const WORN = Object.freeze([
+    { x: 0.05, z: 0.3, across: 0.55, deep: 0.34 },
+    { x: 0, fromLine: 0.5, across: 1.25, deep: 0.36 },
+    { x: -2.5, fromLine: 0.35, across: 0.5, deep: 0.2 },
+    { x: 2.7, fromLine: 0.4, across: 0.42, deep: 0.2 },
+  ]);
+  /** The shadows lie one layer above the lines (kit/stadium.js `SURFACE.layer`). */
+  const SHADOW_LAYER = 0.024;
 
   /** The net: knots across and down each sheet, how wide the ball pushes it, and when it counts as still. */
-  const NETTING = Object.freeze({ across: 13, down: 6, deep: 4, pushRadius: 0.42, step: 1 / 60, mostSteps: 4, still: 0.0004, near: 0.2 });
-  /** Sides of the goal's round posts. */
-  const POST_SIDES = 6;
+  const NETTING = Object.freeze({ across: 17, down: 8, deep: 5, pushRadius: 0.42, step: 1 / 60, mostSteps: 4, still: 0.0004, near: 0.2 });
+  /** The goal frame: sides of its round posts, and the thinner bars that hold the net out behind it. */
+  const FRAME = Object.freeze({ sides: 6, stay: 0.035, staySides: 4 });
 
   /** Palette rows: the ground's ramps plus a block of 16 for each of the four characters of a match. */
   const ATLAS_ROWS = 128;
-  /** The ball as drawn: patches, how fast it visibly rolls, and its shadow and trail. */
+  /**
+   * The ball as drawn: an icosphere whose faces near the twelve corners of an icosahedron are the dark patches
+   * (`patchWithin`: the cosine of how far from a corner a face may point), how fast it visibly rolls, its
+   * two-tone shadow and its trail.
+   */
   const BALL = Object.freeze({
-    patch: 0.46, patchOut: 0.7, roll: 0.35,
-    shadow: { sides: 10, spread: 1.1, perMetre: 0.25, squash: 0.8, tone: 0.5 },
+    detail: 2, patchWithin: 0.93, roll: 0.35,
+    shadow: { sides: 12, core: 0.62, spread: 1.1, perMetre: 0.25, squash: 0.8 },
     trail: { dots: 6, every: 0.03, size: 0.05, leastSpeed: 4 },
   });
   /** A character's shadow on the turf, metres across and deep. */
@@ -203,11 +193,10 @@
   /** The arrow a scouting perk floats over the taker. */
   const TELL = Object.freeze({ radius: 0.16, length: 0.42, sides: 4, height: 2.5 });
   const BITS = Object.freeze({ count: 90, colors: 4, size: 0.07, gravity: 7, drag: 1.2, life: [0.9, 1.7], spin: 9, floor: 0.03, upShare: 0.4 });
-  /** A crowd member's jump when the ground erupts, metres, and how fast the wave of it runs. */
-  const CHEER = Object.freeze({ jump: 0.22, rate: 9, fall: 0.7 });
-  /** The crowd's fixed scatter: constants of the usual sine hash, and the primes that spread shirts and skins. */
-  const SCATTER = Object.freeze({ seat: 12.9898, tier: 78.233, end: 5, scale: 43758.5453, shirt: 997, skin: 577 });
-  const CAMERA_RANGE = Object.freeze({ near: 0.3, far: 80 });
+  /** How fast a cheer dies down, per second. */
+  const CHEER_FALL = 0.7;
+  /** The near plane is as far out as the nearest thing drawn allows, which is what the far turf's layers need of the depth buffer. */
+  const CAMERA_RANGE = Object.freeze({ near: 0.8, far: 120 });
 
   // ==================================================== geometry helpers ====================================================
 
@@ -235,41 +224,24 @@
     return merged;
   };
 
-  /** A box geometry of a size, moved to a place. */
-  const boxAt = (width, height, depth, x, y, z) => new THREE.BoxGeometry(width, height, depth).translate(x, y, z);
-  /** A flat marking on the turf: a thin slab between two x and two z. */
-  const slab = (fromX, toX, fromZ, toZ) => boxAt(Math.abs(toX - fromX), MARKS.slab, Math.abs(toZ - fromZ), (fromX + toX) / 2, MARKS.lift, (fromZ + toZ) / 2);
-  /**
-   * A seated spectator's part as the pitch sees it: the face towards the pitch and the top, two quads. From the
-   * stands' distance a box and this card are the same few texels, at a sixth of the triangles.
-   * @param {number} width @param {number} height @param {number} depth metres
-   * @param {number} baseY the height of its underside
-   * @param {number} facing 1 when the pitch is towards +z, -1 when towards -z
-   */
-  const cardOf = (width, height, depth, baseY, facing) =>
-    mergeGeometries([
-      new THREE.PlaneGeometry(width, height).rotateY(facing > 0 ? 0 : Math.PI).translate(0, baseY + height / 2, (facing * depth) / 2),
-      new THREE.PlaneGeometry(width, depth).rotateX(-Math.PI / 2).translate(0, baseY + height, 0),
-    ]);
-
-  /** The screen rectangle that holds two others, or the one that exists. */
-  const unionRect = (first, second) => (!first ? second : !second ? first : { left: Math.min(first.left, second.left), top: Math.min(first.top, second.top), right: Math.max(first.right, second.right), bottom: Math.max(first.bottom, second.bottom) });
-
   // ======================================================= the stage =======================================================
 
   /**
    * Builds the stage in a new pixel look view.
    * @param {Object} ctx the game context (uses `renderer`, `camera`, `size`)
    * @returns {Object} the handles described at each property below
-   * @complexity build: O(seats + knots); a frame: O(knots + live bits + cheering seats), and one pose per figure
+   * @complexity build: O(seats + knots + painted quads); a frame: O(knots + live bits + lively or cheering seats), and one pose per figure
    */
   const build = (ctx) => {
     const { renderer, camera, size } = ctx;
     const view = Kit.look.view({ renderer, preset: 'pixel', atlasRows: ATLAS_ROWS });
     const world = view.atlas.load(Kit.palette.set('ground', Object.fromEntries(WORLD_RAMPS.map((name) => [name, { ...SHARED_COLORS, ...LOOKS.park.colors }[name]]))));
     const rows = world.rows;
+    const slotOf = (ramp) => rows[ramp] - rows[WORLD_RAMPS[0]];
     let look = LOOKS.park;
     let seatName = 'aim';
+    let grain = LOOK.grain;
+    let grid = gridOf(grain, size, size.h);
 
     /** Adds a mesh to the look scene, dressed in a world ramp. `label` names it in `budget()`. */
     const dressed = (label, geometry, ramp, part = {}, parent = view.scene) => {
@@ -288,75 +260,60 @@
       view.shading.dress(mesh, { ramp: rows[ramp], ...part });
       return mesh;
     };
+    /** Adds a book of painted quads (kit/paint.js) as one mesh: seen from both sides, never outlined. */
+    const painted = (label, book, parent = view.scene) => {
+      const mesh = dressed(label, Kit.paint.geometry(book), WORLD_RAMPS[0], { stamps: true, blockRow: rows[WORLD_RAMPS[0]], inkGroup: 0 }, parent);
+      mesh.material[0].side = THREE.DoubleSide;
+      mesh.frustumCulled = false;
+      return mesh;
+    };
 
-    // ---- stands, boards, lamps: one group per end, hidden when the camera sits behind it ----
+    // ---- the two ends (kit/stadium.js): terraces, rails, roof, boards, floodlights and sky, one painted mesh each ----
     const lineZ = SIM.LINE_Z;
     const ends = { goal: new THREE.Group(), taker: new THREE.Group() };
     Object.values(ends).forEach((group) => view.scene.add(group));
-    /** z of a distance behind an end: the goal end runs towards -z, the taker's end towards +z. */
-    const behind = { goal: (distance) => lineZ - distance, taker: (distance) => SURROUND.takerEndZ + distance - SURROUND.boardZ };
-    const lampZ = behind.goal(SURROUND.standZ - SURROUND.lamp.setForward);
-    const seats = [];
-    Object.keys(ends).forEach((end) => {
-      const group = ends[end];
-      const zOf = behind[end];
-      const { tier, board, wall, lamp } = SURROUND;
-      const isEven = (_unused, index) => index % 2 === 0;
-      const isOdd = (_unused, index) => index % 2 === 1;
-      const boards = Array.from({ length: board.count }, (_unused, index) => boxAt(board.width - board.gap, board.height, board.depth, (index - (board.count - 1) / 2) * board.width, board.height / 2, zOf(SURROUND.boardZ)));
-      dressed('boards', mergeGeometries(boards.filter(isEven)), 'board', {}, group);
-      dressed('boards', mergeGeometries(boards.filter(isOdd)), 'boardAlt', {}, group);
-      const steps = Array.from({ length: SURROUND.tiers }, (_unused, index) => boxAt(tier.halfWidth * 2, tier.rise * (index + 1), tier.run, 0, (tier.rise * (index + 1)) / 2, zOf(SURROUND.standZ + index * tier.run + tier.run / 2)));
-      // The lamp posts stand with the goal end's terraces: one mesh, one ramp.
-      const posts = end === 'goal' ? [-1, 1].map((side) => boxAt(lamp.pole, lamp.height, lamp.pole, side * lamp.x, lamp.height / 2, lampZ)) : [];
-      dressed('stands', mergeGeometries([...steps.filter(isEven), ...posts]), 'stand', {}, group);
-      dressed('stands', mergeGeometries(steps.filter(isOdd)), 'step', {}, group);
-      dressed('stands', boxAt(tier.halfWidth * 2, wall.height, wall.depth, 0, wall.height / 2, zOf(SURROUND.standZ + SURROUND.tiers * tier.run + wall.depth / 2)), 'stand', { tone: wall.tone }, group);
-      Array.from({ length: SURROUND.tiers }, (_unused, tierIndex) => tierIndex).forEach((tierIndex) => {
-        const count = Math.floor((tier.halfWidth * 2) / SURROUND.seat.spacing);
-        Array.from({ length: count }, (_unused, seat) => seat).forEach((seat) => {
-          // A fixed scatter (no random): the same crowd every visit, and no two neighbours alike.
-          const scatter = Math.sin(seat * SCATTER.seat + tierIndex * SCATTER.tier + (end === 'goal' ? 0 : SCATTER.end)) * SCATTER.scale;
-          const chance = scatter - Math.floor(scatter);
-          seats.push({ end, x: (seat - (count - 1) / 2) * SURROUND.seat.spacing, y: tier.rise * (tierIndex + 1), z: zOf(SURROUND.standZ + tierIndex * tier.run + tier.run * SURROUND.seat.setBack), chance, shirt: Math.floor(chance * SCATTER.shirt) % CROWD_COLORS, skin: Math.floor(chance * SCATTER.skin) % SKIN_COLORS });
-        });
-      });
+    /** Where each end stands: the edge it is behind, and which way the pitch lies from it. */
+    const PLACES = { goal: { edge: lineZ, toward: 1, turn: 0 }, taker: { edge: SURROUND.takerEndZ, toward: -1, turn: 1 } };
+    const seats = Object.keys(ends).flatMap((end) => {
+      const book = Kit.paint.book(slotOf);
+      const made = Kit.stadium.end(book, PLACES[end]).map((seat) => ({ ...seat, end }));
+      painted('stand', book, ends[end]);
+      return made;
     });
-    const lampHeads = dressed('stands', mergeGeometries([-1, 1].map((side) => boxAt(SURROUND.lamp.headWidth, SURROUND.lamp.size, SURROUND.lamp.headDepth, side * SURROUND.lamp.x, SURROUND.lamp.height + SURROUND.lamp.size / 2, lampZ))), 'lamp', { emissive: true }, ends.goal);
 
-    // ---- turf and markings ----
-    // Mown stripes lie just under the markings, so a line is never fought over by two surfaces.
-    const stripes = Array.from({ length: SURROUND.stripes }, (_unused, index) => boxAt(SURROUND.pitchHalfWidth * 2, MARKS.slab, SURROUND.stripeDepth, 0, MARKS.lift / 2, lineZ - SURROUND.stripeDepth + (index * 2 + 0.5) * SURROUND.stripeDepth));
-    dressed('turf', boxAt(SURROUND.pitchHalfWidth * 2, SURROUND.turfThickness, SURROUND.pitchDepth, 0, -SURROUND.turfThickness / 2, 0), 'grass', { tone: TURF_TONE, inkGroup: 0 });
-    dressed('turf', mergeGeometries(stripes), 'stripe', { tone: TURF_TONE, inkGroup: 0 });
-    const half = MARKS.width / 2;
-    const arc = Array.from({ length: MARKS.arcSteps }, (_unused, index) => {
-      const [from, to] = [index, index + 1].map((step) => (step / MARKS.arcSteps - 0.5) * MARKS.arcSpan);
-      const [middle, length] = [(from + to) / 2, MARKS.arcRadius * (to - from) + MARKS.width];
-      return new THREE.BoxGeometry(length, MARKS.slab, MARKS.width).rotateY(-middle).translate(Math.sin(middle) * MARKS.arcRadius, MARKS.lift, lineZ + MARKS.boxDepth + MARKS.arcBeyondBox + Math.cos(middle) * MARKS.arcRadius - MARKS.arcRadius);
-    });
-    dressed(
-      'markings',
-      mergeGeometries([
-        slab(-SURROUND.pitchHalfWidth, SURROUND.pitchHalfWidth, lineZ - half, lineZ + half),
-        slab(-MARKS.boxHalfWidth, MARKS.boxHalfWidth, lineZ + MARKS.boxDepth - half, lineZ + MARKS.boxDepth + half),
-        slab(-MARKS.boxHalfWidth - half, -MARKS.boxHalfWidth + half, lineZ, lineZ + MARKS.boxDepth),
-        slab(MARKS.boxHalfWidth - half, MARKS.boxHalfWidth + half, lineZ, lineZ + MARKS.boxDepth),
-        new THREE.CylinderGeometry(MARKS.spotRadius, MARKS.spotRadius, MARKS.slab, MARKS.spotSides).translate(0, MARKS.lift, 0),
-        ...arc,
-      ]),
-      'line',
-      { tone: 1, inkGroup: 0 }
+    // ---- the pitch (kit/stadium.js): mown stripes, texture, worn patches and markings, one painted mesh ----
+    const half = Kit.stadium.SURFACE.lineWidth / 2;
+    const boxZ = lineZ + MARKS.boxDepth;
+    painted(
+      'pitch',
+      Kit.stadium.surface(Kit.paint.book(slotOf), {
+        ...Kit.stadium.SURFACE,
+        from: lineZ - PITCH.behindLine,
+        to: PITCH.beyondSpot,
+        worn: WORN.map((patch) => ({ ...patch, z: patch.fromLine === undefined ? patch.z : lineZ + patch.fromLine })),
+        lines: [
+          { rect: [-Kit.stadium.SURFACE.halfWidth, Kit.stadium.SURFACE.halfWidth, lineZ - half, lineZ + half] },
+          { rect: [-MARKS.boxHalfWidth, MARKS.boxHalfWidth, boxZ - half, boxZ + half] },
+          { rect: [-MARKS.boxHalfWidth - half, -MARKS.boxHalfWidth + half, lineZ, boxZ] },
+          { rect: [MARKS.boxHalfWidth - half, MARKS.boxHalfWidth + half, lineZ, boxZ] },
+          { rect: [-MARKS.spot, MARKS.spot, -MARKS.spot, MARKS.spot] },
+          { arc: { x: 0, z: boxZ + MARKS.arcBeyondBox - MARKS.arcRadius, radius: MARKS.arcRadius, from: -MARKS.arcSpan / 2, to: MARKS.arcSpan / 2, steps: MARKS.arcSteps } },
+        ],
+      })
     );
 
-    // ---- goal frame (with the flag poles: one mesh, one ramp) and net ----
+    // ---- goal frame (with the stays that hold the net out, and the flag poles: one mesh, one ramp, lit so a post has a shaded side) and net ----
     const { flag } = SURROUND;
-    const post = (x) => new THREE.CylinderGeometry(goal.postRadius, goal.postRadius, goal.height, POST_SIDES).translate(x, goal.height / 2, lineZ);
-    const bar = new THREE.CylinderGeometry(goal.postRadius, goal.postRadius, goal.halfWidth * 2 + goal.postRadius * 2, POST_SIDES).rotateZ(Math.PI / 2).translate(0, goal.height, lineZ);
+    const backZ = lineZ - goal.depth;
+    const post = (x) => new THREE.CylinderGeometry(goal.postRadius, goal.postRadius, goal.height, FRAME.sides).translate(x, goal.height / 2, lineZ);
+    const bar = new THREE.CylinderGeometry(goal.postRadius, goal.postRadius, goal.halfWidth * 2 + goal.postRadius * 2, FRAME.sides).rotateZ(Math.PI / 2).translate(0, goal.height, lineZ);
+    const stays = [-1, 1].flatMap((side) => [
+      new THREE.CylinderGeometry(FRAME.stay, FRAME.stay, goal.height, FRAME.staySides).translate(side * goal.halfWidth, goal.height / 2, backZ),
+      new THREE.CylinderGeometry(FRAME.stay, FRAME.stay, goal.depth, FRAME.staySides).rotateX(Math.PI / 2).translate(side * goal.halfWidth, goal.height, lineZ - goal.depth / 2),
+    ]);
     const flagX = (side) => side * (goal.halfWidth + flag.beside);
     const poles = [-1, 1].map((side) => new THREE.CylinderGeometry(flag.pole, flag.pole, flag.height, flag.sides).translate(flagX(side), flag.height / 2, lineZ));
-    dressed('goal frame', mergeGeometries([post(-goal.halfWidth), post(goal.halfWidth), bar, ...poles]), 'frame', { inkGroup: 2 });
-    const backZ = lineZ - goal.depth;
+    dressed('goal frame', mergeGeometries([post(-goal.halfWidth), post(goal.halfWidth), bar, ...stays, ...poles]), 'frame', { inkGroup: 2 });
     const isPinnedAtFrame = (column, row, columns, lastRow) => column === 0 || column === columns - 1 || row === 0 || row === lastRow;
     const sheetOf = (origin, across, down, columns, knotRows) => Kit.netting.sheet({ origin, across, down, columns, rows: knotRows, isPinned: (column, row) => isPinnedAtFrame(column, row, columns, knotRows - 1) });
     const corner = (x, z) => ({ x, y: goal.height, z });
@@ -390,42 +347,61 @@
     /** From behind the goal the back and the roof would be drawn across the keeper: they show only while the ball is in them. */
     const showNet = () => (netBack.lines.visible = SEATS[seatName].faces === 'goal' || netClock.isMoving);
 
-    // ---- the crowd: two instanced meshes per end (bodies, heads), each instance its own shirt or skin row ----
+    // ---- the crowd: one instanced quad per end; each card of each spectator (kit/stadium.js) is an instance with its own ramp ----
+    const scratchMatrix = new THREE.Matrix4();
+    const { mostCards } = Kit.stadium.CROWD;
     const crowdOf = (end) => {
       const members = seats.filter((seat) => seat.end === end);
-      const [bodyWidth, bodyHeight, bodyDepth] = SURROUND.seat.body;
-      const facing = end === 'goal' ? 1 : -1;
-      const bodyGeometry = cardOf(bodyWidth, bodyHeight, bodyDepth, 0, facing);
-      const headGeometry = cardOf(SURROUND.seat.head, SURROUND.seat.head, SURROUND.seat.head, bodyHeight, facing);
-      bodyGeometry.setAttribute('instanceRamp', new THREE.InstancedBufferAttribute(Float32Array.from(members, (member) => member.shirt), 1));
-      headGeometry.setAttribute('instanceRamp', new THREE.InstancedBufferAttribute(Float32Array.from(members, (member) => member.skin), 1));
-      const meshes = [[bodyGeometry, 'crowd0'], [headGeometry, 'skin0']].map(([geometry, ramp]) => dressedInstances('crowd', geometry, members.length, ramp, { instanceRamp: true, inkGroup: 3 }, ends[end]));
-      return { members, meshes };
+      const geometry = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
+      const ramps = new Float32Array(members.length * mostCards);
+      geometry.setAttribute('instanceRamp', new THREE.InstancedBufferAttribute(ramps, 1));
+      const mesh = dressedInstances('crowd', geometry, members.length * mostCards, 'crowd0', { instanceRamp: true, inkGroup: 3, tone: Kit.paint.TONE.base }, ends[end]);
+      mesh.material[0].side = THREE.DoubleSide;
+      return { end, members, mesh, ramps, shown: [], lively: [], wasCheering: false, toward: PLACES[end].toward };
     };
     const crowds = [crowdOf('goal'), crowdOf('taker')];
-    const scratchMatrix = new THREE.Matrix4();
     let cheer = 0;
-    let isCrowdStill = false;
-    /** Writes every seat's place: empty seats are shrunk to nothing, and a cheering crowd jumps in a wave. */
-    const placeCrowd = (time) => {
-      crowds.forEach(({ members, meshes }) => {
-        // Hot path while cheering: an index loop and a direct matrix write per seat.
-        for (let index = 0; index < members.length; index++) {
-          const member = members[index];
-          const shown = member.chance < look.crowd ? 1 : 0;
-          const jump = cheer > 0 ? Math.max(0, Math.sin(time * CHEER.rate + member.chance * TURN)) * CHEER.jump * cheer : 0;
-          scratchMatrix.makeScale(shown, shown, shown).setPosition(member.x, member.y + jump, member.z);
-          meshes[0].setMatrixAt(index, scratchMatrix);
-          meshes[1].setMatrixAt(index, scratchMatrix);
-        }
-        meshes.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
+    /** Writes the cards of one spectator at a lift above their seat. */
+    const placeMember = ({ mesh, toward }, member, lift) => {
+      member.cards.forEach(([width, height, up, proud], card) => {
+        scratchMatrix.makeScale(width * member.size, height * member.size, 1).setPosition(member.x, member.y + up * member.size + lift, member.z + toward * proud);
+        mesh.setMatrixAt(member.first + card, scratchMatrix);
       });
     };
-    placeCrowd(0);
+    /** Seats the crowd a ground draws: who is there, the cards each is made of, and each card's ramp. */
+    const seatCrowd = () => {
+      crowds.forEach((crowd) => {
+        let next = 0;
+        crowd.shown = crowd.members.filter((member) => member.chance < look.crowd);
+        crowd.shown.forEach((member) => {
+          const cards = Kit.stadium.cards(member);
+          member.first = next;
+          member.cards = cards.map(({ card }) => card);
+          cards.forEach(({ run, index }) => (crowd.ramps[next++] = rows[run + index] - rows.crowd0));
+          placeMember(crowd, member, 0);
+        });
+        crowd.lively = crowd.shown.filter((member) => member.isLively);
+        crowd.mesh.count = next;
+        crowd.mesh.geometry.attributes.instanceRamp.needsUpdate = true;
+        crowd.mesh.instanceMatrix.needsUpdate = true;
+      });
+    };
+    /** Moves the crowd of the end in view: the lively ones bob in steps; when the ground erupts everyone jumps in a wave. */
+    const moveCrowd = (time) => {
+      crowds.forEach((crowd) => {
+        if (!ends[crowd.end].visible) return;
+        const movers = cheer > 0 || crowd.wasCheering ? crowd.shown : crowd.lively;
+        // Hot path: an index loop over the spectators that move.
+        for (let index = 0; index < movers.length; index++) placeMember(crowd, movers[index], Kit.stadium.lift(movers[index], time, cheer));
+        crowd.wasCheering = cheer > 0;
+        crowd.mesh.instanceMatrix.needsUpdate = true;
+      });
+    };
+    seatCrowd();
 
     // ---- flags that show the wind: two cloths, instances of one mesh ----
     const [clothWidth, clothHeight, clothDepth] = flag.cloth;
-    const cloths = dressedInstances('flags', boxAt(clothWidth, clothHeight, clothDepth, clothWidth / 2, 0, 0), 2, 'flag', {});
+    const cloths = dressedInstances('flags', new THREE.BoxGeometry(clothWidth, clothHeight, clothDepth).translate(clothWidth / 2, 0, 0), 2, 'flag', {});
     const clothTurn = new THREE.Euler();
     const clothSpin = new THREE.Quaternion();
     const clothPlace = new THREE.Vector3();
@@ -433,19 +409,42 @@
     let wind = 0;
     let clothDroop = flag.slack;
 
-    // ---- ball, its shadow and its trail ----
+    // ---- ball (one lit mesh: each face takes the panel's ramp or the patch's), its shadow and its trail ----
     const ballGroup = new THREE.Group();
     view.scene.add(ballGroup);
-    dressed('ball', new THREE.IcosahedronGeometry(FIELD.ballRadius, 1), 'ballPanel', { inkGroup: 4 }, ballGroup);
-    const patchSpots = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
-    const patchOut = FIELD.ballRadius * BALL.patchOut;
-    dressed('ball', mergeGeometries(patchSpots.map(([x, y, z]) => new THREE.IcosahedronGeometry(FIELD.ballRadius * BALL.patch, 0).translate(x * patchOut, y * patchOut, z * patchOut))), 'ballPatch', { inkGroup: 4 }, ballGroup);
-    // Every shadow on the turf (the ball's and each character's) is an instance of one disc.
+    const ballGeometry = new THREE.IcosahedronGeometry(FIELD.ballRadius, BALL.detail);
+    const patchCentres = Array.from(new THREE.IcosahedronGeometry(1, 0).attributes.position.array);
+    const faceCentre = new THREE.Vector3();
+    const ballPoints = ballGeometry.attributes.position;
+    /** 1 when the face a vertex belongs to points near a corner of the icosahedron (a dark patch), else 0. */
+    const patchOf = (vertex) => {
+      const first = vertex - (vertex % STRIDE);
+      faceCentre.set(0, 0, 0);
+      for (let cornerIndex = first; cornerIndex < first + STRIDE; cornerIndex++) {
+        faceCentre.x += ballPoints.getX(cornerIndex);
+        faceCentre.y += ballPoints.getY(cornerIndex);
+        faceCentre.z += ballPoints.getZ(cornerIndex);
+      }
+      faceCentre.normalize();
+      let nearest = -1;
+      for (let centre = 0; centre < patchCentres.length; centre += STRIDE) nearest = Math.max(nearest, faceCentre.x * patchCentres[centre] + faceCentre.y * patchCentres[centre + 1] + faceCentre.z * patchCentres[centre + 2]);
+      return nearest > BALL.patchWithin ? 1 : 0;
+    };
+    // The attribute the look reads a row offset from is per instance on an instanced mesh; on a plain mesh it is per vertex.
+    ballGeometry.setAttribute('instanceRamp', new THREE.Float32BufferAttribute(Float32Array.from({ length: ballPoints.count }, (_zero, vertex) => patchOf(vertex) * (rows.ballPatch - rows.ballPanel)), 1));
+    dressed('ball', ballGeometry, 'ballPanel', { instanceRamp: true, inkGroup: 4 }, ballGroup);
+    // Every shadow on the turf (the ball's and each character's) is an instance of one disc: a dark core in a softer rim.
     const SHADOWS = Object.freeze({ ball: 0, firstFigure: 1, count: 5 });
-    const shadows = dressedInstances('shadows', new THREE.CircleGeometry(1, BALL.shadow.sides).rotateX(-Math.PI / 2), SHADOWS.count, 'shade', { tone: BALL.shadow.tone, inkGroup: 0 });
+    const shadowBook = Kit.paint.book(slotOf).disc({ rings: [[BALL.shadow.core, 'shade', Kit.paint.TONE.dark], [1, 'shade', Kit.paint.TONE.base]], sides: BALL.shadow.sides });
+    const shadows = new THREE.InstancedMesh(Kit.paint.geometry(shadowBook), undefined, SHADOWS.count);
+    shadows.name = 'shadows';
+    shadows.frustumCulled = false;
+    view.scene.add(shadows);
+    view.shading.dress(shadows, { ramp: rows.shade, stamps: true, blockRow: rows[WORLD_RAMPS[0]], inkGroup: 0 });
+    shadows.material[0].side = THREE.DoubleSide;
     const hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
     const placeShadow = (index, x, z, across, deep) => {
-      shadows.setMatrixAt(index, across > 0 ? scratchMatrix.makeScale(across, 1, deep).setPosition(x, MARKS.lift + MARKS.slab, z) : hiddenMatrix);
+      shadows.setMatrixAt(index, across > 0 ? scratchMatrix.makeScale(across, 1, deep).setPosition(x, SHADOW_LAYER, z) : hiddenMatrix);
       shadows.instanceMatrix.needsUpdate = true;
     };
     Array.from({ length: SHADOWS.count }, (_unused, index) => placeShadow(index, 0, 0, 0, 0));
@@ -483,7 +482,7 @@
     bitMesh.visible = false;
 
     // ---- figures ----
-    const catalog = Kit.body.catalog(Kit.body.wardrobe.CATALOG);
+    const catalog = Kit.body.catalog(DATA.CATALOG);
     const bakery = catalog.bakery({ capacity: 16 });
     const figures = [];
 
@@ -493,6 +492,7 @@
     const keeperPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -SIM.KEEPER_Z);
     const pointer = new THREE.Vector2();
     const hitPoint = new THREE.Vector3();
+    const bufferSize = new THREE.Vector2();
     const seatCamera = () => {
       const seat = solveSeat(SEATS[seatName], size);
       camera.position.set(...seat.at);
@@ -502,7 +502,9 @@
       camera.updateProjectionMatrix();
       camera.lookAt(lookAt.set(...seat.look));
       camera.updateMatrixWorld();
-      view.use('pixel', { pixelRows: seat.rows });
+      // The grid is the same in every seat of a screen, so a cut changes the picture and never the size of its texels.
+      grid = gridOf(grain, size, renderer.getDrawingBufferSize(bufferSize).y);
+      view.use('pixel', Kit.pixelGrid.settings(grid));
       // An end's stand is scenery for the camera that faces it and a wall for the camera that sits in it.
       ends.goal.visible = SEATS[seatName].faces === 'goal';
       ends.taker.visible = SEATS[seatName].faces === 'taker';
@@ -514,20 +516,8 @@
     // ---- where things are on screen (for `framing`) ----
     const projected = new THREE.Vector3();
     /** The screen disc of a world point of a radius, as a rectangle in CSS pixels; null when it is behind the camera. */
-    const discRect = (x, y, z, radius) => {
-      projected.set(x, y, z).applyMatrix4(camera.matrixWorldInverse);
-      const depth = -projected.z;
-      if (depth <= camera.near) return null;
-      const pixelsPerMetre = size.h / (2 * Math.tan((camera.fov / 2) * RADIANS) * depth);
-      const [centreX, centreY] = [size.w / 2 + projected.x * pixelsPerMetre, size.h / 2 - projected.y * pixelsPerMetre];
-      return { left: centreX - radius * pixelsPerMetre, top: centreY - radius * pixelsPerMetre, right: centreX + radius * pixelsPerMetre, bottom: centreY + radius * pixelsPerMetre };
-    };
-    /** A rectangle cut to the screen; null when none of it is on screen. */
-    const onScreen = (rect) => {
-      if (!rect) return null;
-      const cut = { left: Math.max(0, rect.left), top: Math.max(0, rect.top), right: Math.min(size.w, rect.right), bottom: Math.min(size.h, rect.bottom) };
-      return cut.left < cut.right && cut.top < cut.bottom ? cut : null;
-    };
+    const discRect = (x, y, z, radius) => Kit.seat.disc(projected.set(x, y, z).applyMatrix4(camera.matrixWorldInverse), radius, camera, size);
+    const onScreen = (rect) => Kit.seat.rect.cut(rect, size);
     const bonePoint = new THREE.Vector3();
     /** The screen rectangle of a character: the union of a disc per bone, the head's bigger and higher. */
     const figureRect = (figure) => {
@@ -540,15 +530,44 @@
       for (let bone = 0; bone < translation.length / STRIDE; bone++) {
         bonePoint.set(translation[bone * STRIDE], translation[bone * STRIDE + 1], translation[bone * STRIDE + 2]).applyMatrix4(figure.root.matrixWorld);
         const isHead = bone === headBone;
-        rect = unionRect(rect, onScreen(discRect(bonePoint.x, bonePoint.y + (isHead ? FIGURE_BOUNDS.headLift : 0), bonePoint.z, isHead ? FIGURE_BOUNDS.head : FIGURE_BOUNDS.limb)));
+        rect = Kit.seat.rect.union(rect, onScreen(discRect(bonePoint.x, bonePoint.y + (isHead ? FIGURE_BOUNDS.headLift : 0), bonePoint.z, isHead ? FIGURE_BOUNDS.head : FIGURE_BOUNDS.limb)));
       }
       return rect;
+    };
+
+    // ---- the texel grid under a moving thing ----
+    const gridRight = new THREE.Vector3();
+    const gridUp = new THREE.Vector3();
+    const gridPoint = new THREE.Vector3();
+    /**
+     * Moves an object to the nearest texel of the picture at its own depth, along the camera's right and up
+     * (a perspective picture has no one texel size: it grows with depth). Returns the undo.
+     * @param {THREE.Object3D} object a child of the scene
+     * @returns {function(): void}
+     */
+    const snapToGrid = (object) => {
+      const [across, along] = Kit.pixelGrid.snapShift(gridPoint.copy(object.position).applyMatrix4(camera.matrixWorldInverse), camera.fov, grid.rows);
+      gridRight.setFromMatrixColumn(camera.matrixWorld, 0);
+      gridUp.setFromMatrixColumn(camera.matrixWorld, 1);
+      object.position.addScaledVector(gridRight, across).addScaledVector(gridUp, along);
+      return () => object.position.addScaledVector(gridRight, -across).addScaledVector(gridUp, -along);
     };
 
     const stage = {
       view,
       catalog,
       FIGURE_SCALE,
+      /**
+       * Sets how fine the pixel grid is. Characters built from now on take the grain's level of detail; those
+       * already standing keep theirs until the next match.
+       * @param {string} name a key of `Kit.pixelGrid.GRAINS`
+       */
+      setGrain(name) {
+        grain = name;
+        seatCamera();
+      },
+      /** The grid in use on this screen (`gridOf`): its grain, texel size and rows. */
+      grain: () => ({ ...grid }),
       /**
        * Seats the camera and shows the end it faces.
        * @param {('aim'|'flight'|'keeper')} name a key of `SEATS`
@@ -580,8 +599,7 @@
         look = LOOKS[lookId] || LOOKS.park;
         const colors = { ...SHARED_COLORS, ...look.colors, ballPanel: ballColors[0], ballPatch: ballColors[1] };
         WORLD_RAMPS.forEach((name) => view.atlas.writeRamp(world, name, colors[name]));
-        lampHeads.visible = look.lamps;
-        placeCrowd(0);
+        seatCrowd();
       },
       /**
        * Builds a character from a recipe and stands it in the scene.
@@ -590,7 +608,7 @@
        *   root's place until whoever animates it says otherwise (a dive carries the body off its root)
        */
       addFigure(recipe) {
-        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { level: FIGURE_LEVEL });
+        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { level: Kit.pixelGrid.GRAINS[grain].level });
         figure.root.scale.setScalar(FIGURE_SCALE);
         figure.footing = figure.root.position;
         figures.push(figure);
@@ -717,7 +735,6 @@
        */
       cheer(amount) {
         cheer = Math.max(cheer, amount);
-        isCrowdStill = false;
       },
       /** Points the flags: metres per second of crosswind, + towards +X. */
       setWind(speed) {
@@ -761,7 +778,7 @@
         const corners = [[-1, 0], [1, 0], [-1, 1], [1, 1]].map(([side, up]) => discRect(side * goal.halfWidth, up * goal.height, lineZ, goal.postRadius));
         const ballRadius = FIELD.ballRadius * ballGroup.scale.x;
         return {
-          goal: corners.every(Boolean) ? corners.reduce(unionRect) : null,
+          goal: corners.every(Boolean) ? corners.reduce(Kit.seat.rect.union) : null,
           ball: ballGroup.visible ? onScreen(discRect(ballGroup.position.x, ballGroup.position.y, ballGroup.position.z, ballRadius)) : null,
           figures: figures.map(figureRect),
         };
@@ -800,11 +817,8 @@
        * @param {number} time seconds
        */
       update(dt, time) {
-        if (cheer > 0 || !isCrowdStill) {
-          cheer = Math.max(0, cheer - CHEER.fall * dt);
-          placeCrowd(time);
-          isCrowdStill = cheer === 0;
-        }
+        cheer = Math.max(0, cheer - CHEER_FALL * dt);
+        moveCrowd(time);
         // A slack flag hangs; a full one stands out along the wind and flutters.
         const strength = clamp(Math.abs(wind) / flag.fullWind);
         clothDroop = damp(clothDroop, lerp(flag.slack, 0, strength) + Math.sin(time * lerp(flag.flutterRate[0], flag.flutterRate[1], strength)) * flag.flutter * strength, flag.ease, dt);
@@ -834,9 +848,14 @@
           placeShadow(SHADOWS.firstFigure + index, figure.footing.x, figure.footing.z, isShown ? FIGURE_SHADOW.across : 0, FIGURE_SHADOW.deep);
         });
       },
-      /** Draws the frame. */
+      /**
+       * Draws the frame. The characters and the ball are stood on the texel grid for the frame, so a body that
+       * walks keeps one outline instead of a different one at every part of a texel.
+       */
       render() {
+        const restore = [...figures.filter((figure) => figure.root.visible).map((figure) => snapToGrid(figure.root)), ...(ballGroup.visible ? [snapToGrid(ballGroup)] : [])];
         view.render(camera, { clearColor: look.sky });
+        restore.forEach((undo) => undo());
       },
       dispose() {
         stage.clearFigures();
@@ -846,5 +865,5 @@
     return stage;
   };
 
-  window.SPOT_KICK_STAGE = { LOOKS, SEATS, HUD_BAND, FIGURE_SCALE, solveSeat, build };
+  window.SPOT_KICK_STAGE = { LOOKS, LOOK, WORLD_RAMPS, SEATS, HUD_BAND, FIGURE_SCALE, solveSeat, gridOf, build };
 })();

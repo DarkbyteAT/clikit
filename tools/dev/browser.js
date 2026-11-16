@@ -36,6 +36,22 @@ function parseSize(text) {
   return size;
 }
 
+/** The device pixel ratios `--dpr` accepts: a plain monitor, and the two common phone densities. */
+const DENSITIES = [1, 2, 3];
+
+/**
+ * Reads a device pixel ratio (the `--dpr` flag of `play`): how many device pixels a CSS pixel is across.
+ * @param {string|number} text e.g. '2'
+ * @returns {number} one of `DENSITIES`
+ * @throws {Error} naming the bad text and the accepted values
+ * @example parseDensity('3') // 3
+ */
+function parseDensity(text) {
+  const density = Number(text);
+  if (!DENSITIES.includes(density)) throw new Error(`"${text}" is not a device pixel ratio. Write one of ${DENSITIES.join(', ')}, e.g. --dpr 2 (a phone's screen; screenshots are that many times larger).`);
+  return density;
+}
+
 const CONTENT_TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.png': 'image/png' };
 /** CDN URLs in index.html and the local copies that stand in for them (tests have no network). */
 const VENDOR_SWAPS = [
@@ -181,21 +197,22 @@ const serve = (request, response) => {
 
 /**
  * Opens the arcade page in a headless browser.
- * @param {{landscape?: boolean, touch?: boolean, size?: {width: number, height: number}}} [options] `touch`: drive the page with real
+ * @param {{landscape?: boolean, touch?: boolean, size?: {width: number, height: number}, density?: number}} [options] `density`: the
+ *   device pixel ratio (from `parseDensity`; 1 when left out); `touch`: drive the page with real
  *   touch events instead of the mouse; `size`: a viewport of its own (from `parseSize`), instead of the phone's
  * @returns {Promise<ArcadeSession>} waits for a machine-wide browser slot first (a waiting run is not a hung run)
  * @example
  * const session = await openArcade({ landscape: true });
  * await session.launchGame('miner'); await session.shot('scratch/miner/start.png'); await session.close();
  */
-async function openArcade({ landscape = false, touch = false, size: ownSize } = {}) {
+async function openArcade({ landscape = false, touch = false, size: ownSize, density = 1 } = {}) {
   const { chromium } = require('playwright');
   const releaseSlot = await takeBrowserSlot();
   const server = http.createServer(serve);
   await new Promise((resolve) => server.listen(0, resolve));
   const browser = await chromium.launch({ args: BROWSER_ARGS });
   const size = ownSize || (landscape ? LANDSCAPE : PORTRAIT);
-  const page = await browser.newPage({ viewport: size, deviceScaleFactor: 1, hasTouch: true });
+  const page = await browser.newPage({ viewport: size, deviceScaleFactor: density, hasTouch: true });
   const errors = [];
   page.on('pageerror', (error) => errors.push('pageerror: ' + error.message));
   page.on('console', (message) => message.type() === 'error' && !/favicon|404/.test(message.text()) && errors.push('console: ' + message.text()));
@@ -257,4 +274,4 @@ async function openArcade({ landscape = false, touch = false, size: ownSize } = 
   };
 }
 
-module.exports = { openArcade, takeBrowserSlot, parseSize, PORTRAIT, LANDSCAPE };
+module.exports = { openArcade, takeBrowserSlot, parseSize, parseDensity, PORTRAIT, LANDSCAPE };

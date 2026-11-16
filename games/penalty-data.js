@@ -509,22 +509,87 @@
   /** The seed of the player's side when no Character Maker character is saved. */
   const HOME_SEED = 2024;
 
+  /** How far a strip's cloth and boots stand proud of the skin, metres (the wardrobe's own cloth and shoe). */
+  const RAISE = Object.freeze({ cloth: 0.009, boot: 0.011 });
+  /** Where a strip's details sit: `s` runs along a bone (0 where it starts, 1 where it ends), angles round it in degrees (0 is the front). */
+  const STRIP_CUT = Object.freeze({
+    neckline: 0.9,
+    collar: [0.78, 0.9],
+    sleeve: 0.6,
+    sleeveCuff: [0.44, 0.6],
+    wristCuff: [0.72, 0.9],
+    panel: [-17, 17], // the stripe down the front of an outfield shirt
+    number: { s: [0.34, 0.72], angles: [[164, 180], [-180, -164]] }, // a block on the back, where a number goes
+    hoop: [0.35, 0.62], // the band round a keeper's chest
+    shortsLeg: 0.6,
+    shortsStripe: [[76, 104], [-104, -76]],
+    sock: [0.28, 1],
+    sockBand: [0.28, 0.46],
+  });
+  const band = (range) => ({ band: { s: range } });
+  const arcs = (ranges) => ({ union: ranges.map((angle) => ({ band: { angle } })) });
+  const ARMS = Object.freeze({ upper: ['upperArmLeft', 'upperArmRight'], fore: ['forearmLeft', 'forearmRight'] });
+  /** A painted region of a strip part (kit/region.js): `trim` regions take the trim colour and draw no line of their own inside the cloth. */
+  const cloth = (id, bones, where, channel, layer = 3) => ({ id, bones, where, paint: channel, layer, raise: RAISE.cloth, ...(channel === 'hat' ? { ink: false } : {}) });
+
   /**
-   * The recipe overrides that put a character in a strip: a tee and shorts in the side's colours, or a long
-   * sleeve in the keeper's colour with gloves.
+   * The football strip as parts of the wardrobe catalogue's own kind: regions painted on the body, so a strip
+   * is data the figure system already draws. The shirt's colour is the `top` channel and its trim (collar,
+   * cuffs, the front stripe, the block on the back, the sock bands, the stripe down the shorts) is the `hat`
+   * channel, which nobody on a pitch uses for a hat and which draws from the same dyes.
+   */
+  const STRIP_PARTS = Object.freeze({
+    matchShirt: {
+      fits: ['top'], label: 'Match shirt', bones: [],
+      regions: [
+        cloth('body', ['waist'], { all: true }, 'top'), cloth('chest', ['chest'], band([0, STRIP_CUT.neckline]), 'top'), cloth('sleeve', ARMS.upper, band([0, STRIP_CUT.sleeve]), 'top'),
+        cloth('panel', ['waist', 'chest'], { intersect: [{ band: { angle: STRIP_CUT.panel } }, band([0, STRIP_CUT.collar[0]])] }, 'hat'),
+        cloth('number', ['chest'], { intersect: [band(STRIP_CUT.number.s), arcs(STRIP_CUT.number.angles)] }, 'hat'),
+        cloth('collar', ['chest'], band(STRIP_CUT.collar), 'hat'), cloth('cuff', ARMS.upper, band(STRIP_CUT.sleeveCuff), 'hat'),
+      ],
+    },
+    keeperShirt: {
+      fits: ['top'], label: 'Keeper shirt', bones: [],
+      regions: [
+        cloth('body', ['waist'], { all: true }, 'top'), cloth('chest', ['chest'], band([0, STRIP_CUT.neckline]), 'top'), cloth('sleeve', ARMS.upper, { all: true }, 'top'), cloth('forearm', ARMS.fore, band([0, STRIP_CUT.wristCuff[1]]), 'top'),
+        cloth('hoop', ['chest'], band(STRIP_CUT.hoop), 'hat'), cloth('collar', ['chest'], band(STRIP_CUT.collar), 'hat'), cloth('cuff', ARMS.fore, band(STRIP_CUT.wristCuff), 'hat'),
+      ],
+    },
+    matchShorts: {
+      fits: ['bottom'], label: 'Match shorts', bones: [],
+      regions: [
+        cloth('seat', ['pelvis'], { all: true }, 'bottom', 2), cloth('legs', ['thighLeft', 'thighRight'], band([0, STRIP_CUT.shortsLeg]), 'bottom', 2),
+        cloth('stripe', ['thighLeft', 'thighRight'], { intersect: [band([0, STRIP_CUT.shortsLeg]), arcs(STRIP_CUT.shortsStripe)] }, 'hat', 2),
+      ],
+    },
+    matchBoots: {
+      fits: ['footwear'], label: 'Boots and socks', bones: [],
+      regions: [
+        { id: 'boot', roles: ['foot'], where: { all: true }, paint: 'footwear', layer: 3, raise: RAISE.boot },
+        cloth('sock', ['shinLeft', 'shinRight'], band(STRIP_CUT.sock), 'top', 2), cloth('sockBand', ['shinLeft', 'shinRight'], band(STRIP_CUT.sockBand), 'hat', 2),
+      ],
+    },
+  });
+  /** The wardrobe catalogue with the strip parts added: every wardrobe recipe still means what it meant (rolls never pick a strip part). */
+  const CATALOG = Object.freeze({ ...Kit.body.wardrobe.CATALOG, parts: { ...Kit.body.wardrobe.CATALOG.parts, ...STRIP_PARTS } });
+
+  /**
+   * The recipe overrides that put a character in a strip: a shirt, shorts, socks and boots in the side's
+   * colours with the shorts' colour as trim, or a keeper's long sleeves in the keeper's colour with gloves.
    * @param {{shirt: number, shorts: number, keeper: number}} colors dye indices
    * @param {('taker'|'keeper')} role
    * @returns {Object<string, (string|number|null)>}
    */
   const stripOf = ({ shirt, shorts, keeper }, role) => ({
     ...BARE,
-    'fill:top': role === 'keeper' ? 'longSleeve' : 'tee',
-    'fill:bottom': 'shorts',
-    'fill:footwear': 'shoes',
+    'fill:top': role === 'keeper' ? 'keeperShirt' : 'matchShirt',
+    'fill:bottom': 'matchShorts',
+    'fill:footwear': 'matchBoots',
     'fill:hat': null,
     'fill:gloves': role === 'keeper' ? 'gloves' : null,
     'color:top': role === 'keeper' ? keeper : shirt,
     'color:bottom': shorts,
+    'color:hat': role === 'keeper' ? shirt : shorts,
     'color:footwear': LEATHER.boots,
     'color:gloves': LEATHER.gloves,
   });
@@ -559,5 +624,5 @@
     return withOverrides(base, { ...BARE, ...(role === 'keeper' ? { 'fill:gloves': 'gloves', 'color:gloves': LEATHER.gloves } : {}) });
   };
 
-  window.SPOT_KICK_DATA = { FIELD, STEP, SHOT, SWAY, PRESSURE, PLAYER_STATS, KEEPER, RUN_UP, BALLS, PERKS, DYE, KITS, MEDALS, medalGrade, CUPS, ROAD, LADDER, RULES, REWARDS, SCOUT, roadRival, scoutOf, cupUnlockId, createProgress, stripOf, rivalRecipe, playerRecipe };
+  window.SPOT_KICK_DATA = { CATALOG, STRIP_PARTS, FIELD, STEP, SHOT, SWAY, PRESSURE, PLAYER_STATS, KEEPER, RUN_UP, BALLS, PERKS, DYE, KITS, MEDALS, medalGrade, CUPS, ROAD, LADDER, RULES, REWARDS, SCOUT, roadRival, scoutOf, cupUnlockId, createProgress, stripOf, rivalRecipe, playerRecipe };
 })();

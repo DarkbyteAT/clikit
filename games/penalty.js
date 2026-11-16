@@ -127,7 +127,6 @@
     let liveAim = { pull: 0, angle: 0, isArmed: false };
     let ratchetStep = 0;
     /** The camera's promises, counted per frame while a playtest watches them: frames checked, and frames each promise was broken. */
-    const framing = { isWatched: false, frames: 0, broken: {}, first: {} };
     let heartbeatIn = 0;
 
     // -------------------------------------------------------- HUD --------------------------------------------------------
@@ -604,44 +603,37 @@
 
     // ---------------------------------------------------- the camera's promises ----------------------------------------------------
 
-    const overlaps = (first, second) => Boolean(first && second) && first.left < second.right && second.left < first.right && first.top < second.bottom && second.top < first.bottom;
-    const isWhole = (rect) => Boolean(rect) && rect.left > 0 && rect.top > 0 && rect.right < ctx.size.w && rect.bottom < ctx.size.h;
-    /**
-     * What each seat promises, as checks over the screen rectangles of `stage.framing()`. A check that returns
-     * false on a frame counts as broken on it. `cast` is `{ taker, keeper }`: the rectangles of the two on the pitch.
-     * @type {Object<string, function(Object, {taker: ?Object, keeper: ?Object}): boolean>}
-     */
-    const PROMISES = {
+    const { overlaps } = Kit.seat.rect;
+    const isWhole = (rect) => Kit.seat.rect.isWhole(rect, ctx.size);
+    /** What is seen now, for the promises: the stage's rectangles, with the taker's and the keeper's picked out. */
+    const seenNow = () => {
+      const seen = stage.framing();
+      const [taker, keeper] = onPitch().map((each) => seen.figures[match.order.indexOf(each)]);
+      return { ...seen, taker, keeper };
+    };
+    let enteredKick = null;
+    /** What each seat promises (kit/seat.js `watch`): a check that returns false on a frame counts as broken on it. */
+    const framing = Kit.seat.watch({
       'the whole goal is on screen': ({ goal }) => isWhole(goal),
-      'the taker never covers the goal': ({ goal }, { taker }) => play.role !== 'taker' || !overlaps(taker, goal),
-      'the taker never covers their keeper': (_seen, { taker, keeper }) => play.role !== 'taker' || !overlaps(taker, keeper),
+      'the taker never covers the goal': ({ goal, taker }) => play.role !== 'taker' || !overlaps(taker, goal),
+      'the taker never covers their keeper': ({ taker, keeper }) => play.role !== 'taker' || !overlaps(taker, keeper),
       // While the taker runs in and swings, the boot and the ball must meet: the promise holds before and after.
-      'the taker never covers the ball': ({ ball }, { taker }) => play.role !== 'taker' || flow.is('running') || !overlaps(taker, ball),
-      'the taker is seen whole while aiming': (_seen, { taker }) => !flow.is('aiming') || isWhole(taker),
-      'their keeper is on screen': (_seen, { keeper }) => play.role !== 'taker' || Boolean(keeper),
+      'the taker never covers the ball': ({ ball, taker }) => play.role !== 'taker' || flow.is('running') || !overlaps(taker, ball),
+      'the taker is seen whole while aiming': ({ taker }) => !flow.is('aiming') || isWhole(taker),
+      'their keeper is on screen': ({ keeper }) => play.role !== 'taker' || Boolean(keeper),
       // The cut steps over the ball, so it enters the new picture from below a moment after the strike: it must be in
       // within the grace, never leave once it is in, and stay until it reaches the keeper's plane (a ball may then fly over the bar and out).
       'the ball is on screen': ({ ball }) => {
         if (flow.is('aiming') || flow.is('facing')) return Boolean(ball);
         if (!flow.is('flight') || play.kick.crossed || play.kick.outcome) return true;
-        if (ball) framing.enteredKick = play.kick;
-        return Boolean(ball) || (play.kick.time <= CUT_GRACE && framing.enteredKick !== play.kick);
+        if (ball) enteredKick = play.kick;
+        return Boolean(ball) || (play.kick.time <= CUT_GRACE && enteredKick !== play.kick);
       },
-      'your keeper never covers the ball before the strike': ({ ball }, { keeper }) => !flow.is('facing') || !overlaps(keeper, ball),
-      'your keeper is seen whole before the strike': (_seen, { keeper }) => !flow.is('facing') || play.hasDived || isWhole(keeper),
-    };
-    const checkFraming = () => {
-      const seen = stage.framing();
-      const [taker, keeper] = onPitch().map((each) => seen.figures[match.order.indexOf(each)]);
-      framing.frames += 1;
-      Object.keys(PROMISES)
-        .filter((name) => !PROMISES[name](seen, { taker, keeper }))
-        .forEach((name) => {
-          framing.broken[name] = (framing.broken[name] || 0) + 1;
-          // Where it first broke, so a failed run says which moment to look at.
-          framing.first[name] = framing.first[name] || { phase: flow.state, role: play.role, seat: stage.seat(), kickTime: play.kick ? play.kick.time : 0, ball: play.kick ? { ...play.kick.ball.position } : null };
-        });
-    };
+      'your keeper never covers the ball before the strike': ({ ball, keeper }) => !flow.is('facing') || !overlaps(keeper, ball),
+      'your keeper is seen whole before the strike': ({ keeper }) => !flow.is('facing') || play.hasDived || isWhole(keeper),
+    });
+    /** Where a promise first broke, so a failed run says which moment to look at. */
+    const momentNow = () => ({ phase: flow.state, role: play.role, seat: stage.seat(), kickTime: play.kick ? play.kick.time : 0, ball: play.kick ? { ...play.kick.ball.position } : null });
 
     // A first visit goes straight to the spot; a returning player starts in the clubhouse.
     if (progress.profile.stat('matches') === 0) beginMatch(0);
@@ -658,7 +650,7 @@
           if (isNetted && kick && !kick.touched.net) sfx.noise({ dur: 0.12, vol: 0.12, freq: 3000, type: 'highpass' });
         }
         stage.update(dt, time);
-        if (framing.isWatched && match) checkFraming();
+        if (framing.isWatching() && match) framing.check(seenNow(), momentNow);
       },
       render: () => stage.render(),
       dispose: () => stage.dispose(),
@@ -683,11 +675,13 @@
         beginMatch,
         showClubhouse,
         /** Starts (or stops) checking the camera's promises every frame; `debugState().framing` reports the count. */
-        watchFraming: (isWatched = true) => Object.assign(framing, { isWatched, frames: 0, broken: {}, first: {} }),
+        watchFraming: (isWatched = true) => framing.start(isWatched),
         framing: () => stage.framing(),
         /** The aim the player's last shot was struck with (pull, angle, curve). */
         lastShot: () => play.shot || null,
         budget: () => stage.budget(),
+        /** Sets how fine the pixel grid is (a key of `SPOT_KICK_STAGE.GRAINS`); characters take it from the next match. */
+        setGrain: (name) => stage.setGrain(name),
         handsOff: () => onPitch()[1].handsOff(),
         /**
          * Times the game's own work on the main thread: `frames` updates and renders run back to back.
@@ -723,7 +717,8 @@
         rungs: progress.rungsWon(),
         hasSavedCharacter: Boolean(saved),
         seat: stage.seat(),
-        framing: { frames: framing.frames, broken: { ...framing.broken }, first: { ...framing.first } },
+        grain: stage.grain(),
+        framing: framing.report(),
         ball: play.kick ? { ...play.kick.ball.position } : null,
       }),
     };

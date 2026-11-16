@@ -3079,4 +3079,146 @@ test('netting: a sheet pins its rim, links neighbours, bulges where a ball pushe
     assert.ok(later.every((each) => each.seconds < first.seconds), 'every later rival strikes it faster');
   });
 }
+// ---- seat, pixel-grid, paint, stadium (kit/seat.js, pixel-grid.js, paint.js, stadium.js) ----
+['seat', 'pixel-grid', 'paint', 'stadium'].forEach((name) => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', `${name}.js`), 'utf8'), sandbox, { filename: `${name}.js` }));
+{
+  const RADIANS = Math.PI / 180;
+  /** A value made in the sandbox as a plain value of this realm, so deepStrictEqual compares what it holds. */
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const screenOf = (w, h) => ({ w, h, aspect: w / h, portrait: h >= w });
+  const SCREENS = [screenOf(390, 844), screenOf(360, 640), screenOf(844, 390)];
+  const rule = { toward: -1, fit: { z: -11, halfWidth: 3 }, anchor: { y: 2.6, z: -11 }, least: 15, portrait: { fov: 50, height: 4 }, landscape: { fov: 42, height: 4 } };
+  test('seat: a solved seat shows its fit plane from edge to edge on every screen, and keeps the anchor under the band', () => {
+    SCREENS.forEach((size) => {
+      const band = size.portrait ? 200 : 60;
+      const seat = Kit.seat.solve(rule, size, band);
+      const halfWidthSeen = Math.abs(seat.at[2] - rule.fit.z) * Math.tan((seat.fov / 2) * RADIANS) * size.aspect;
+      assert.ok(halfWidthSeen >= rule.fit.halfWidth - 1e-9, `${size.w}x${size.h}: the fit plane is ${halfWidthSeen} wide`);
+      assert.ok(seat.at[2] > rule.fit.z, 'a seat that looks towards -z sits on the +z side');
+      // The anchor's height on screen, measured from the centre with span (foot at the look point's height).
+      const anchorAbove = Kit.seat.span(seat, { z: rule.anchor.z, from: seat.look[1], to: rule.anchor.y }, size.h);
+      assert.ok(Math.abs(size.h / 2 - anchorAbove - band) < 0.5, `${size.w}x${size.h}: the anchor sits ${size.h / 2 - anchorAbove} px down, the band is ${band}`);
+    });
+  });
+  test('seat: a fixed place opens its lens within the range, and span grows as a subject nears', () => {
+    const fixed = { toward: -1, fit: { z: -11, halfWidth: 2.9 }, anchor: { y: 2.7, z: -11 }, at: [0.6, 1.5, 0], portrait: { fovRange: [40, 76] }, landscape: { fovRange: [40, 76] } };
+    const [tall, wide] = [Kit.seat.solve(fixed, SCREENS[0]), Kit.seat.solve(fixed, SCREENS[2])];
+    assert.deepStrictEqual(plain(tall.at), fixed.at);
+    assert.ok(tall.fov > wide.fov && wide.fov === 40, 'a narrow screen needs the wider lens; a wide one stops at the least');
+    const seat = Kit.seat.solve(rule, SCREENS[0], 200);
+    assert.ok(Kit.seat.span(seat, { z: 1, to: 1.75 }, 844) > Kit.seat.span(seat, { z: -8, to: 1.75 }, 844));
+  });
+  test('seat: rectangles, discs and a watch that counts broken promises and keeps the first', () => {
+    const size = { w: 400, h: 800 };
+    const camera = { fov: 60, near: 0.5 };
+    const ahead = Kit.seat.disc({ x: 0, y: 0, z: -10 }, 1, camera, size);
+    assert.ok(Math.abs((ahead.left + ahead.right) / 2 - 200) < 1e-9 && Math.abs((ahead.top + ahead.bottom) / 2 - 400) < 1e-9, 'a point straight ahead is at the centre');
+    assert.strictEqual(Kit.seat.disc({ x: 0, y: 0, z: 1 }, 1, camera, size), null, 'behind the camera');
+    const { rect } = Kit.seat;
+    assert.ok(rect.isWhole(ahead, size) && !rect.isWhole({ left: -5, top: 10, right: 50, bottom: 60 }, size) && !rect.isWhole(null, size));
+    assert.ok(rect.overlaps(ahead, { left: 190, top: 390, right: 500, bottom: 900 }) && !rect.overlaps(ahead, null));
+    assert.deepStrictEqual(plain(rect.cut({ left: -5, top: 10, right: 50, bottom: 900 }, size)), { left: 0, top: 10, right: 50, bottom: 800 });
+    assert.strictEqual(rect.cut({ left: 500, top: 10, right: 600, bottom: 60 }, size), null);
+    assert.deepStrictEqual(plain(rect.union(null, ahead)), plain(ahead));
+    const watch = Kit.seat.watch({ 'the door is whole': (seen) => rect.isWhole(seen.door, size) });
+    assert.strictEqual(watch.isWatching(), false);
+    watch.start();
+    watch.check({ door: ahead }, () => ({ moment: 'fine' }));
+    watch.check({ door: null }, () => ({ moment: 'first' }));
+    watch.check({ door: null }, () => ({ moment: 'second' }));
+    assert.deepStrictEqual(plain(watch.report()), { frames: 3, broken: { 'the door is whole': 2 }, first: { 'the door is whole': { moment: 'first' } } });
+    watch.start();
+    assert.deepStrictEqual(plain(watch.report()), { frames: 0, broken: {}, first: {} });
+  });
+  test('pixel-grid: texels are whole device pixels, finer grains give more rows, and the subject keeps near its rows', () => {
+    [[480, 1688], [210, 780], [440, 1280], [240, 844]].forEach(([subjectPixels, bufferHeight]) => {
+      const grids = ['chunky', 'standard', 'fine'].map((grain) => Kit.pixelGrid.fit(grain, { subjectPixels, subjectHeight: 1.75, bufferHeight }));
+      grids.forEach((grid) => {
+        assert.ok(Number.isInteger(grid.texelPixels) && grid.texelPixels >= 1);
+        assert.ok(Math.abs(grid.rows * grid.texelPixels - bufferHeight) < 1e-9 && Math.abs(grid.texelWorld * grid.subjectRows - 1.75) < 1e-9);
+      });
+      assert.ok(grids[0].rows <= grids[1].rows && grids[1].rows <= grids[2].rows);
+    });
+    assert.strictEqual(Kit.pixelGrid.fit('standard', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }).texelPixels, 4);
+    assert.throws(() => Kit.pixelGrid.fit('gritty', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }), /no grain "gritty"/);
+    const fine = Kit.pixelGrid.settings(Kit.pixelGrid.fit('fine', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }));
+    const chunky = Kit.pixelGrid.settings(Kit.pixelGrid.fit('chunky', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }));
+    assert.ok(fine.pixelRows > chunky.pixelRows && fine.toneCount > chunky.toneCount && fine.dither > chunky.dither, 'a finer grid carries more tones and more dither');
+  });
+  test('pixel-grid: a snapped point lands on a whole texel of its own depth', () => {
+    const [fov, rows] = [50, 422];
+    const point = { x: 0.337, y: -1.218, z: -6.5 };
+    const [right, up] = Kit.pixelGrid.snapShift(point, fov, rows);
+    const texel = Kit.pixelGrid.texelAt(fov, 6.5, rows);
+    [(point.x + right) / texel, (point.y + up) / texel].forEach((texels) => assert.ok(Math.abs(texels - Math.round(texels)) < 1e-9));
+    assert.ok(Math.abs(right) <= texel / 2 && Math.abs(up) <= texel / 2, 'never more than half a texel');
+    assert.deepStrictEqual(plain(Kit.pixelGrid.snapShift({ x: 1, y: 1, z: 2 }, fov, rows)), [0, 0], 'behind the camera');
+  });
+  test('paint: a book holds quads with a slot and a tone each; a word is a quad per run; a disc is rings', () => {
+    const slots = { grass: 0, sign: 3 };
+    const book = Kit.paint.book((ramp) => slots[ramp]);
+    book.floor(-1, 1, -2, 2, 0, 'grass', Kit.paint.TONE.base).wall(0, 1, 0, 1, -5, 'sign', Kit.paint.TONE.light);
+    assert.strictEqual(book.quads(), 2);
+    const { positions, paints } = book.arrays();
+    assert.strictEqual(positions.length, 2 * 6 * 3);
+    assert.deepStrictEqual(plain(paints.slice(0, 4)), [0, 0.5, 0, 0]);
+    assert.deepStrictEqual(plain(paints.slice(24, 28)), [3, 0.8, 0, 0]);
+    assert.throws(() => book.quad([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], 'mauve', 0.5), /no slot for the ramp "mauve"/);
+    const tea = Kit.paint.runs('TEA');
+    assert.strictEqual(tea.columns, 11);
+    assert.deepStrictEqual(plain(tea.runs[0]), { row: 0, from: 0, to: 2 }, 'the bar of the T');
+    assert.ok(tea.runs.length < 'TEA'.length * 15, 'runs, not dots');
+    assert.throws(() => Kit.paint.runs('T@A'), /no "@"/);
+    const before = book.quads();
+    book.word({ text: 'TEA', x: 0, y: 1, z: 0, dot: 0.1, ramp: 'sign', tone: 0.5 });
+    assert.strictEqual(book.quads() - before, tea.runs.length);
+    const xs = book.arrays().positions.filter((_value, index) => index % 3 === 0).slice(before * 6);
+    assert.ok(Math.abs(Math.min(...xs) + 0.55) < 1e-9 && Math.abs(Math.max(...xs) - 0.55) < 1e-9, 'centred on x');
+    const mirrored = Kit.paint.book(() => 0).word({ text: 'T', x: 0, y: 0, z: 0, dot: 1, ramp: 'sign', tone: 0.5, reads: -1 }).arrays().positions;
+    assert.ok(Math.max(...mirrored.filter((_value, index) => index % 3 === 0)) > 1.49, 'lettering for a viewer looking the other way runs the other way');
+    assert.strictEqual(Kit.paint.book(() => 0).disc({ rings: [[0.5, 'a', 0.2], [1, 'a', 0.5]], sides: 12 }).quads(), 24);
+  });
+  test('stadium: an end and a surface are painted from data in ramps the module names, and the same every time', () => {
+    const named = new Set([...Kit.stadium.RAMPS.surface, ...Kit.stadium.RAMPS.end]);
+    const used = new Set();
+    const bookOf = () => Kit.paint.book((ramp) => (used.add(ramp), 0));
+    const book = bookOf();
+    const seats = Kit.stadium.end(book, { edge: -11, toward: 1 });
+    assert.ok([...used].every((ramp) => named.has(ramp)), `unnamed ramps: ${[...used].filter((ramp) => !named.has(ramp))}`);
+    assert.ok(book.quads() > 300 && book.quads() < 900, `${book.quads()} quads`);
+    const zs = book.arrays().positions.filter((_value, index) => index % 3 === 2);
+    assert.ok(Math.max(...zs) < -11, 'everything of an end stands behind its edge');
+    assert.ok(seats.length > 250 && seats.every((seat) => seat.z < -11 && seat.y > 0 && seat.chance >= 0 && seat.chance < 1));
+    const again = Kit.stadium.end(bookOf(), { edge: -11, toward: 1 });
+    assert.deepStrictEqual(plain(again.map((seat) => seat.chance)), plain(seats.map((seat) => seat.chance)), 'no random');
+    const other = Kit.stadium.end(bookOf(), { edge: 6, toward: -1, turn: 1 });
+    assert.ok(other.every((seat) => seat.z > 6) && other[0].chance !== seats[0].chance, 'the other end faces the other way and seats other people');
+    const taken = seats.filter((seat) => seat.chance < 0.45).length / seats.length;
+    assert.ok(taken > 0.35 && taken < 0.55, `attendance 0.45 seats ${taken}`);
+    seats.forEach((seat) => {
+      const cards = Kit.stadium.cards(seat);
+      assert.ok(cards.length >= 2 && cards.length <= Kit.stadium.CROWD.mostCards && cards.every(({ run, index }) => index < Kit.stadium.CROWD.colors[run]));
+    });
+    const lively = seats.find((seat) => seat.isLively);
+    const lifts = new Set(Array.from({ length: 40 }, (_unused, step) => Kit.stadium.lift(lively, step * 0.1)));
+    assert.deepStrictEqual(plain([...lifts].sort()), [0, Kit.stadium.CROWD.bob], 'a lively spectator bobs in two steps, never between');
+    assert.strictEqual(Kit.stadium.lift(seats.find((seat) => !seat.isLively), 3.3), 0);
+    const pitch = Kit.stadium.surface(bookOf(), { ...Kit.stadium.SURFACE, worn: [{ x: 0, z: 0, across: 0.5, deep: 0.3 }], lines: [{ rect: [-1, 1, 0, 0.1] }, { arc: { x: 0, z: 0, radius: 3, from: -0.5, to: 0.5, steps: 8 } }] });
+    assert.strictEqual(pitch.quads(), 25 + 300 + 7 + 1 + 8, 'stripes, dashes, a worn patch, a line and an arc');
+  });
+  test('spot kick stage: the grid is whole pixels on every screen and the default grain is a step finer than chunky', () => {
+    ['games/penalty-stage.js'].forEach(loadKitFile);
+    const STAGE = sandbox.SPOT_KICK_STAGE;
+    assert.strictEqual(STAGE.LOOK.grain, 'standard');
+    SCREENS.forEach((size) => {
+      [1, 2].forEach((ratio) => {
+        const [chunky, standard, fine] = ['chunky', 'standard', 'fine'].map((grain) => STAGE.gridOf(grain, size, size.h * ratio));
+        [chunky, standard, fine].forEach((grid) => assert.ok(Number.isInteger(grid.texelPixels)));
+        assert.ok(chunky.rows <= standard.rows && standard.rows <= fine.rows);
+        if (ratio === 2) assert.ok(standard.subjectRows >= 90 && standard.subjectRows <= 150, `${size.w}x${size.h}: a character stands ${standard.subjectRows} rows tall`);
+      });
+    });
+    assert.ok(new Set(STAGE.WORLD_RAMPS).size === STAGE.WORLD_RAMPS.length, 'no ramp named twice');
+  });
+}
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

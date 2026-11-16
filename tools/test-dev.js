@@ -22,7 +22,7 @@ const { parseTscOutput, countByFile, compareWithBaseline } = require('./dev/type
 const { reuseRatio, appendLedgerRow, tokensByTier } = require('./dev/metrics');
 const { judge } = require('./bench');
 const { parseArgs } = require('./dev');
-const { parseSize } = require('./dev/browser');
+const { parseSize, parseDensity } = require('./dev/browser');
 
 let passed = 0;
 const test = (name, run) => {
@@ -297,6 +297,12 @@ test('bench verdicts and argument parsing', () => {
   assert.deepStrictEqual(parseArgs(['miner', '--secs', '4', '--landscape', 'x']), { positionals: ['miner', 'x'], flags: { secs: '4', landscape: true } });
 });
 
+test('play --dpr reads a device pixel ratio and names what it rejects', () => {
+  assert.strictEqual(parseDensity('2'), 2);
+  assert.strictEqual(parseDensity(3), 3);
+  assert.throws(() => parseDensity('1.5'), /not a device pixel ratio/);
+  assert.throws(() => parseDensity('8'), /one of 1, 2, 3/);
+});
 test('play --size reads <width>x<height> and names what it rejects', () => {
   assert.deepStrictEqual(parseSize('1200x900'), { width: 1200, height: 900 });
   assert.deepStrictEqual(parseSize(' 390x780 '), { width: 390, height: 780 });

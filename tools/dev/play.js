@@ -96,10 +96,13 @@ const editDistance = (from, to) => {
 
 const MS_PER_SECOND = 1000;
 
-/** Evaluates a predicate (expression text or a function's source) in the page against the live debug state. */
+/**
+ * Evaluates a predicate (expression text or a function's source) in the page against the live debug state.
+ * An expression that gives a promise is waited for, so `log Kit.debug.probe(3)` prints the probe, not `{}`.
+ */
 const evaluateTest = (session, test) =>
   session.page.evaluate(
-    ({ source, isFunction }) => {
+    async ({ source, isFunction }) => {
       const kit = Kit.debug.state();
       const state = kit.state || {};
       const show = (value) => {
@@ -110,9 +113,10 @@ const evaluateTest = (session, test) =>
         }
       };
       try {
-        const value = isFunction
+        const given = isFunction
           ? new Function(`return (${source});`)()(state, kit.hud, kit)
           : new Function('state', 'hud', 'time', 'modal', 'kit', `return (${source});`)(state, kit.hud, kit.time, kit.modal, kit);
+        const value = given && typeof given.then === 'function' ? await given : given;
         return { passed: Boolean(value), shown: show(value), hasState: Boolean(kit.state) };
       } catch (error) {
         return { passed: false, error: error.message, hasState: Boolean(kit.state) };
@@ -430,7 +434,7 @@ const STEPS = {
   },
   log: {
     usage: 'log <expression>',
-    about: 'print the value of an expression over the debug state (try: log kit)',
+    about: 'print the value of an expression over the debug state; a promise is waited for (try: log kit, log Kit.debug.probe(3))',
     fromText: (text) => ({ log: text.trim() || 'kit' }),
     normalize: (test) => ({ test }),
     async run(session, { test }) {
