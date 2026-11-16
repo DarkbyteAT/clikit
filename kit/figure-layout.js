@@ -213,7 +213,7 @@
 
   /**
    * Lays out a bake as pieces.
-   * @param {{plan: Object, boneRamp: Int16Array, ramps: ReadonlyArray<Object>}} bake from a bakery (kit/body-recipe.js);
+   * @param {{plan: Object, boneRamp: Int16Array, ramps: ReadonlyArray<Object>, shapes?: ReadonlyArray<?Object>}} bake from a bakery (kit/body-recipe.js);
    *   a part alone works too: `{ plan: part.plan, boneRamp: new Int16Array(n).fill(-1), ramps: [ramp] }`
    * @param {{level?: string, featuresOf?: function(Object, number, ?Object): FeaturePiece[], regionOf?: RegionLookup}} [options]
    *   `level`: a key of `Kit.figure.LEVELS` (default 'high'). `featuresOf` and `regionOf` are the two extension

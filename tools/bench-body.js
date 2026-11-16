@@ -42,6 +42,7 @@ const KIT_FILES = [
   'body-edit',
   'body-store',
   'body-samples',
+  'body-wardrobe',
 ];
 /** Sizes of the two measurements, as the brief states them. */
 const SIZES = { recipes: 10000, instances: 500, distinctRecipes: 20, frames: 120, rounds: 7, tableSeed: 7, editSteps: 2000 };
@@ -258,6 +259,7 @@ function main() {
     }
   });
   printEditor('editor on the sample human', measureEditor(Kit, catalog, { species: 'human', dial: 'legLength', channel: 'cloth', socket: 'headTop', part: 'hat' }));
+  printEditor('editor on the wardrobe person (46 dials, 14 channels, 21 sockets, a face)', measureEditor(Kit, Kit.body.catalog(Kit.body.wardrobe.CATALOG), { species: 'person', dial: 'jaw', channel: 'skin', socket: 'hat', part: 'beanie' }));
 }
 
 if (require.main === module) main();

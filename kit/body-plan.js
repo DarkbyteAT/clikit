@@ -972,8 +972,8 @@
       opBone: Int16Array.from(operations, (operation) => operation.bone),
       opChannel: Uint8Array.from(operations, (operation) => operation.channel),
       opAmount: Float32Array.from(operations, (operation) => operation.amount),
-      shapeOps: Object.freeze(shapeOps),
-      featureOps: Object.freeze(featureOps),
+      shapeOps,
+      featureOps,
       unused,
       indexOf(id) {
         const index = ids.indexOf(id);
@@ -1024,8 +1024,8 @@
   /**
    * Splits every `sided` dial row into a left and a right row, '<id>@left' and '<id>@right': role effects gain the
    * side's role, feature effects gain `side`. Other rows pass through unchanged. Compile the result with `dials`.
-   * @param {DialRow[]} rows
-   * @returns {DialRow[]} sided rows carry `base`, `side` and `twin`
+   * @param {Object[]} rows `DialRow`s
+   * @returns {Object[]} `DialRow`s; sided rows carry `base`, `side` and `twin`
    * @throws {Error} for an id containing '@', or a sided effect that selects bones by name or by part (a side
    *   cannot be added to a name; use roles)
    * @complexity O(rows x effects)

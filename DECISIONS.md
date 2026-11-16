@@ -551,3 +551,33 @@ machine at load 20 to 40, so only the ratios mean anything.
   below the ankle joint, so `Kit.body.lowestY` (joints and tails) would sink the feet; a sword or a hat neither
   lifts the body nor rescales the view (tested). The figure turns about the middle of its footprint, not the
   plan's origin (a hound's hips are 35 cm behind it).
+
+## Kit.body for a character creator: surface features, regions, sided dials (wardrobe branch)
+
+- **Faces and clothes: geometry, textures, or data over bones.** Options: model every face and garment as
+  parts with bones (a mesh per eye); bake textures per individual; or keep them as data placed on bone shapes
+  (azimuth / elevation features; predicate regions over the bone's along / around coordinates, after the
+  owner's spriteforge). **Chosen:** data. Two generic modules carry the maths (`Kit.surface`: signed distance,
+  placement by bisection, along / around; `Kit.region`: compiled predicate trees), `kit/body-surface.js`
+  composes them per bake. Cost: a renderer must turn stamps and regions into something it can draw (the
+  adapter `Kit.body.figureHooks` does it for Kit.figure). Bought: one recipe drives every renderer, a face
+  follows a reshaped head, and a new outfit is a data row.
+- **Where face options live.** A new recipe field kind ('style:eyes') or parts. **Chosen:** parts, allowed to
+  have no bones when they bring only features or regions. Selection, weights, required sockets, mirror, locks,
+  encoding and the editor's choices all came free; the recipe format did not change (version 1, old blobs
+  decode unchanged). Cost: a face part per option is one socket per facial feature (7 head sockets).
+- **Sided dials.** A recipe-level link flag, or two dials drawn from one seeded field. **Chosen:** two dials
+  ('eyeSize@left', '@right') sharing the base field, so rolls are symmetric and "linked" is simply "equal";
+  the editor's base id moves both. Cost: an unlinked pair costs two overrides (10 bytes).
+- **Shape dials** write numbers inside a bone's shape (`shapesWithDials`), never its transform, so a jaw dial
+  cannot move a hat. **A dial's default step decodes to the default exactly** (255 steps rarely land on 1).
+- **Conventions follow the renderer.** Lathe and extrude run up the positive long axis and extrude `across`
+  follows `Kit.figure.ACROSS_AXIS`; the renderer landed first and is shared, so `Kit.surface` changed, not it.
+- **Renderer edits made here, kept minimal:** layout draws the bake's dialled shapes; a shape may carry
+  `scale`; `RAMP_SLOTS` 8 -> 16 (the wardrobe paints with 14 channels). **Not made, needed:** `regionOf`
+  (clothing and hairlines do not render in 3D yet), `featuresOf` receiving the bake (features depend on
+  dials, not on the plan; the adapter is built per bake today).
+- **Stylised proportions** (about 3.4 heads): head-worn parts authored for a small head are fitted by one data
+  transform (`scaledPart`) rather than retyped, so the next proportion change is one number.
+- **Revisit if** a slider drag of a face dial shows in a profile: a bake places every feature copy again
+  (0.66 ms per step for the wardrobe person); cache placements by (shape, numbers).

@@ -66,7 +66,7 @@
    * The direction a lathe's profile and an extrude's outline run along the long axis: always the positive way,
    * as the figure renderer (kit/figure-shapes.js) builds them; a skirt that hangs down has negative `along`s.
    */
-  const directionOf = () => 1;
+  const directionOf = (_frame, _axis) => 1;
   /** The extrude convention of kit/figure-shapes.js `ACROSS_AXIS`: long axis -> the axis an outline's first coordinate lies along. */
   const ACROSS = Object.freeze({ 0: 1, 1: 0, 2: 1 });
   /** Component `index` of (x, y, z) without building an array. */

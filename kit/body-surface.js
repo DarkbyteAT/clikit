@@ -60,6 +60,7 @@
    *   capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
    * @property {string} [paint] the colour channel of the solid (default 'skin')
    * @property {boolean} [glow] draw it as a glow (eyes): a renderer leaves it out of outlines
+   * @property {string} [part] set by kit/body-parts.js: the part that brought it
    */
 
   /**
@@ -71,6 +72,7 @@
    * @property {Object} where a `Kit.region` predicate tree over the bone's along / around coordinates
    * @property {string} paint the colour channel it paints with
    * @property {number} [layer=0] stacking order: higher covers lower (skin marks 1, clothes 2, outerwear 3, hair 4)
+   * @property {string} [part] set by kit/body-parts.js: the part that brought it
    */
 
   /**
@@ -242,7 +244,8 @@
    * @param {ArrayLike<number>} values the individual's dial values
    * @param {ReadonlyArray<string>} channels the species' colour channel ids, in the order of the bake's `ramps`
    * @param {ReadonlyArray<{shades: string[]}>} ramps the individual's ramp per channel, for clamping shades
-   * @returns {{features: FeaturePlacement[], regions: ReadonlyArray<ReadonlyArray<{id: string, ramp: number, test: Function}>>, regionAt: function(number, number, number, number, number, number): number}}
+   * @returns {{features: ReadonlyArray<Object>, regions: ReadonlyArray<ReadonlyArray<Object>>, regionAt: function(number, number, number, number, number, number): number}}
+   *   `features` are `FeaturePlacement`s; each region row is { id, ramp, test, part }
    *   `regionAt(bone, along, angle, normalX, normalY, normalZ)` returns the index in `ramps` of the topmost region
    *   painting that point, or -1 when none does (the bone keeps its own paint, `bake.boneRamp`)
    * @complexity O(feature copies x a placement, about 40 distance evaluations) + O(regions); about a hundred
