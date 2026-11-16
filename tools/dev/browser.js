@@ -36,6 +36,22 @@ function parseSize(text) {
   return size;
 }
 
+/** The device pixel ratios `--dpr` accepts: a plain monitor, and the two common phone densities. */
+const DENSITIES = [1, 2, 3];
+
+/**
+ * Reads a device pixel ratio (the `--dpr` flag of `play`): how many device pixels a CSS pixel is across.
+ * @param {string|number} text e.g. '2'
+ * @returns {number} one of `DENSITIES`
+ * @throws {Error} naming the bad text and the accepted values
+ * @example parseDensity('3') // 3
+ */
+function parseDensity(text) {
+  const density = Number(text);
+  if (!DENSITIES.includes(density)) throw new Error(`"${text}" is not a device pixel ratio. Write one of ${DENSITIES.join(', ')}, e.g. --dpr 2 (a phone's screen; screenshots are that many times larger).`);
+  return density;
+}
+
 const CONTENT_TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.png': 'image/png' };
 /** CDN URLs in index.html and the local copies that stand in for them (tests have no network). */
 const VENDOR_SWAPS = [
@@ -55,7 +71,8 @@ const LAUNCH_MS = 600;
 const BLOOM_MS = 350;
 /** The longest a screenshot may take: a large sheet under software GL on a busy machine needs minutes, not the default half minute. */
 const SHOT_MS = Number(process.env.KIT_SHOT_MS || 240000);
-const PAGE_SHELL = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style></head><body>';
+const PAGE_SHELL =
+  '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style></head><body>';
 
 /**
  * The machine-wide browser limit, shared with tools/smoke.js (same folder, same protocol): a run takes one of a
@@ -103,6 +120,7 @@ async function takeBrowserSlot() {
  * @property {function(number, number): Promise<void>} move
  * @property {function(): Promise<void>} up
  * @property {function(number, number): Promise<void>} tap down and up at one point
+ * @property {function(Array<{x: number, y: number}>): Promise<void>} flick moves the held pointer through points and lets go, all within a few hundredths of a second
  */
 
 /**
@@ -116,9 +134,17 @@ async function takeBrowserSlot() {
  * @param {boolean} useTouch
  * @returns {Promise<Pointer>}
  */
+/** Milliseconds between the events of a flick, and the usual thousand. */
+const FLICK_STEP_MS = 12;
+const MS_PER_SECOND = 1000;
+
 async function createPointer(page, useTouch) {
   if (!useTouch) {
-    return { down: (x, y) => page.mouse.move(x, y).then(() => page.mouse.down()), move: (x, y) => page.mouse.move(x, y), up: () => page.mouse.up(), tap: (x, y) => page.mouse.click(x, y) };
+    const flickMouse = async (points) => {
+      for (const point of points) await page.mouse.move(point.x, point.y);
+      await page.mouse.up();
+    };
+    return { down: (x, y) => page.mouse.move(x, y).then(() => page.mouse.down()), move: (x, y) => page.mouse.move(x, y), up: () => page.mouse.up(), tap: (x, y) => page.mouse.click(x, y), flick: flickMouse };
   }
   const devtools = await page.context().newCDPSession(page);
   const touch = (type, points) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints: points });
@@ -127,7 +153,15 @@ async function createPointer(page, useTouch) {
   const settle = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const down = (x, y) => touch('touchStart', [{ x, y }]);
   const up = () => touch('touchEnd', []).then(settle);
-  return { down, move: (x, y) => touch('touchMove', [{ x, y }]), up, tap: (x, y) => down(x, y).then(up) };
+  // A flick is faster than frames arrive here, so its events carry their own times (the protocol's `timestamp`,
+  // seconds): the page's event.timeStamp then says when the finger was there, as a real touch screen's does.
+  const flick = async (points) => {
+    const startedAt = Date.now() / MS_PER_SECOND;
+    const stamped = (type, touchPoints, order) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints, timestamp: startedAt + (order * FLICK_STEP_MS) / MS_PER_SECOND });
+    for (const [order, point] of points.entries()) await stamped('touchMove', [point], order + 1);
+    await stamped('touchEnd', [], points.length + 1).then(settle);
+  };
+  return { down, move: (x, y) => touch('touchMove', [{ x, y }]), up, tap: (x, y) => down(x, y).then(up), flick };
 }
 
 /** The page as the host would wrap it, with fonts dropped and CDN scripts pointed at vendor/. */
@@ -166,21 +200,22 @@ const serve = (request, response) => {
 
 /**
  * Opens the arcade page in a headless browser.
- * @param {{landscape?: boolean, touch?: boolean, size?: {width: number, height: number}}} [options] `touch`: drive the page with real
+ * @param {{landscape?: boolean, touch?: boolean, size?: {width: number, height: number}, density?: number}} [options] `density`: the
+ *   device pixel ratio (from `parseDensity`; 1 when left out); `touch`: drive the page with real
  *   touch events instead of the mouse; `size`: a viewport of its own (from `parseSize`), instead of the phone's
  * @returns {Promise<ArcadeSession>} waits for a machine-wide browser slot first (a waiting run is not a hung run)
  * @example
  * const session = await openArcade({ landscape: true });
  * await session.launchGame('miner'); await session.shot('scratch/miner/start.png'); await session.close();
  */
-async function openArcade({ landscape = false, touch = false, size: ownSize } = {}) {
+async function openArcade({ landscape = false, touch = false, size: ownSize, density = 1 } = {}) {
   const { chromium } = require('playwright');
   const releaseSlot = await takeBrowserSlot();
   const server = http.createServer(serve);
   await new Promise((resolve) => server.listen(0, resolve));
   const browser = await chromium.launch({ args: BROWSER_ARGS });
   const size = ownSize || (landscape ? LANDSCAPE : PORTRAIT);
-  const page = await browser.newPage({ viewport: size, deviceScaleFactor: 1, hasTouch: true });
+  const page = await browser.newPage({ viewport: size, deviceScaleFactor: density, hasTouch: true });
   const errors = [];
   page.on('pageerror', (error) => errors.push('pageerror: ' + error.message));
   page.on('console', (message) => message.type() === 'error' && !/favicon|404/.test(message.text()) && errors.push('console: ' + message.text()));
@@ -216,7 +251,7 @@ async function openArcade({ landscape = false, touch = false, size: ownSize } = 
     });
     await page.waitForTimeout(BLOOM_MS);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    // A big software-GL canvas on a loaded machine takes longer to read back than the 30 s default.
+    // A screen full of figures can take a software renderer well over the default half minute to photograph.
     await page.screenshot({ path: file, timeout: SHOT_MS });
     await page.evaluate((shouldResume) => {
       if (Kit.post_) Kit.post_.disable();
@@ -242,5 +277,4 @@ async function openArcade({ landscape = false, touch = false, size: ownSize } = 
   };
 }
 
-module.exports = {
-  SHOT_MS, openArcade, takeBrowserSlot, parseSize, PORTRAIT, LANDSCAPE };
+module.exports = { SHOT_MS, openArcade, takeBrowserSlot, parseSize, parseDensity, PORTRAIT, LANDSCAPE };

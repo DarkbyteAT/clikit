@@ -114,6 +114,8 @@
    * @property {boolean} [shiny]
    * @property {boolean} [emissive]
    * @property {number} [tone]
+   * @property {ReadonlyArray<{state: Object<string, number>, shape: Object}>} [faces] with `stamps`: the same
+   *   stamps in other face states (a blink, an open mouth); `figure.face(state)` draws one in place of the piece
    * @property {boolean} [stamps] the shape is of kind 'stamps' (flat polygons that carry their own paint): it is
    *   drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
    * @property {boolean} [outlined] false: the piece gets no hull outline of its own (a nose inside a face)
@@ -233,6 +235,7 @@
     // Only stamps read the bone's regions (to hide under hair); a solid (an ear, a nose) keeps its own paint.
     regions: feature.stamps ? base.regions : undefined,
     ...(feature.stamps ? { stamps: true } : {}),
+    ...(feature.faces ? { faces: feature.faces } : {}),
     ...(feature.outlined === false ? { outlined: false } : {}),
   });
 

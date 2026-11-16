@@ -73,6 +73,10 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `motion.js` | `Kit.motion`: a stage is `step` (fixed 120 Hz clock) + `pose` (once a frame), both `(motion, plan, dt)`; combinators `sequence`, `blend`, `layer`, `when`, `byDetail`; `refusal` (what a plan lacks); the per-instance motion `state` that owns the pose buffers; `advance` / `advanceStore`; shared stages `lean` and `trail`; `course` / `drive` |
 | `gait.js` | `Kit.gait`: walking, trotting and running for any leg count: stride from the Froude number, the `GAITS` table, feet planted in the world and solved by `Kit.reach`, `plant` (full), `swing` (detail 1), `arms`, the ready `walk`; `feet` / `support` to read the result |
 | `swim.js` | `Kit.swim`: a travelling wave down a spine-and-tail chain, beat and swing from speed (`STYLES`: carangiform, serpentine), `fins`, the ready `swim` |
+| `act.js` | `Kit.act`: performances as data (timed keys of role-addressed channels, reaches to points given at call time, travel, marks), run as motion stages: `performance`, `REPERTOIRE` / `define`, `rig`, `stage`, `performer` with `play` / `base` / `stop` / `aim` / `marks` / `takeRootMotion`, `refusal` |
+| `act-moves.js` | the everyday rows of the repertoire: wave, cheer, bow, think, shrug, jump, sit, dance, and the idle fidgets (`Kit.act.FIDGETS`) |
+| `act-sport.js` | the ball-game rows: kick, keeperReady, dive, catch, parry, celebrate, slump; `Kit.act.CONTACT` |
+| `act-life.js` | always-on life as stages: `breathe`, `sway`, `blink`, `gaze` / `lookAt`, and the ready `character` (walk or swim + life + performer + loose chains) |
 | `gait-gallery.js` | the `gaits` screen: four bodies on courses moved by one controller, with footprint and centre-of-mass marks |
 
 ### `Kit.body` (pure): a thing is a graph of typed sockets filled by parts, described by a small recipe
@@ -186,6 +190,7 @@ pieces first (unit-tested by `tools/test-creator.js`), then components (`tools/t
 | `creator-camera.js` | pure. `Kit.creator.camera`: the director (focus a group, zoom, turn, ease), `boundsFor` (stand the body in a screen area), pinch and drag maths |
 | `creator-icons.js` | `Kit.creator.ICONS` / `Icon`: line icons as data |
 | `creator-controls.js` | `controlHost` (a signal per field, queued slider values), `DialControl`, `ColorControl`, `SocketControl`, `GroupPane`, `ControlTabs` |
+| `creator-perform.js` | `performanceChoices` and `stagePlayer` (pure: what the character on stage is doing, idle by default) and `PerformPicker` (the rail button and its list) |
 | `creator-stage.js` | `StageGestures` (drag, pinch, wheel, keys), `StageRails`, `StageTitle`, `LookChips`, `HoldButton` |
 | `creator-panels.js` | the Setup tab, the saved-characters sheet and the share dialog |
 | `creator-theme.js` | `Kit.creator.THEME`: the screen's own tokens, fonts and scoped CSS |
@@ -212,7 +217,7 @@ ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bod
 lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
 body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery
 look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show  body-sheet
-creator-rows  creator-session  creator-slots  creator-camera  creator-icons  creator-controls  creator-stage  creator-panels  creator-theme  creator
+creator-rows  creator-session  creator-slots  creator-camera  creator-icons  creator-perform  creator-controls  creator-stage  creator-panels  creator-theme  creator
 games/*.js  ui/gallery
 shell
 ui/menu

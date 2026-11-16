@@ -66,7 +66,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [region.js](#regionjs) (8) - Kit region: areas of a surface as data.
 - [rig.js](#rigjs) (11) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
 - [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
-- [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
+- [dynamics.js](#dynamicsjs) (10) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
 - [body-plan.js](#body-planjs) (0) - Kit body plan: the skeleton of any kind of thing (a biped, a fish, a sword) compiled from data into flat typed arrays: a joint hierarchy, ty
 - [body-parts.js](#body-partsjs) (0) - Kit body parts: things that plug into sockets.
 - [body-surface.js](#body-surfacejs) (0) - Kit body surface: what is drawn ON a body's bones rather than as bones.
@@ -89,23 +89,35 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [figure-sculpt.js](#figure-sculptjs) (0) - Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone.
 - [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
 - [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
-- [motion.js](#motionjs) (25) - Kit motion: movement as small stages that compose.
-- [gait.js](#gaitjs) (17) - Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages.
+- [motion.js](#motionjs) (29) - Kit motion: movement as small stages that compose.
+- [gait.js](#gaitjs) (23) - Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages.
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
+- [act.js](#actjs) (31) - Kit act: performances.
+- [act-moves.js](#act-movesjs) (1) - Kit act moves: the everyday repertoire, as data.
+- [act-sport.js](#act-sportjs) (1) - Kit act sport: the moves a ball game needs, as data.
+- [act-life.js](#act-lifejs) (0) - Kit act life: what a body does when it is doing nothing, as small `Kit.motion` stages to sequence with anything - a walk, a swim, a performa
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
 - [body-portrait.js](#body-portraitjs) (4) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
-- [body-proof.js](#body-proofjs) (7) - Kit body proof: coverage sheets for judging the body system by eye.
+- [body-proof.js](#body-proofjs) (11) - Kit body proof: coverage sheets for judging the body system by eye.
 - [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
 - [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
 - [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
 - [creator-camera.js](#creator-camerajs) (0) - Kit creator camera: where the stage camera looks and how it gets there, as plain numbers.
 - [creator-icons.js](#creator-iconsjs) (0) - Kit creator icons: a small set of line icons as data, and the component that draws one.
+- [creator-perform.js](#creator-performjs) (0) - Kit creator perform: what the character on the stage is doing, and the picker that chooses it.
 - [creator-controls.js](#creator-controlsjs) (0) - Kit creator controls: the interface generated from the rows of a schema.
 - [creator-stage.js](#creator-stagejs) (0) - Kit creator stage: the part of the screen the character stands in, as components.
 - [creator-panels.js](#creator-panelsjs) (0) - Kit creator panels: the parts of the creator that are not generated from the schema.
 - [creator-theme.js](#creator-themejs) (0) - Kit creator theme: the character creator's own look, as a theme for `Kit.register`.
 - [creator.js](#creatorjs) (0) - Kit creator: the `creator` screen (`Kit.play('creator')`, "Character Maker" in the menu).
+- [flight.js](#flightjs) (8) - Kit flight: the flight of a spinning ball.
+- [slingshot.js](#slingshotjs) (3) - Kit slingshot: the pull-back-and-release aim gesture as numbers.
+- [netting.js](#nettingjs) (4) - Kit netting: a sheet of knots joined by cords (a goal net, a hammock, a banner, a trampoline), simulated as points held together by distance
+- [seat.js](#seatjs) (5) - Kit seat: fixed camera seats as rules, and the promises a seat makes about its picture.
+- [pixel-grid.js](#pixel-gridjs) (5) - Kit pixel grid: how fine a pixel-look picture should be, as a rule.
+- [paint.js](#paintjs) (6) - Kit paint: flat scenery painted by hand in the tones of a palette, as data.
+- [stadium.js](#stadiumjs) (8) - Kit stadium: a sports ground dressed from data.
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -599,6 +611,7 @@ Kit.register({ id: 'orbit', name: 'Orbit', theme: { skin: 'neon' }, create: (ctx
   - `update` *function(number, number): void* - called every frame with (dt, t) in game seconds
   - `[dispose]` *function(): void* - called when the game is left or restarted
   - `[debugState]` *function(): Object* - plain data describing the run right now (score, phase, positions); surfaced as `Kit.debug.state().state` to the developer overlay and to `node tools/dev.js play` predicates
+  - `[tools]` *Object\<string, \*\>* - handles for scripted playtests and measurements (jump to a level, fire an action without a finger, time a frame), reached as `Kit.debug.tools()`; never used by the game itself
 - **GameDefinition**
   - `id` *string* - unique id; also the save namespace and the smoke-test name
   - `name` *string* - title on the menu
@@ -3625,6 +3638,7 @@ _Undocumented: add a JSDoc block in the source._
   - `id` *?number* - pointerId of the gesture (other fingers are ignored until it ends)
   - `swiped` *boolean* - has this gesture already fired its swipe?
   - `moved` *number* - farthest the gesture has strayed from its start, pixels
+  - `time` *number* - when the browser saw the pointer at this position, `performance.now()` milliseconds (the event's own time)
 - **PointerEventInfo** - Payload of tap and drag events.
   - `phase` *'start'\|'move'\|'end'\|'tap'*
   - `x` *number* - position, pixels
@@ -3635,6 +3649,7 @@ _Undocumented: add a JSDoc block in the source._
   - `dy` *number* - movement since the previous event, pixels
   - `tx` *number* - total offset from the gesture's start, pixels
   - `ty` *number* - total offset from the gesture's start, pixels
+  - `time` *number* - when the browser saw the finger there, milliseconds on the `performance.now()` clock: the event's own time, not the handler's, so speed and flicks are measured rightly on a frame that ran late
 
 ## fx.js
 
@@ -5745,7 +5760,7 @@ Opens the overlay when it is closed and closes it when it is open.
   - `time` *number* - game seconds since the game started
   - `paused` *boolean*
   - `timeScale` *number*
-  - `modal` *?string* - title of the open modal, or null
+  - `modal` *?string* - title of the open modal or `ui.dialog` sheet, or null
   - `hud` *Object\<string, (number\|string)\>* - the stats row as label -> value
   - `actions` *string[]* - labels of the enabled bottom-bar buttons
   - `state` *?Object* - what the game's own `debugState()` returned, or null when it has none
@@ -7111,6 +7126,10 @@ const miss = Kit.reach.chain(plan.parent, pose, world, tailBones, lure.x, lure.y
 >
 > Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
 
+### `Kit.dynamics.BALL_STRIDE`
+
+Numbers per ball of a chain's `balls`: x, y, z, radius.
+
 ### `Kit.dynamics.FIXED_STEP`
 
 Seconds per simulation step. 120 Hz keeps a stiff spring stable and divides evenly into 60 and 30 fps frames.
@@ -7182,12 +7201,12 @@ keeps energy bounded where the plain method gains it).
 sprite.y = Kit.dynamics.stepSpring(bounce, dt);
 ```
 
-### `Kit.dynamics.chain({ count, lengths, gravity = CHAIN_DEFAULTS.gravity, drag = CHAIN_DEFAULTS.drag, stiffness = CHAIN_DEFAULTS.stiffness, iterations = CHAIN_DEFAULTS.iterations })`
+### `Kit.dynamics.chain({ count, lengths, gravity = CHAIN_DEFAULTS.gravity, drag = CHAIN_DEFAULTS.drag, stiffness = CHAIN_DEFAULTS.stiffness, iterations = CHAIN_DEFAULTS.iterations, balls = 0, thickness = 0, grip = CHAIN_DEFAULTS.grip })`
 
 Makes a chain of points joined by links of fixed length, hanging from an anchor: Verlet integration (each
 point's velocity is implied by where it was a step ago) with position-based length constraints.
 
-- `options` *{count: number, lengths: (number\|ArrayLike\<number\>), gravity?: ReadonlyArray\<number\>, drag?: number, stiffness?: number, iterations?: number}* - `count` points (2 or more); `lengths` one number for every link or a list of count - 1; gravity defaults to [0, -9.8, 0], drag to 3, stiffness to 0, iterations to 4
+- `options` *{count: number, lengths: (number\|ArrayLike\<number\>), gravity?: ReadonlyArray\<number\>, drag?: number, stiffness?: number, iterations?: number, balls?: number, thickness?: number, grip?: number}* - `count` points (2 or more); `lengths` one number for every link or a list of count - 1; gravity defaults to [0, -9.8, 0], drag to 3, stiffness to 0, iterations to 4; `balls` is room for that many solids to collide with (default 0), `thickness` and `grip` as on `PointChain`
 
 **Returns** *PointChain* laid out straight down from the origin; call `placeChain` to put it where it belongs
 
@@ -7262,6 +7281,11 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `stiffness` *number* - how strongly each link straightens towards the one before it, per second (0 = limp rope)
   - `iterations` *number* - constraint passes per step: more keeps the lengths tighter under fast motion
   - `carry` *number* - seconds not yet simulated (owned by `stepChain`)
+  - `floor` *number* - the height no point may go below (-Infinity: no floor); the owner sets it
+  - `thickness` *number* - how far a point's surface is from its centre: what keeps it off the floor and the balls
+  - `balls` *Float32Array* - solids the points are pushed out of: x, y, z, radius each; the owner fills them every frame (a body's bones as balls) and sets `ballCount`
+  - `ballCount` *number* - how many of `balls` are in use
+  - `grip` *number* - 0..1: how much of a point's sliding a touch takes away each step (cloth drags on what it lies on)
 
 ## body-plan.js
 
@@ -7302,6 +7326,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[mass]` *number* - rest mass in kilograms (default: plan density x the cylinder of its length and girth)
   - `[joint]` *('ball'\|'hinge'\|'fixed'\|'free')* - how the bone may turn, a `JOINTS` name (default 'ball')
   - `[limits]` *number[][]* - [[minX, maxX], [minY, maxY], [minZ, maxZ]] in degrees from the rest rotation, about the bone's own axes (default: the joint type's)
+  - `[soft]` *string* - a `Kit.body.SOFT_KINDS` name ('hair', 'plait', 'tail', 'ear', 'scarf', 'cloak', 'hem'): the bone is loose, with that kind's stiffness, damping and limits wherever it states none of its own
   - `[stiffness]` *number* - spring hint: squared natural frequency, 1/s^2 (default 120)
   - `[damping]` *number* - spring hint: damping ratio, 1 = critical (default 1)
   - `[shape]` *Object* - what a renderer draws for the bone: { kind, ...fields } per `Kit.body.SHAPES` (default: a capsule of the bone's length and girth)
@@ -8355,6 +8380,7 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `[shiny]` *boolean*
   - `[emissive]` *boolean*
   - `[tone]` *number*
+  - `[faces]` *ReadonlyArray\<{state: Object\<string, number\>, shape: Object}\>* - with `stamps`: the same stamps in other face states (a blink, an open mouth); `figure.face(state)` draws one in place of the piece
   - `[stamps]` *boolean* - the shape is of kind 'stamps' (flat polygons that carry their own paint): it is drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
   - `[outlined]` *boolean* - false: the piece gets no hull outline of its own (a nose inside a face)
 - **RegionLookup** - A point lookup `regionOf(plan, bone, x, y, z)` -> ramp index (`Kit.body.figureHooks(bake).regionOf`).
@@ -8807,6 +8833,7 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
   - `measured` *Object* - the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
   - `rest` *function(): void* - copies the bake's rest pose into `local`
   - `pose` *function(): void* - forward kinematics over `local` and a matrix write per mesh; no allocation
+  - `face` *function(Object\<string, number\>): void* - shows the face of a state: per set of `Kit.body.FRAME_SETS` an index into its frames ({ blink: 2 } is eyes closed; zeros are the rest face). A motion state chooses it: `figure.face(Kit.act.face(motion))`. O(1) when the state has not changed; the first time a state is shown its stamps are built
   - `setBake` *function(Object, Object=, {settle?: boolean}=): Object* - draws another bake with the fewest changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is still moving (a dial being dragged): the sculpted surfaces are bent to the new proportions by the skeleton at once, and sculpted again by `settle()`
   - `settle` *function(number=): boolean* - sculpts the surfaces for the bake shown if they were only bent to it (or, built with `sculpt: 'steps'`, not sculpted yet); true when it did. With a number it works for about that many milliseconds and returns false until the work, spread over as many calls as it takes, is done
   - `isSettled` *function(): boolean* - false while the surfaces wait for `settle()`
@@ -8850,9 +8877,11 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
 > Owns:  `Kit.motion.stage` and the combinators `sequence`, `blend`, `layer`, `when`, `byDetail`; `refusal` /
 >        `requireFit` (can this plan run this stage, and if not, what is missing); `state` (a per-instance
 >        motion state), `advance` (one frame: fixed steps, then the pose, then the world transforms), `place`
->        (teleport), `advanceStore` (every instance of a `Kit.body.store`); the two stages every kind of
->        movement shares, `lean` (tilt into acceleration and turns) and `trail` (tails and other loose chains
->        follow by simulation); and `course` / `drive` (a body steered along a table of speeds and turns).
+>        (teleport), `advanceStore` (every instance of a `Kit.body.store`); `turnBody` / `restFrames` (turn a
+>        bone about the body's axes, whichever way a plan's bones point); the stages every kind of
+>        movement shares, `lean` (tilt into acceleration and turns), `trail` (tails and wings follow by
+>        simulation) and `loose` (so does everything a plan declares loose: hair, a cloak, ears); and `course` /
+>        `drive` (a body steered along a table of speeds and turns).
 > Does not own: how legs walk (kit/gait.js) or bodies swim (kit/swim.js), the fixed clock (`Kit.dynamics.stepsDue`),
 >        kinematics (kit/rig.js, kit/reach.js), plans (kit/body-plan.js), where an instance should go (the
 >        caller moves it; this reads the movement), or drawing.
@@ -8878,6 +8907,10 @@ Tunables of `lean`. Angles in radians.
 ### `Kit.motion.TRAIL_DEFAULTS`
 
 Tunables of `trail`.
+
+### `Kit.motion.LOOSE_DEFAULTS`
+
+Tunables of `loose`.
 
 ### `Kit.motion.COURSE_DEFAULTS`
 
@@ -9138,6 +9171,43 @@ quadruped's hips, a fish's trunk). Movement shifts and tilts this one bone and e
 const pelvis = Kit.motion.carrier(bipedPlan);
 ```
 
+### `Kit.motion.restFrames(plan, rest)`
+
+For every bone of a body, the world rotation of its PARENT at rest: the frame `turnBody` needs to turn a
+bone about the body's axes whichever way the plan's bones were authored to point.
+
+- `plan` *Object* - a `BodyPlan`
+- `rest` *Object* - its proportioned rest pose (a bake's `rest`)
+
+**Returns** *Float32Array* 4 per bone (x, y, z, w); the identity for a root. Shared: do not write it
+
+**Complexity** O(bones) the first time for a rest pose, O(1) after
+
+```js
+const frames = Kit.motion.restFrames(motion.plan, motion.rest);
+```
+
+### `Kit.motion.turnBody(rotation, frames, bone, pitch, yaw, tilt)`
+
+Turns a bone by [pitch, yaw, tilt] about the BODY's axes (left, up, forward as they lie when its parent is
+at rest), on top of the rotation it has. Unlike `Kit.rig.turn`, which turns about the bone's own axes, the
+same numbers mean the same lean on any plan: a twist of the hips, a nod, a spine leaning into a step.
+
+- `rotation` *Float32Array* - the pose's local rotations, 4 per bone; the bone's is rewritten
+- `frames` *Float32Array* - from `Kit.motion.restFrames`
+- `bone` *number*
+- `pitch` *number* - radians, positive forwards (a nod down)
+- `yaw` *number* - radians, positive towards the body's left
+- `tilt` *number* - radians, positive towards the body's left
+
+**Returns** *void*
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.motion.turnBody(motion.pose.rotation, Kit.motion.restFrames(plan, rest), headBone, 0.2, 0, 0);   // a nod
+```
+
 ### `Kit.motion.lean(options = {})`
 
 A stage that tilts the body's carrier bone into what it is doing: forwards when it speeds up, back when it
@@ -9168,6 +9238,27 @@ are aimed along the points with `Kit.reach.follow`. Put it last, after whatever 
 
 ```js
 const wings = Kit.motion.trail({ roles: ['wing'], gravity: [0, -2, 0] });
+```
+
+### `Kit.motion.loose(options = {})`
+
+A stage that lets everything a plan declares loose follow the body by simulation: hair strands, plaits, a
+cloak, floppy ears - any bone whose `stiffness` hint is low (`Kit.motion.LOOSE_DEFAULTS.below`; the plan
+default is stiff) and that no other stage moves. Each run of such bones is shadowed by a `Kit.dynamics`
+chain dragged from its base, with a point at the END of the last bone too, so a single loose bone (a
+cloak panel) swings like a pendulum. The chain steps on the fixed clock, so it behaves the same at any
+frame rate. Its points are kept above the ground the body stands on and out of the body's own solids (every
+stiff, thick bone, as a row of balls), except the solids a part is worn round. Put it last, after whatever
+moves the body.
+
+- `[options]` *{below?: number, except?: string[], gravity?: number[], drag?: number, stiffnessScale?: number}* - see `Kit.motion.LOOSE_DEFAULTS`
+
+**Returns** *Stage* needs nothing: a body with nothing loose is left alone
+
+**Complexity** O(chain points x iterations x fixed steps) per frame; allocates the chains on an instance's first frame
+
+```js
+const walk = Kit.motion.sequence(Kit.gait.plant(), Kit.motion.trail(), Kit.motion.loose());
 ```
 
 ### `Kit.motion.course(legs, options = {})`
@@ -9277,7 +9368,10 @@ The signed smallest turn from one heading to another, radians in (-pi, pi].
 >        `legs` (what a plan's legs are, measured from its data), the stages `plant` (full detail: planted
 >        feet, inverse kinematics, a pelvis held where the legs can reach, a sprung bob and a shift over the
 >        support), `swing` (level of detail 1: the same clock driving joint angles, no solving) and `arms`
->        (arms swing against the legs), the ready composition `walk`, and `feet` / `support` (read where the
+>        (arms swing against the legs, as far as the stride is long, folded at a run); the trunk over the legs
+>        (hips and shoulders counter-rotate, a trunk on two rows of legs rocks), a heel strike, the tucked
+>        swing and the flight of a run; `reachLeg` / `levelFoot` (one leg solved to a point, for other
+>        stages); the ready composition `walk`, and `feet` / `support` (read where the
 >        feet are and whether the centre of mass is over them).
 > Does not own: the stage machinery, lean, trailing chains or the fixed clock (kit/motion.js, kit/dynamics.js),
 >        the solvers (kit/reach.js), plans and which way a knee bends (kit/body-plan.js), where the body goes
@@ -9322,9 +9416,25 @@ Standing and reaching, in leg lengths unless noted.
 
 Level of detail 1: joint angles from the clock. Radians unless noted.
 
+### `Kit.gait.SWING_PATH`
+
+A swinging foot beyond the plain arc of its gait's clearance. In leg lengths unless noted.
+
 ### `Kit.gait.ARMS`
 
 Arms. Radians unless noted.
+
+### `Kit.gait.RUN`
+
+How much of a run a movement is, from its Froude number: none at or below `from`, all at `full`. People break into a run near 0.5.
+
+### `Kit.gait.TORSO`
+
+The trunk over the legs. Radians per unit of stride size (half a stance over a leg length, at most 1) unless noted.
+
+### `Kit.gait.FLIGHT_BOOST`
+
+With no foot on the ground a body is a projectile: it rises and falls on a parabola, drawn this many times taller so it reads.
 
 ### `Kit.gait.froude(speed, legLength)`
 
@@ -9391,6 +9501,45 @@ leg steps in each gait. Remembered per rest pose, so every instance of a bake sh
 Kit.gait.legs(bake.plan, bake.rest).legLength // 0.87 for the sample biped
 ```
 
+### `Kit.gait.reachLeg(motion, rig, leg, targetX, targetY, targetZ)`
+
+Solves one leg so its ankle is at a world point: exactly for a leg of three bones (the knee hinted to the
+side its limits bend to, turned by the body's heading), as a chain for a longer one. The foot's own
+rotation is left to `levelFoot`. Usable by any stage that puts a foot somewhere (a kick, a crouch).
+
+- `motion` *Object* - a `MotionState` whose world transforms are current down to the hip
+- `rig` *LegRig* - from `Kit.gait.legs`
+- `leg` *number* - index in the rig's gait order
+- `targetX` *number* - where the ankle should be, world metres
+- `targetY` *number*
+- `targetZ` *number*
+
+**Returns** *void*
+
+**Complexity** O(leg bones), no allocation
+
+```js
+Kit.gait.reachLeg(motion, rig, 0, footX, groundY + rig.sole[0], footZ);
+```
+
+### `Kit.gait.levelFoot(motion, rig, leg, heading, pitch)`
+
+Holds a leg's foot level, facing a heading and pitched about its own left axis, whatever the shin is doing.
+
+- `motion` *Object* - a `MotionState` whose world transforms are current for the leg
+- `rig` *LegRig*
+- `leg` *number* - index in the rig's gait order
+- `heading` *number* - the way the foot points, radians about +Y
+- `pitch` *number* - radians; positive puts the toes down (a heel rising), negative lifts them (a heel strike)
+
+**Returns** *void*
+
+**Complexity** O(bones hanging from the foot), no allocation
+
+```js
+Kit.gait.levelFoot(motion, rig, leg, motion.heading, 0);
+```
+
 ### `Kit.gait.plant()`
 
 The stage that walks at full detail. On the fixed clock: the gait clock, and for each leg the lift, the
@@ -9436,10 +9585,15 @@ clock that `plant` or `swing` runs, so put it in a sequence with one of them; a 
 const walk = Kit.motion.sequence(Kit.gait.arms(), Kit.gait.plant());
 ```
 
-### `Kit.gait.walk()`
+### `Kit.gait.walk({ before = [], after = [] } = {})`
 
-Walking, ready made: lean, arms, planted feet and trailing tails and wings at full detail; clock-driven
-swing at level of detail 1; nothing beyond. The same stage walks any plan with two or more legs.
+Walking, ready made: lean, arms, planted feet, and tails, wings and everything loose trailing at full
+detail; clock-driven swing at level of detail 1; nothing beyond. The same stage walks any plan with two or
+more legs. Other stages join it at the two places where order matters: `before` the legs are solved
+(whatever moves the body over its feet: breathing, a weight shift) and `after` (whatever poses the upper
+body over the walk: a performance, a gaze), both ahead of the trailing chains.
+
+- `[options]` *{before?: Array\<Object\|Function\>, after?: Array\<Object\|Function\>}* - stages of kit/motion.js
 
 **Returns** *Object* a `Stage`
 
@@ -9508,6 +9662,14 @@ const balance = Kit.gait.support(motion, { planted: 0, centerX: 0, centerY: 0, c
   - `standLift` *number* - how far the carrier bone is raised from the rest pose so the lowest sole rests on the ground (dials that lengthen legs push the rest pose's feet below the root)
   - `upright` *number* - 1 for a body whose hips are all in one row (it can lean from them), falling to 0 as the rows of hips spread a leg length apart (a level trunk on legs at both ends must not nod)
   - `carrier` *number* - the bone the body is carried by (`Kit.motion.carrier`)
+  - `rowCount` *number* - rows of hips, at most `MOST_ROWS`
+  - `rowLeft` *Int16Array* - per row: a left leg of it, or -1
+  - `rowRight` *Int16Array* - per row: a right leg of it, or -1
+  - `rowGirdle` *Int16Array* - per row: the spine bone its hips hang from (a pelvis, a shoulder girdle)
+  - `armGirdle` *number* - the spine bone the arms hang from, or -1 when that is the carrier or there are no arms
+  - `steadyBone` *number* - the first bone of the neck (else the head), which keeps the head facing ahead; or -1
+  - `steadyUnder` *Uint8Array* - per row, then the arm girdle: 1 when the steady bone hangs from that girdle
+  - `frames` *Float32Array* - `Kit.motion.restFrames`: for turning bones about the body's axes
   - `stretchX` *number* - how much the carrier's parent stretches offsets, left and up (for writing a world shift into the local pose)
   - `stretchY` *number*
   - `gaits` *Array\<{duty: number, offsets: Float32Array, clearance: number, fastestFroude: number}\>* - one per `GAITS` row, in order: this body's duty factor and per-leg offsets
@@ -9526,6 +9688,8 @@ const balance = Kit.gait.support(motion, { planted: 0, centerX: 0, centerY: 0, c
   - `targetY` *Float32Array*
   - `targetZ` *Float32Array*
   - `pitch` *Float32Array* - how far the foot is pitched about its toe, radians
+  - `strike` *Float32Array* - how far a swinging foot's toes are held up as it reaches forward, radians (zero or negative)
+  - `air` *number* - metres the body is off its standing height because no foot is down (a run's flight)
   - `swing` *Float32Array* - 0..1 through the swing, for a foot in the air
   - `plantCount` *Uint32Array* - how many times the foot has landed
   - `bob` *Object* - the spring the body's height rides on (`Kit.dynamics` spring)
@@ -9539,7 +9703,8 @@ const balance = Kit.gait.support(motion, { planted: 0, centerX: 0, centerY: 0, c
   - `cadence` *number* - strides per second
   - `halfStance` *number* - metres a planted foot travels each side of its hip
   - `isMoving` *boolean* - false while standing
-  - `offsets` *Float32Array* - per leg: where in the stride it starts its stance
+  - `runShare` *number* - 0 at a walk, 1 at a full run (`Kit.gait.RUN`)
+  - `offsets` *Float32Array* - per leg: where in the stride it starts its stance (eased from one gait's to the next's)
   - `feet` *?FeetState* - made by the `plant` stage; null at lower detail
 - **Support**
   - `planted` *number* - how many feet are down
@@ -9668,6 +9833,673 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
   - `frequency` *number* - beats per second now
   - `amplitude` *number* - the tail tip's swing each side of the middle now, metres
 
+## act.js
+
+> Kit act: performances. A performance is DATA - timed keys of a few body channels, plus the points a hand, a
+> foot or the body itself must reach - and this module runs it as a `Kit.motion` stage on any body that has
+> the parts. Channels address the body by role (the arms, the spine, the head, the feet), never by bone name,
+> and in units of the body's own size (leg lengths, arm lengths, radians), so a wave authored once plays on a
+> person, an elf with wings and a stout dwarf, and a body without arms simply cannot be asked to wave.
+>
+> QUICK USE (what a game calls):
+>   const motion = Kit.motion.state(bake, Kit.act.character());       // walks, breathes, blinks, looks about
+>   Kit.motion.advance(motion, dt, x, 0, z, heading);                 // every frame, as for any motion
+>   Kit.act.play(motion, 'wave');                                     // a one-shot over whatever it is doing
+>   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });  // the foot swings through that world point
+>   Kit.act.play(motion, 'dive', { target: [x, y, z] });              // dives to the side the point is on, hands to it
+>   Kit.act.aim(motion, 'target', x, y, z);                           // the point moved (a ball in flight)
+>   Kit.act.marks('dive').contact                                     // seconds into a dive that the hands arrive
+>   Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: 0.3 } }); // hands there in 0.3 s; landing as authored
+>   Kit.act.play(motion, 'save', { target, reach: { mark: 'contact', in: 0.4 } }); // a FAMILY: the form that gets there
+>   Kit.act.playing(motion)                                           // 'dive' (or the form a family chose) until it has finished
+>   Kit.act.takeRootMotion(motion, offset)                            // after a kick or a dive: where the body ended up
+>   Kit.act.base(motion, 'keeperReady');                              // the loop it returns to between one-shots
+>   Kit.act.lookAt(motion, x, y, z);                                  // head and gaze follow a point (kit/act-life.js)
+>   figure.face(Kit.act.face(motion));                                // show the blink / talk frames it chose
+> `Kit.act.REPERTOIRE` lists what can be played (kit/act-moves.js, kit/act-sport.js); `Kit.act.refusal(id, plan)`
+> says why a body cannot do one. `Kit.act.FAMILIES` lists the jobs that have several forms (`save`), and
+> `Kit.act.choose(motion, familyId, { target })` says which form a body would use for a point.
+>
+> Owns:  `CHANNELS` and `EASES` (the vocabulary of a performance), `performance` (check and compile a spec),
+>        `REPERTOIRE` / `define` (the performances by id), `FAMILIES` / `defineFamily` / `choose` (several
+>        performances for one job, chosen by where the point is against the body's own reach), `rig` (what a plan's roles are, measured once),
+>        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
+>        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
+>        controls (`play`, `marks`, `stop`, `base`, `aim`, `point`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+>        `takeRootMotion`, `cast`), `refusal`,
+>        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
+> Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
+>        body solves the legs with `Kit.gait.reachLeg`), the solvers (kit/reach.js), always-on life such as
+>        breathing and blinking (kit/act-life.js), the repertoire's rows, or drawing a face frame (the figure).
+>
+> How a performance reaches the pose: keys are interpolated in CHANNEL space with an easing per key (so
+> anticipation, overshoot and settle are a choice of curve, and two performances cross-fade without popping),
+> then each channel is applied by kinematics: the carrier bone is shifted and turned and every leg is solved
+> back to its foot (a crouch bends the knees because the feet stay where they are; a body thrown higher than
+> its legs reach lifts its feet), hands are placed by two-bone inverse kinematics, the spine and neck share a
+> turn between their bones. A `reach` pulls a hand or a foot to a world point given at call time; a `travel`
+> carries the body towards one.
+>
+> Rules every performance gets without asking (each a few lines in `poseActing`, tuned in `TUNING`): an arm
+> moved far between two keys goes round in front of the body, not out through a T; a keyed hand stays outside
+> the head; a hand pulled to a point leads the head there (the trunk tips off the line on a short-armed body)
+> and the body closes the last of the distance its arm cannot; a leg hanging in the air is drawn up by its
+> foot's keyed lift; a travel longer than its `stride` is run in steps.
+>
+> Conventions (kit/motion.js): metres, seconds, radians; +Y up; heading 0 faces +Z; "body frame" is left, up,
+> forward. A turn is [pitch, yaw, tilt]: pitch positive leans forward (nods down), yaw positive turns to the
+> body's left, tilt positive leans to the body's left.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-act.js.
+
+### `Kit.act.CHANNELS`
+
+The channels of a key, in buffer order. `size` numbers each; `group` is the part of the body that fades
+with it; `mirror` are the signs a left-right mirror applies (default: none); `swap` is the channel it
+trades places with in a mirror; `rest: true` means a key that leaves it out holds the body's own rest
+value rather than 0.
+  shift      [left, up, forward] of the whole body, in leg lengths (a crouch is [0, -0.2, 0])
+  turn       [pitch, yaw, tilt] of the whole body about its hips
+  carry      0..1: how far the feet's standing places have followed a `travel` (1 once the body has arrived)
+  spine      [pitch, yaw, tilt] shared between the spine's bones above the hips
+  head       [pitch, yaw, tilt] shared between the neck and the head
+  armLeft /  [raise, front, extend, elbowOut]: where the hand is from the shoulder. `raise` is the angle from
+  armRight   hanging straight down (pi / 2 level, pi overhead); `front` turns that about the vertical (0 out to
+             the side, pi / 2 straight ahead, beyond it across the body, negative behind); `extend` is the
+             hand's distance in arm lengths (1 straight, 0.5 well bent); `elbowOut` pushes the elbow away from
+             the body (0 hangs it down and back, 1 wings it out). The hand is put there by `Kit.reach.twoBone`.
+  footLeft / [out, up, forward, pitch]: the foot's place from where it stands at rest, in leg lengths, and its
+  footRight  pitch (positive: toes down). The leg is solved to it by `Kit.gait.reachLeg`.
+  tail       [pitch, yaw, tilt] of the base of every tail (the rest of the tail follows by simulation)
+  wings      [lift, sweep, pitch] of the base of every wing, mirrored for the right one
+  jaw        [open] radians
+A key may also say `arms` or `feet` (both sides at once) and `face` ({ blink, talk }: a frame name of
+`Kit.body.FRAME_SETS`, held until a later key changes it).
+
+### `Kit.act.GROUP_NAMES`
+
+The parts of a body a performance can move; each fades in and out as a whole.
+
+### `Kit.act.EASES`
+
+The easings a key can arrive with, name -> (0..1) -> 0..1. Besides every curve of `Kit.math.ease`:
+`smooth` (ease in and out; the default), `in` and `out` (a fall under gravity and a rise against it),
+`anticipate` (pulls back before it goes), `settle` (overshoots and comes back: `Kit.math.ease.outBack`) and
+`snap` (fast, with a small overshoot).
+
+### `Kit.act.TUNING`
+
+Tunables of running a performance.
+
+### `Kit.act.REPERTOIRE`
+
+The performances that can be played by id. Open: `Kit.act.define(spec)` adds a row (kit/act-moves.js and
+kit/act-sport.js fill it), and every row appears on the acts proof sheet for every body that can do it.
+
+### `Kit.act.FAMILIES`
+
+Families by id: `Kit.act.play` takes one wherever it takes a performance. Open: `Kit.act.defineFamily` adds a row.
+
+### `Kit.act.performance(spec)`
+
+Checks a performance spec and compiles it to flat buffers, once. Everything a typo can break is refused
+here with the fix, so a performance that compiles cannot fail while it plays.
+
+- `spec` *PerformanceSpec*
+
+**Returns** *Object* the compiled performance, frozen: pass it to `Kit.act.stage`, `play` or `define`
+
+**Complexity** O(keys x channels) time and space, once
+
+```js
+const nod = Kit.act.performance({ id: 'nod', seconds: 0.8, keys: [{ at: 0.4, ease: 'out', head: [0.35, 0, 0] }] });
+```
+
+### `Kit.act.define(spec)`
+
+Compiles a performance spec and adds it to the repertoire under its id.
+
+- `spec` *PerformanceSpec*
+
+**Returns** *Object* the compiled performance
+
+**Complexity** as `performance`
+
+```js
+Kit.act.define({ id: 'nod', seconds: 0.8, keys: [{ at: 0.4, head: [0.35, 0, 0] }] }); Kit.act.play(motion, 'nod');
+```
+
+### `Kit.act.defineFamily(spec)`
+
+Checks a family and adds it under its id.
+
+- `spec` *FamilySpec*
+
+**Returns** *Object* the family, frozen
+
+**Complexity** O(forms)
+
+```js
+Kit.act.defineFamily({ id: 'greet', forms: [{ play: 'bow', aside: [0, 1] }, { play: 'wave' }] });
+```
+
+### `Kit.act.choose(motion, familyId, params)`
+
+Which form of a family a body would play for a point: the first whose spans hold the point, measured against
+this body's own reach, among the forms the body can do at all.
+
+- `motion` *Object* - a `MotionState`
+- `familyId` *string* - an id of `Kit.act.FAMILIES`
+- `params` *Object* - the family's point in the world: { target: [x, y, z] }
+
+**Returns** *?string* the id of a performance; null when the body can do none of the forms
+
+**Complexity** O(forms); O(needs) more the first time a body is asked about a form; no allocation after
+
+```js
+const form = Kit.act.choose(keeper, 'save', { target: [x, y, z] });   // 'catch', 'catchHigh', 'smother', 'dive' or 'diveStep'
+Kit.act.play(keeper, 'save', { target: [x, y, z], reach: { mark: 'contact', in: Kit.act.marks(form).contact } });
+```
+
+### `Kit.act.rig(plan, rest)`
+
+Measures a plan's parts for performing: which bones are its spine, neck, head, arms, tails and wings, how
+long its arms are and where its hands rest. Remembered per rest pose, so every instance of a bake shares one.
+
+- `plan` *Object* - a `BodyPlan`
+- `rest` *Object* - its proportioned rest pose (a bake's `rest`)
+
+**Returns** *ActRig* frozen
+
+**Complexity** O(bones) time once per rest pose, O(1) after
+
+```js
+Kit.act.rig(bake.plan, bake.rest).armLength[0] // the left arm, metres
+```
+
+### `Kit.act.refusal(performanceOrId, plan, rest)`
+
+Why a body cannot do a performance, in words, or null when it can.
+
+- `performanceOrId` *string\|Object* - an id of the repertoire, a spec or a compiled performance
+- `plan` *Object* - a `BodyPlan`
+- `[rest]` *Object* - its proportioned rest pose
+
+**Returns** *?string* e.g. 'the "wave" performance cannot move the plan "quadruped": it lacks arms. This plan has: ...'
+
+**Complexity** O(needs x capabilities); call it at setup, not per frame
+
+```js
+Kit.act.refusal('wave', houndBake.plan) // '... it lacks arms. ...'
+```
+
+### `Kit.act.turnHead(rotation, measured, pitch, yaw, tilt)`
+
+A head turn, split between the neck's bones and the head, on top of what they have.
+
+- `rotation` *Float32Array* - the pose's local rotations
+- `measured` *ActRig* - from `Kit.act.rig`
+- `pitch` *number* - radians, positive nods down
+- `yaw` *number* - radians, positive towards the body's left
+- `tilt` *number* - radians, positive towards the body's left
+
+**Returns** *void*
+
+**Complexity** O(neck bones), no allocation
+
+```js
+Kit.act.turnHead(motion.pose.rotation, Kit.act.rig(plan, rest), 0, 0.4, 0);   // looks left
+```
+
+### `Kit.act.turnShared(rotation, measured, bones, pitch, yaw, tilt)`
+
+The same body-frame turn shared evenly between a list of bones: a spine bends along its length.
+
+- `rotation` *Float32Array* - the pose's local rotations
+- `measured` *ActRig* - from `Kit.act.rig`
+- `bones` *ArrayLike\<number\>*
+- `pitch` *number* - radians in all, positive forwards
+- `yaw` *number* - radians in all, positive towards the body's left
+- `tilt` *number* - radians in all, positive towards the body's left
+
+**Returns** *void*
+
+**Complexity** O(bones), no allocation
+
+```js
+Kit.act.turnShared(motion.pose.rotation, rig, rig.spine, 0.3, 0, 0);   // the spine curls forward
+```
+
+### `Kit.act.lookAngles(motion, x, y, z, out)`
+
+The head turn that looks at a world point: yaw and pitch in the body frame, clamped to what a neck does.
+
+- `motion` *Object* - a `MotionState` whose world transforms are current
+- `x` *number* - the point, world metres
+- `y` *number*
+- `z` *number*
+- `out` *Float32Array\|number[]* - receives [pitch, yaw]
+
+**Returns** *Float32Array\|number[]* `out`; zeros for a body without a head
+
+**Complexity** O(1), no allocation
+
+```js
+const [pitch, yaw] = Kit.act.lookAngles(motion, ball.x, ball.y, ball.z, [0, 0]);
+```
+
+### `Kit.act.face(motion)`
+
+The face frames a motion state asks for this frame. Stages write it (a blink, a cheer's open mouth); a
+renderer reads it (`figure.face(Kit.act.face(motion))`).
+
+- `motion` *Object* - a `MotionState`
+
+**Returns** *FaceState* the state's own record; the same object every call
+
+**Complexity** O(1); allocates the record on first use
+
+```js
+figure.face(Kit.act.face(motion));
+```
+
+### `Kit.act.stage(performanceOrId, params = {})`
+
+One performance as a stage: a loop plays for as long as the stage runs; a one-shot plays once from the
+instance's first frame (again every `every` seconds when that is given). Put it after whatever moves the
+body, or confine it with `Kit.motion.layer` to lay it over a walk.
+
+- `performanceOrId` *string\|Object* - an id of the repertoire, a spec or a compiled performance
+- `[params]` *{every?: number, rate?: number, side?: string}* - plus any named point: { target: [x, y, z] }
+
+**Returns** *Object* a `Stage` of kit/motion.js; it needs what the performance needs
+
+**Complexity** per frame O(channels + bones of the groups it moves + legs and arms solved); no allocation after an instance's first frame
+
+```js
+const waveWalking = Kit.motion.sequence(Kit.gait.walk(), Kit.motion.layer(['arm'], Kit.act.stage('wave', { every: 3 })));
+```
+
+### `Kit.act.performer({ base: baseId = null, fidgets = [], fidgetGap = [4, 9] } = {})`
+
+The stage that performs on request: it plays whatever `Kit.act.play` asks of the instance, cross-fading
+from what it was doing, then returns to the instance's base loop (`Kit.act.base`, default: nothing, which
+leaves the body to the stages before it). Only the parts a performance uses are taken over, so a wave
+plays over a walk and a kick takes the whole body. With `fidgets`, a body standing still on its base now
+and then plays one of them, on a schedule seeded per instance (`Kit.act.cast`).
+
+- `[options]` *{base?: string, fidgets?: string[], fidgetGap?: number[]}* - `base`: the loop every instance starts on; `fidgets`: ids of small one-shots; `fidgetGap`: [least, most] seconds between them (default [4, 9])
+
+**Returns** *Object* a `Stage`; it needs nothing (a performance a body cannot do is refused by `play`)
+
+**Complexity** as `stage` for the performance playing; O(1) while nothing plays
+
+```js
+const controller = Kit.motion.sequence(Kit.gait.walk(), Kit.act.performer({ fidgets: ['glance', 'shiftWeight'] }));
+```
+
+### `Kit.act.play(motion, performanceOrId, params)`
+
+Plays a performance on an instance whose controller has a `Kit.act.performer` (as `Kit.act.character`
+does): it cross-fades in over what the body was doing, and a one-shot hands back to the base when done.
+
+- `motion` *Object* - a `MotionState`
+- `performanceOrId` *string\|Object* - an id of `Kit.act.REPERTOIRE` or of `Kit.act.FAMILIES` (the form that suits the point is played; `Kit.act.playing` then names it), or a compiled performance
+- `[params]` *Object* - named world points ({ target: [x, y, z] }; a performance's own default otherwise), `side` ('left' or 'right': which hand waves, which foot kicks; default: the side its point is on, or the authored one), `rate` (speed, default 1), `fade` (seconds of cross-fade) and `reach` ({ mark, in }: meet the named mark of the performance `in` seconds from now - the lead-in up to the mark is sped up or slowed to fit, and everything after it runs at `rate`, so a dive hurried to a shot still lands and gets up as authored)
+
+**Returns** *boolean* false, changing nothing, when this body cannot do it (`Kit.act.refusal` says why)
+
+**Complexity** O(needs) the first time a body is asked for a performance, O(targets) after
+
+```js
+Kit.act.play(motion, 'kick', { target: [ball.x, ball.y, ball.z] });
+Kit.act.play(keeper, 'dive', { target: [x, y, z], reach: { mark: 'contact', in: secondsUntilTheBallArrives } });
+```
+
+### `Kit.act.base(motion, performanceOrId)`
+
+Sets the loop an instance returns to between one-shots (a keeper's ready stance, a dance); null for none.
+If the instance is on its base now, it changes over at once.
+
+- `motion` *Object* - a `MotionState`
+- `performanceOrId` *?(string\|Object)*
+
+**Returns** *boolean* false when this body cannot do it
+
+**Complexity** as `play`
+
+```js
+Kit.act.base(keeper, 'keeperReady');
+```
+
+### `Kit.act.stop(motion, fade)`
+
+Stops whatever is playing and returns to the base loop (also how a held one-shot, such as sitting, is left).
+
+- `motion` *Object* - a `MotionState`
+- `[fade]` *number* - seconds of cross-fade (default `Kit.act.TUNING.fadeSeconds`)
+
+**Returns** *void*
+
+**Complexity** O(channels)
+
+```js
+Kit.act.stop(motion);
+```
+
+### `Kit.act.aim(motion, name, x, y, z)`
+
+Moves a named point of the performance that is playing (a ball in flight). A reach follows it at once; a
+travel follows it until the body has left the ground.
+
+- `motion` *Object* - a `MotionState`
+- `name` *string* - the point's name, as the performance's reaches use it (usually 'target')
+- `x` *number* - world metres
+- `y` *number*
+- `z` *number*
+
+**Returns** *boolean* false when nothing playing uses a point of that name
+
+**Complexity** O(targets)
+
+```js
+Kit.act.aim(keeper, 'target', ball.x, ball.y, ball.z);
+```
+
+### `Kit.act.point(motion, name, out)`
+
+Where a named point of the performance that is playing is: the one it was given, its own default placed in
+front of the body, or where `aim` last moved it. For drawing the ball a default kick is aimed at.
+
+- `motion` *Object* - a `MotionState`
+- `name` *string* - the point's name (usually 'target')
+- `out` *Float32Array\|number[]* - receives [x, y, z], world metres
+
+**Returns** *boolean* false (leaving `out` alone) when nothing playing uses a point of that name
+
+**Complexity** O(targets), no allocation
+
+```js
+if (Kit.act.point(player, 'target', spot)) ball.position.set(spot[0], spot[1], spot[2]);
+```
+
+### `Kit.act.playing(motion)`
+
+What an instance is playing: the id of a one-shot until it has finished (a held one stays), else null.
+The base loop does not count.
+
+- `motion` *Object* - a `MotionState`
+
+**Returns** *?string*
+
+**Complexity** O(1)
+
+```js
+if (Kit.act.playing(player) !== 'kick') startNextMove();
+```
+
+### `Kit.act.marks(performanceOrId)`
+
+The named moments of a performance, in seconds from its start at the authored speed (`contact`, `land`...).
+
+- `performanceOrId` *string\|Object* - an id of `Kit.act.REPERTOIRE`, or a compiled performance
+
+**Returns** *Object\<string, number\>* mark name -> seconds; frozen, empty when it declares none
+
+**Complexity** O(1)
+
+```js
+const lead = Kit.act.marks('dive').contact;   // seconds a dive needs to get its hands there, unhurried
+if (ballArrivesIn < lead) Kit.act.play(keeper, 'dive', { target, reach: { mark: 'contact', in: ballArrivesIn } });
+```
+
+### `Kit.act.progress(motion)`
+
+How far through its performance (or its base loop) an instance is.
+
+- `motion` *Object* - a `MotionState`
+
+**Returns** *number* 0..1; 0 when nothing plays
+
+**Complexity** O(1)
+
+```js
+if (Kit.act.playing(player) === 'kick' && Kit.act.progress(player) >= 0.5) launchBall();
+```
+
+### `Kit.act.rootMotion(motion, out)`
+
+Where the body is right now relative to the instance's position: what finished performances left
+uncollected plus the travel of the one playing. Reads only; a camera or a proof sheet follows the body by it.
+
+- `motion` *Object* - a `MotionState`
+- `out` *Float32Array\|number[]* - receives [x, z], world metres
+
+**Returns** *Float32Array\|number[]* `out`
+
+**Complexity** O(1)
+
+```js
+Kit.act.rootMotion(keeper.motion, offset); camera.lookAt(keeper.x + offset[0], 1, keeper.z + offset[1]);
+```
+
+### `Kit.act.keepInPlace(motion, pose)`
+
+Puts a body that a performance has carried away back over the instance's position in a copy of its pose:
+the pose is kept, the distance covered is not. For a view that stays on the character (a maker's stage, a
+proof sheet); a game moves the instance with `takeRootMotion` instead.
+
+- `motion` *Object* - a `MotionState`
+- `pose` *Object* - a copy of `motion.pose` (`Kit.rig.copy`); its carrier bone is moved back
+
+**Returns** *void*
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.rig.copy(motion.pose, figure.local); Kit.act.keepInPlace(motion, figure.local); figure.pose();
+```
+
+### `Kit.act.takeRootMotion(motion, out)`
+
+Collects where a finished performance left the body (a kick's step, a dive's flight): the world offset
+from the instance's position to where the body now stands. Until it is collected the body is drawn there
+anyway; add the offset to the game's own position, and `Kit.motion.place` the instance there.
+
+- `motion` *Object* - a `MotionState`
+- `out` *Float32Array\|number[]* - receives [x, z], world metres
+
+**Returns** *boolean* false (and zeros) when there is nothing to collect
+
+**Complexity** O(1)
+
+```js
+if (Kit.act.takeRootMotion(keeper.motion, offset)) { keeper.x += offset[0]; keeper.z += offset[1]; Kit.motion.place(keeper.motion, keeper.x, 0, keeper.z); }
+```
+
+### `Kit.act.cast(motion, seed)`
+
+Gives an instance its own seed, so a crowd does not fidget and blink in step.
+
+- `motion` *Object* - a `MotionState`
+- `seed` *number* - unsigned 32-bit
+
+**Returns** *Object* `motion`
+
+**Complexity** O(1)
+
+```js
+Kit.act.cast(Kit.motion.state(bake, controller), recipe.seed);
+```
+
+### `Kit.act.seedOf(motion)`
+
+The seed of an instance (`Kit.act.cast`; 1 until it is cast).
+
+- `motion` *Object* - a `MotionState`
+
+**Returns** *number*
+
+**Complexity** O(1)
+
+```js
+const blinkGap = Kit.seeded.unit(Kit.act.seedOf(motion), BLINK_FIELD, count);
+```
+
+### Types
+
+- **PerformanceKey**
+  - `at` *number* - 0..1 through the performance; keys are listed in order
+  - `[ease='smooth']` *string* - how the body ARRIVES at this key: a name of `Kit.act.EASES`
+  - `[shift]` *number[]* - and any other channel of `Kit.act.CHANNELS`, or `arms` / `feet` for both sides
+  - `[face]` *{blink?: string, talk?: string}* - frames of `Kit.body.FRAME_SETS`, held from this key on
+- **PerformanceReach** - A hand, a foot or the gaze pulled to a world point given when the performance is played.
+  - `limb` *string* - 'handLeft', 'handRight', 'hands', 'footLeft', 'footRight' or 'head'
+  - `target` *string* - the name of the point (`Kit.act.play(motion, id, { [target]: [x, y, z] })`)
+  - `in` *number[]* - [from, to]: the pull comes on between these fractions of the performance
+  - `[out]` *number[]* - [from, to]: and lets go between these (default: held to the end)
+  - `[offset]` *number[]* - [out, up, forward] added to the point, in the limb's own lengths, body frame
+  - `[ground=false]` *boolean* - a foot only: it stands on the ground under the point (a plant foot beside a ball)
+- **PerformanceTravel** - The body carried towards a named point: sideways and forwards it goes and stays (the game collects the move with `takeRootMotion`); upwards it rises to the point and falls back, as a thrown body does.
+  - `target` *string* - the name of the point
+  - `start` *number* - 0..1: when the body leaves
+  - `arrive` *number* - 0..1: when it is there (and at its highest)
+  - `[land]` *number* - 0..1: when it is back at the height its keys give (default: it does not rise)
+  - `[keep=0]` *number* - how far short of the point the hips stop, in `reach` lengths (hips to hand)
+  - `[most=1]` *number* - the furthest it goes sideways and forwards, in statures (the body's standing height)
+  - `[mostUp=0.4]` *number* - the highest it rises, in statures
+  - `[axes=[1, 1, 1]` *number[]* - ] which of left, up, forward it travels along
+  - `[stride]` *number* - leg lengths one step covers: a travel longer than this is run in steps, the feet landing in turn ahead of the body, the last step taken by the foot a `ground` reach plants (default: one lunge)
+- **PerformanceSpec**
+  - `id` *string*
+  - `[label]` *string* - for a picker (default: the id)
+  - `seconds` *number* - how long one play (or one loop) lasts
+  - `[loop=false]` *boolean* - a loop wraps from its last key to its first
+  - `[hold=false]` *boolean* - a one-shot that stays on its last key until something else is played
+  - `[needs]` *Object* - a requirement spec for `Kit.body.requirement` ({ needs, atLeast })
+  - `[side]` *string* - 'left' or 'right': the side it is authored for; played mirrored for the other
+  - `[sideBy]` *string* - the name of a target: the side is the one that point is on
+  - `[leanBySide=false]` *boolean* - with `sideBy`: the sideways parts of its keys (the lean, yaw and tilt of the body, spine and head) play in proportion to how far to the side the point is, in full at an arm's length, so a point straight ahead is met squarely instead of leaning the shoulder away from it
+  - `[defaults]` *Object\<string, number[]\>* - target name -> [left, up, forward] from where the body stands, in units of how high its hands reach (`ActRig.high`; its standing height when it has no arms): where the point is when the caller gives none, so a default is within reach of a long body and a squat one alike
+  - `[marks]` *Object\<string, number\>* - named moments on its own timeline, each 0..1 through it (`contact`, `release`, `land`): a game reads them with `Kit.act.marks` and can ask `play` to meet one at a given time
+  - `[defaultsIn='high']` *string* - what the defaults are measured in: 'high' (hand-reach heights) or 'legs' (leg lengths: for a point a foot must meet, such as a ball to kick)
+  - `keys` *PerformanceKey[]*
+  - `[reaches]` *PerformanceReach[]*
+  - `[travel]` *PerformanceTravel*
+- **FamilyForm** - One way of doing a family's job, and where its point must be for it to be the way chosen.
+  - `play` *string* - the id of a performance of the repertoire that is given the family's point
+  - `[aside=[0, Infinity]` *number[]* - ] [from, to): how far to the side of the body the point is, in arm spans (`ActRig.span`: the body's middle to the end of an arm held out sideways)
+  - `[up=[0, Infinity]` *number[]* - ] [from, to): how high above the ground it is, in hand-reach heights (`ActRig.high`: as high as a hand goes with the feet on the ground)
+- **FamilySpec** - Several performances that do one job (stop a ball), told apart by where the point is relative to the body's own reach: a game names the family and the point, and the body does whichever form gets there.
+  - `id` *string*
+  - `[label=id]` *string*
+  - `[target='target']` *string* - the named point the choice is made by
+  - `forms` *FamilyForm[]* - in order: the first whose spans hold the point is chosen, the last when none does
+- **ActRig** - A plan's parts as performances address them, measured once from the plan and a proportioned rest pose.
+  - `carrier` *number* - the bone the body is carried by (`Kit.motion.carrier`)
+  - `legs` *?Object* - the `LegRig` of kit/gait.js, or null for a body that cannot stand on legs
+  - `unit` *number* - metres a `shift` of 1 moves the body: its leg length (half its height without legs)
+  - `stature` *number* - metres from its lowest point to its highest at rest: what travel caps scale by
+  - `headRadius` *number* - metres: half the head bone's height, the ball a keyed hand is kept out of (0 without a head)
+  - `high` *number* - metres from its lowest point to as high as a hand reaches (the stature without arms): what default points scale by
+  - `reach` *number* - metres from the hips to the end of an outstretched arm (0 without arms)
+  - `halfWidth` *number* - metres from the body's middle to a shoulder (a tenth of the stature without arms): how high it lies on its side
+  - `span` *number* - metres from the body's middle to the end of an arm held out sideways (0 without arms)
+  - `spine` *Int16Array* - the spine's bones above the carrier
+  - `neck` *Int16Array*
+  - `head` *number* - the head bone, or -1
+  - `jaw` *number* - the jaw bone, or -1
+  - `tails` *Int16Array* - the base bone of every tail
+  - `wings` *Int16Array* - the base bone of every wing
+  - `wingSign` *Int8Array* - per wing: +1 left, -1 right
+  - `armUpper` *Int16Array* - per side (left, right): the shoulder bone, or -1 without an arm of 3 bones there
+  - `armMiddle` *Int16Array* - per side: the elbow bone
+  - `armEnd` *Int16Array* - per side: the wrist bone
+  - `armLength` *Float32Array* - per side: shoulder to wrist along the bones, metres
+  - `armRest` *Float32Array* - 4 per side: the rest pose's hand as an arm channel
+  - `footLeg` *Int16Array* - per side: the leg (in the leg rig's order) the foot channel of that side moves
+  - `frame` *Float32Array* - 4 per bone: the rest world rotation of the bone's parent (`Kit.motion.restFrames`)
+  - `stretch` *Float32Array* - what the root stretches offsets by: left, up, forward
+  - `groupBones` *Int16Array[]* - per `GROUP`: the bones a fade of that group mixes
+- **FaceState** - The face frames a motion state asks for: an index into each set of `Kit.body.FRAME_SETS` (0 is the rest frame).
+  - `blink` *number*
+  - `talk` *number*
+
+## act-moves.js
+
+> Kit act moves: the everyday repertoire, as data. Each row is a performance spec of kit/act.js: timed keys of
+> role channels, so the same row plays on every body that has the parts it uses.
+>
+> Owns:  the rows `wave`, `cheer`, `bow`, `think`, `shrug`, `jump`, `sit`, `dance`, and the small
+>        fidgets a standing body plays on its own (`glance`, `shiftWeight`, `stretch`, `wag`), defined into
+>        `Kit.act.REPERTOIRE`; `Kit.act.FIDGETS` (the ids of the fidgets).
+> Does not own: how a performance is run (kit/act.js), sport moves (kit/act-sport.js), or always-on life such
+>        as breathing and blinking (kit/act-life.js).
+>
+> Reading a row (see `Kit.act.CHANNELS`): `shift` is [left, up, forward] in leg lengths; turns are
+> [pitch, yaw, tilt] in radians (forward, to the left, to the left); an arm is [raise, front, extend, elbowOut]
+> (raise from hanging: pi / 2 level, pi overhead; front: 0 out to the side, pi / 2 ahead, more across the
+> body); a foot is [out, up, forward, pitch] in leg lengths. A one-shot starts and ends at the standing body
+> without saying so. Timing is the craft: a key's `ease` is how the body arrives at it, so 'anticipate' pulls
+> back first, 'settle' overshoots and returns, 'out' decelerates against gravity and 'in' falls with it.
+>
+> Pure (no DOM, no THREE): data only; unit-tested by tools/test-act.js.
+
+### `Kit.act.FIDGETS`
+
+The fidgets: what `Kit.act.character` lets a standing body do on its own now and then.
+
+## act-sport.js
+
+> Kit act sport: the moves a ball game needs, as data. Where a foot or a hand must meet a ball, the point is a
+> parameter given when the move is played, never a baked direction: the same kick swings through wherever the
+> ball is, with whichever foot is on that side; the same dive goes left or right, low or high.
+>
+> Owns:  the rows `kick` (a step up, the plant, a swing through the point, the follow-through), `keeperReady`
+>        (a goalkeeper's stance, a loop), `dive` (a dive to the side the point is on, hands to it, the landing
+>        and getting up there), `diveStep` (the same dive after a step, for a ball further off), `catch` (both
+>        hands to the point, the ball gathered in), `catchHigh` (a jump for a ball overhead), `smother` (down
+>        onto a ball at the feet), `parry` (one hand punched to it), `celebrate` and `slump`, defined into
+>        `Kit.act.REPERTOIRE`; and the family `save` (whichever of the five gets the hands to the ball).
+> Does not own: how a performance is run (kit/act.js), the ball, or when a game plays a move.
+>
+> Playing one (kit/act.js):
+>   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });   // contact at half way: Kit.act.progress(motion) >= 0.5
+>   Kit.act.play(motion, 'dive', { target: [x, y, z] });               // hands on the point at 0.4 of the way
+>   Kit.act.play(motion, 'save', { target: [x, y, z], reach: { mark: 'contact', in: seconds } });  // the form is chosen
+>   Kit.act.playing(motion);                                           // 'catch', 'catchHigh', 'smother', 'dive' or 'diveStep'
+>   Kit.act.takeRootMotion(motion, offset);                            // afterwards: the kick stepped, the dive flew
+> The moment of contact of each move is `Kit.act.CONTACT[id]`, 0..1 through it, and `Kit.act.marks(id).contact`
+> in seconds; `Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: seconds } })` meets it on time.
+>
+> Pure (no DOM, no THREE): data only; unit-tested by tools/test-act.js.
+
+### `Kit.act.CONTACT`
+
+When each move meets its point, 0..1 through it: the frame a game launches the ball or stops it. The same
+moments, in seconds, are `Kit.act.marks(id).contact`; `Kit.act.play` can be asked to meet one at a given time.
+
+## act-life.js
+
+> Kit act life: what a body does when it is doing nothing, as small `Kit.motion` stages to sequence with
+> anything - a walk, a swim, a performance. A figure that only moves when told to looks switched off; these
+> keep it breathing, shifting its weight, blinking and looking about, each from a little physics or a seeded
+> schedule, so two instances with different seeds never move in step and the same seed always moves the same.
+>
+> Owns:  the stages `breathe` (the chest swells and the spine gives, faster when the body works), `sway` (a
+>        standing body's weight drifts over its feet), `blink` (drives the blink frames of a face on a seeded
+>        schedule), `gaze` (the head follows a point, or wanders, on a spring), `flutter` (wings ride a slow
+>        wave with a seeded flick, and sweep back at speed), their controls `lookAt` /
+>        `lookAhead`, and `character` (the ready composition a game or the Character Maker uses: walk or swim,
+>        life, a performer with fidgets, and trailing chains).
+> Does not own: performances and the performer (kit/act.js), walking (kit/gait.js), swimming (kit/swim.js),
+>        the springs (kit/dynamics.js), or drawing a face frame (`figure.face`).
+>
+> Where each goes in a sequence: `breathe` and `sway` move the body over its feet, so they go BEFORE the stage
+> that solves the legs (`Kit.gait.walk({ before })`); `gaze` and `blink` go after whatever poses the head.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-act.js.
+
 ## gait-gallery.js
 
 > Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`). Four bodies made by the body system - a biped, a
@@ -9778,7 +10610,8 @@ columnsFor(FRAMINGS.head, 2) // 2
 > option of every socket, every dial at both ends, seeded rolls, and every movement in eight phases.
 >
 > Owns:  `Kit.body.proof.SUITES` and `suite(name, catalog)` (pure: a catalogue -> the cells of a sheet), `ACTS`
->        (the movements a cell can show, open for other modules to add to), `CATALOGS` (the catalogues a sheet
+>        (the movements a cell can show, open for other modules to add to), `pose` / `sweep` (a figure at a
+>        moment of a movement, and the room the whole movement needs from a direction), `CATALOGS` (the catalogues a sheet
 >        can be made of) and the `proof` workbench screen that draws a sheet (`Kit.currentGame.show(job)`).
 > Does not own: the catalogues, baking, drawing or movement themselves; taking the pictures (tools/dev/proof.js).
 >
@@ -9792,6 +10625,15 @@ Directions of a turnaround, in turns of a full circle; 0 faces the camera and th
 ### `Kit.body.proof.THREE_VIEWS`
 
 The three directions that between them show a front, a side and a back.
+
+### `Kit.body.proof.DEFAULT_VIEWS`
+
+A three-quarter view and the front: what a movement is shown from unless its row says otherwise.
+
+### `Kit.body.proof.GOAL_GRID`
+
+The shots of the saves suite: fractions of half a goal's width to the keeper's left and of its height. The
+goal is a football goal (7.32 m by 2.44 m for a 1.8 m keeper) scaled to the body's stature.
 
 ### `Kit.body.proof.SUITES`
 
@@ -9825,8 +10667,7 @@ Kit.body.proof.suite('turn', catalog).cells.length // 8 per species
 
 ### `Kit.body.proof.perform(figure, actId, phase)`
 
-Poses a figure at a phase of an act by simulating it from a standing start, so the same cell is the same
-picture every time.
+Poses a figure at a phase of an act by simulating it from a standing start.
 
 - `figure` *Object* - from `Kit.figure.build`
 - `actId` *string* - a key of `ACTS`
@@ -9834,10 +10675,44 @@ picture every time.
 
 **Returns** *?string* why the body cannot do it (the stage's refusal), or null when posed
 
-**Complexity** O(seconds simulated / SIMULATION_STEP) motion steps
+**Complexity** as `pose`
 
 ```js
 Kit.body.proof.perform(figure, 'walk', 0.25)
+```
+
+### `Kit.body.proof.pose(figure, actId, phase)`
+
+Poses a figure at a phase of an act.
+
+- `figure` *Object* - from `Kit.figure.build`
+- `actId` *string* - a key of `ACTS`
+- `phase` *number* - 0..1
+
+**Returns** *ProofPose*
+
+**Complexity** O(seconds simulated / SIMULATION_STEP) motion steps
+
+```js
+Kit.body.proof.pose(figure, 'kick', 0.5).travel // [x, z] the kick has stepped by then
+```
+
+### `Kit.body.proof.sweep(bake, actId, yaw)`
+
+The bounds of an act's whole movement for a bake seen from a direction: what a cell must have room for so
+that no phase spills out of it. The point the act is aimed at (a ball) is included while it is within a
+stature of the body.
+
+- `bake` *Object*
+- `actId` *string* - a key of `ACTS` (`rest`, or an act the body cannot do, gives the rest pose's bounds)
+- `yaw` *number* - turns of a full circle, as a cell's
+
+**Returns** *SweptBounds*
+
+**Complexity** O(seconds of the act / SIMULATION_STEP * bones)
+
+```js
+const { left, right, top } = Kit.body.proof.sweep(bake, 'dive', 0);
 ```
 
 ### Types
@@ -9851,12 +10726,31 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
 - **ProofSheet**
   - `title` *string*
   - `columns` *number* - cells per row
-  - `framing` *('body'\|'head')*
+  - `framing` *('body'\|'head'\|'swept')* - `body`: every figure at one scale, cells sized by the largest; `head`: close on the head; `swept`: each figure fills its own cell, fitted to everything its movement sweeps
   - `cells` *ProofCell[]*
 - **ProofAct** - A movement a cell can show.
   - `stage` *function(): Object* - makes the motion stage (kit/motion.js)
   - `speed` *function(Object): number* - metres per second for a bake (0: on the spot)
   - `cycle` *function(Object, number): number* - seconds of one cycle for a bake at that speed
+  - `[begin]` *function(Object): void* - called with the motion state once it has settled, before the cycle that is shown (a one-shot performance starts here)
+  - `[refusal]` *function(Object): ?string* - why a bake cannot do it, beyond what its stage needs
+  - `[anchor]` *function(Object, Object): void* - called with the motion state and the figure's local pose before it is drawn: a movement that carries the body away puts it back in its cell here
+  - `[travel]` *function(Object, number[]): void* - writes how far the movement has carried the body from where it began, [x, z] metres in the body's frame: the sheet draws it as a mark on the ground
+  - `[point]` *function(Object, number[]): boolean* - writes the point the movement is aimed at (a ball), [x, y, z] metres from where the body began; false when it has none
+  - `[views]` *number[]* - the two directions its phases are shown from, in turns (default `DEFAULT_VIEWS`)
+  - `[isUnlisted]` *boolean* - left out of the acts suite unless asked for by id
+- **ProofPose**
+  - `refusal` *?string* - why the body cannot do the act (the figure is then at rest), or null
+  - `travel` *number[]* - [x, z]: how far the act has carried the body from where it began, metres in the body's frame; the figure itself is drawn in place
+  - `point` *?number[]* - [x, y, z]: what the act is aimed at, metres from where the body is DRAWN; or null
+  - `origin` *number[]* - [x, y, z]: where the bake's own origin (the ground under it) is in the figure's space - a figure is centred and grounded by its rest pose, a moving body stands by its legs
+- **SweptBounds** - Everything a body's joints pass through over a whole act, seen from one direction, with the body drawn in place: metres in the bake's own space (the ground it stands on at 0), `left`..`right` across the view and `bottom`..`top` up it.
+  - `left` *number*
+  - `right` *number*
+  - `bottom` *number*
+  - `top` *number*
+  - `restTop` *number*
+  - `restHalf` *number*
 
 ## creator-rows.js
 
@@ -9949,6 +10843,7 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
   - `redo` *function(): boolean*
   - `canUndo` *function(): boolean*
   - `canRedo` *function(): boolean*
+  - `beginGesture` *function(): void* - a drag starts: every edit to one control until `endGesture` is one undo step, however long the drag lasts or however slowly its edits arrive
   - `endGesture` *function(): void* - the next edit to the same control starts a new undo step
   - `name` *function(): string*
   - `setName` *function(string): string*
@@ -10026,6 +10921,29 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
 >
 > Every icon is an original, simple stroke drawing. Needs the DOM (kit/ui/), so it is exercised in the browser.
 
+## creator-perform.js
+
+> Kit creator perform: what the character on the stage is doing, and the picker that chooses it. The character
+> is never frozen: with nothing chosen it idles (breathes, shifts its weight, looks about, blinks, fidgets);
+> the picker offers walking, running and every performance of `Kit.act.REPERTOIRE` this body can do.
+>
+> Owns:  `Kit.creator.performanceChoices` (pure: a bake -> the rows of the picker, each with why the body cannot
+>        do it, if it cannot), `Kit.creator.stagePlayer` (pure: the motion state behind the stage, made again
+>        when the body changes, advanced each frame towards the chosen row) and `Kit.creator.PerformPicker`
+>        (the rail button and its list; needs the DOM and kit/ui/).
+> Does not own: the performances (kit/act*.js), walking (kit/gait.js), or drawing (kit/creator.js copies the
+>        pose this hands back into the figure).
+>
+> The two pure parts are unit-tested in tools/test-act.js; the picker in the browser (tools/test-creator-ui.js).
+
+### Types
+
+- **PerformanceChoice**
+  - `id` *string* - 'idle', 'walk', 'run' or an id of `Kit.act.REPERTOIRE`
+  - `label` *string*
+  - `kind` *'loop'\|'hold'\|'once'*
+  - `refusal` *?string* - why this body cannot do it; null when it can
+
 ## creator-controls.js
 
 > Kit creator controls: the interface generated from the rows of a schema. A row of kind `dial` becomes sliders,
@@ -10053,6 +10971,7 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
   - `lock` *function(string): Object* - signal (boolean) of a field's lock
   - `queueDial` *function(string, number): void* - remember a slider's newest value; `flush` applies it on the next frame
   - `flush` *function(): boolean* - apply queued slider values as one edit each; true when something was applied
+  - `beginGesture` *function(): void* - a drag starts: its edits are one undo step until `endGesture`
   - `endGesture` *function(): void* - apply what is queued and let the next drag start a new undo step
   - `setColor` *function(string, number): void*
   - `setSocket` *function(string, ?string): void*
@@ -10067,7 +10986,7 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
 
 > Kit creator stage: the part of the screen the character stands in, as components. A gesture layer (drag to
 > turn, pinch or wheel to zoom, arrow keys and + / - for the keyboard), a left rail (undo, redo), a right rail
-> (zoom, hold-to-compare, walk), the character's name, and the quick look presets.
+> (zoom, hold-to-compare, the performance picker), the character's name, and the quick look presets.
 >
 > Owns:  `Kit.creator.StageGestures`, `StageRails`, `StageTitle`, `LookChips`, `HoldButton` and the stage
 >        stylesheet. Each is a component over plain props, so a screen composes them and a test can mount one.
@@ -10123,6 +11042,780 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
 > stage element's box, so it follows the layout.
 >
 > Registered like a game, so the shell gives it a HUD, a back button and clean-up. It draws its own frame (`render`).
+
+## flight.js
+
+> Kit flight: the flight of a spinning ball. Gravity, air drag, the sideways force of spin (the Magnus effect:
+> what bends a curled shot), wind, bounces off the ground and off round bars (posts, rims, rails), all on a
+> fixed step, as plain numbers.
+>
+> Owns:  `Kit.flight.ball` (a ball's state), `Kit.flight.step` (advance it, reporting what it struck),
+>        `Kit.flight.trace` (the path a ball will take, for an aim preview or a headless rule),
+>        `Kit.flight.crossing` (where a step crossed a plane, for goal lines and nets), `Kit.flight.bar`
+>        (a round obstacle between two points) and the default air and ground (`AIR`, `GROUND`).
+> Does not own: rigid bodies that push each other (Kit.physics, on cannon.js), simple unspun arcs
+>        (`Kit.ballistics.trace`), what a bounce means in a game, or drawing.
+>
+> Why not cannon.js: a body there has no drag or lift, tunnels through a thin post at shot speed unless the
+> whole world is sub-stepped, and cannot be copied to ask "where would this shot go". One ball against a few
+> fixed bars is a dozen lines of exact maths, runs in node, and is the same code for the preview and the shot.
+>
+> Conventions: metres, seconds; +Y up. Spin is an angular velocity vector in radians per second (right-hand
+> rule), and the bend is `lift x (spin x velocity)`: spin about +Y bends a ball flying along -Z towards -X.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.flight.AIR`
+
+Air for a football: a 25 m/s shot loses about a tenth of its speed over 11 metres, and a hard side spin bends it about a metre.
+
+### `Kit.flight.GROUND`
+
+Short grass.
+
+### `Kit.flight.ball({ position, velocity, spin, radius = 0.11 } = {})`
+
+Makes a ball.
+
+- `[given]` *{position?: Vector, velocity?: Vector, spin?: Vector, radius?: number}* - radius defaults to 0.11 (a football)
+
+**Returns** *FlightBall*
+
+```js
+const ball = Kit.flight.ball({ position: { x: 0, y: 0.11, z: 0 }, velocity: { x: 2, y: 6, z: -22 }, spin: { x: 0, y: 40, z: 0 } });
+```
+
+### `Kit.flight.bar(id, from, to, radius, bounce = 0.6)`
+
+Makes a round bar (a capsule) for `step` to bounce the ball off.
+
+- `id` *string* - what a hit on it reports
+- `from` *Vector* - one end of its axis
+- `to` *Vector* - the other end
+- `radius` *number* - metres
+- `[bounce=0.6]` *number* - share of the speed into the bar that comes back out
+
+**Returns** *FlightBar*
+
+```js
+const leftPost = Kit.flight.bar('post', { x: -3.66, y: 0, z: 0 }, { x: -3.66, y: 2.44, z: 0 }, 0.06);
+```
+
+### `Kit.flight.step(state, dt, { air = AIR, ground = GROUND, bars = [] } = {})`
+
+Advances a ball by `dt` seconds, in as many equal sub-steps as keep it from skipping over a bar.
+The ball is changed in place.
+
+- `state` *FlightBall*
+- `dt` *number* - seconds, more than 0
+- `[world]` *{air?: FlightAir, ground?: ?FlightGround, bars?: FlightBar[]}* - `ground: null` for none
+
+**Returns** *FlightHit[]* what it struck during the step, in order (empty for free flight)
+
+**Complexity** O(substeps x bars), substeps = speed x dt / (radius / 2); allocates only when something is hit
+
+```js
+const hits = Kit.flight.step(ball, 1 / 60, { bars: [leftPost, rightPost, crossbar] });
+if (hits.some((hit) => hit.id === 'post')) playClang();
+```
+
+### `Kit.flight.trace(state, options = {})`
+
+The path a ball will take: its position after each step, until it stops, `stopWhen` says so or `maxSteps` pass.
+The ball given is not changed.
+
+- `state` *FlightBall*
+- `[options]` *{air?: FlightAir, ground?: ?FlightGround, bars?: FlightBar[], step?: number, maxSteps?: number, stopWhen?: function(FlightBall, FlightHit[], FlightBall): boolean}* - `stopWhen(now, hits, before)` is asked after every step; defaults: 1/120 s steps, 360 of them (three seconds)
+
+**Returns** *{points: Vector[], hits: FlightHit[], end: FlightBall}* `end`: the ball as it was when the trace stopped
+
+**Complexity** O(steps x the cost of `step`) time, O(steps) space
+
+```js
+const path = Kit.flight.trace(ball, { bars, stopWhen: (now) => now.position.z < goalLineZ });
+drawDots(path.points);
+```
+
+### `Kit.flight.copy(state)`
+
+A copy of a ball that can be flown without changing the original.
+
+- `state` *FlightBall*
+
+**Returns** *FlightBall*
+
+### `Kit.flight.crossing(before, after, axis, value)`
+
+Where the straight move from one point to another crossed a plane of constant x, y or z.
+
+- `before` *Vector* - where the move began
+- `after` *Vector* - where it ended
+- `axis` *('x'\|'y'\|'z')*
+- `value` *number* - the plane's place on that axis
+
+**Returns** *?Vector* the crossing point, or null when both ends are on the same side (a point on the plane counts as the far side)
+
+**Complexity** O(1)
+
+```js
+const over = Kit.flight.crossing(previous, ball.position, 'z', goalLineZ);   // null until the step that crosses the line
+```
+
+### Types
+
+- **Vector**
+- **FlightBall**
+  - `position` *Vector* - centre of the ball
+  - `velocity` *Vector* - metres per second
+  - `spin` *Vector* - angular velocity, radians per second
+  - `radius` *number* - metres
+  - `seconds` *number* - flight time so far
+  - `isResting` *boolean* - true once it lies still on the ground
+- **FlightAir**
+  - `gravity` *number* - metres per second squared, downwards
+  - `drag` *number* - per metre: the ball loses `drag x speed` of its speed each second
+  - `lift` *number* - how strongly spin bends the path: acceleration = lift x (spin x velocity)
+  - `spinDecay` *number* - share of the spin lost per second
+  - `wind` *Vector* - velocity of the air, metres per second
+- **FlightGround**
+  - `height` *number* - y of the surface
+  - `bounce` *number* - share of the vertical speed kept by a bounce, 0..1
+  - `grip` *number* - share of the sideways speed lost at each bounce, 0..1
+  - `roll` *number* - deceleration of a rolling ball, metres per second squared
+  - `settleSpeed` *number* - a bounce slower than this (m/s, vertical) becomes a roll
+- **FlightBar**
+  - `id` *string* - what a hit reports
+  - `from` *Vector* - one end of the axis
+  - `to` *Vector* - the other end (equal to `from` for a ball-shaped obstacle)
+  - `radius` *number* - metres
+  - `bounce` *number* - share of the speed into the bar that comes back out, 0..1
+- **FlightHit** - `speed`: metres per second into the surface
+
+## slingshot.js
+
+> Kit slingshot: the pull-back-and-release aim gesture as numbers. A finger goes down, drags back and lets go:
+> how far it was pulled is the power, the way it was pulled (mirrored) is the aim, and a quick sideways flick
+> in the last moment before release is a curve.
+>
+> Owns:  `Kit.slingshot.read` (a drag offset -> pull and angle), `Kit.slingshot.gesture` (one gesture over
+>        time: begin, move, release -> pull, angle and curve) and `DEFAULTS`.
+> Does not own: pointer events (`ctx.input.onDrag` feeds it), what pull, angle and curve mean in a game (a
+>        launch speed, a loft, a spin), the flight (`Kit.flight`, `Kit.ballistics`) or drawing the aim.
+>
+> Conventions: screen pixels, x to the right, y DOWN (as pointer events give them); times in milliseconds.
+> Angle 0 aims straight up the screen and grows to the right; pulling down and to the left aims to the right.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.slingshot.DEFAULTS`
+
+Sized for a thumb on a phone: 170 px is a comfortable pull, a tenth of a second is a deliberate flick.
+
+### `Kit.slingshot.read(dx, dy, options)`
+
+Reads a drag offset as an aim. Only a pull back (down the screen) counts: a drag up the screen is no pull.
+
+- `dx` *number* - pixels the finger is right of where it went down
+- `dy` *number* - pixels the finger is below where it went down
+- `[options]` *Partial\<SlingshotOptions\>*
+
+**Returns** *SlingshotAim*
+
+**Complexity** O(1)
+
+```js
+Kit.slingshot.read(-40, 120) // { pull: 0.74, angle: 0.32, isArmed: true }: pulled down-left, aims right
+```
+
+### `Kit.slingshot.gesture(options)`
+
+Follows one slingshot gesture at a time.
+
+- `[options]` *Partial\<SlingshotOptions\>*
+
+**Returns** *SlingshotGesture*
+
+**Complexity** move: O(1); release: O(samples kept), at most 32
+
+```js
+const sling = Kit.slingshot.gesture();
+input.onDrag(({ phase, x, y }) => {
+  if (phase === 'start') sling.begin(x, y, performance.now());
+  if (phase === 'move') sling.move(x, y, performance.now());
+  if (phase === 'end') launch(sling.release(performance.now()));   // { pull, angle, curve, isArmed }
+});
+```
+
+#### `Kit.slingshot.gesture().begin(x, y, ms)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().move(x, y, ms)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().aim()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().release(ms = last() ? last().ms : 0)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().isActive()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### Types
+
+- **SlingshotOptions**
+  - `maxDrag` *number* - pixels of pull that count as full power
+  - `minPull` *number* - a release below this pull (0..1) is not armed: a cancelled shot, not a dribble
+  - `maxAngle` *number* - the widest aim either side, radians
+  - `settleMs` *number* - the flick window: sideways travel in the last this-many milliseconds is a curve
+  - `flickDeadzone` *number* - sideways travel below this share of `flickFull` is not a flick
+  - `flickFull` *number* - sideways travel, as a share of `maxDrag`, that gives the full curve
+- **SlingshotAim**
+  - `pull` *number* - 0 (no pull) .. 1 (full)
+  - `angle` *number* - radians; 0 straight ahead, positive to the right
+  - `isArmed` *boolean* - is the pull enough to launch?
+- **SlingshotGesture**
+  - `begin` *function(number, number, number): void* - (x, y, ms): the finger went down
+  - `move` *function(number, number, number): void* - (x, y, ms): it moved
+  - `aim` *function(): SlingshotAim* - the aim right now, for a live preview
+  - `release` *function(number=): (SlingshotAim & {curve: number})* - (ms): it let go; `curve` is -1 (full left) .. 1 (full right), 0 without a flick. With a flick, pull and angle are those held before it began.
+  - `isActive` *function(): boolean* - between `begin` and `release`
+
+## netting.js
+
+> Kit netting: a sheet of knots joined by cords (a goal net, a hammock, a banner, a trampoline), simulated as
+> points held together by distance links. A ball pushed into it makes it bulge; it swings back and settles.
+>
+> Owns:  `Kit.netting.sheet` (a rectangular grid of knots between two edge vectors, with any knots pinned),
+>        `Kit.netting.step` (one fixed step: inertia, gravity, the pull home, then the links), `Kit.netting.push`
+>        (move every knot out of a ball) and `DEFAULTS`.
+> Does not own: what the ball does when it meets the net (the caller slows it; `push` reports the contact),
+>        chains of bones (`Kit.dynamics.chain`), the fixed clock (`Kit.dynamics.stepsDue`) or drawing: `links`
+>        is a list of knot pairs, which is exactly the index buffer of line segments.
+>
+> Why position-based (Verlet) and not springs: links are satisfied directly, so a hard shot cannot make the
+> net explode whatever the step, and there is no stiffness to tune against the frame rate.
+>
+> Conventions: metres, seconds, +Y up; positions are x, y, z per knot, row by row from the `origin` corner.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.netting.DEFAULTS`
+
+A taut goal net: it bulges about half a metre for a hard shot and is still again within a second.
+
+### `Kit.netting.sheet({ origin, across, down, columns, rows, isPinned = (column, row) => column === 0 || row === 0 || column === columns - 1 || row === rows - 1 })`
+
+Makes a rectangular net: `columns x rows` knots spread evenly from `origin` along `across` and `down`.
+
+- `spec` *{origin: Vector, across: Vector, down: Vector, columns: number, rows: number, isPinned?: function(number, number): boolean}* - `across` and `down` are the full edge vectors; `isPinned(column, row)` says which knots are tied to the frame (default: the whole rim)
+
+**Returns** *Netting*
+
+**Complexity** O(columns x rows) time and space
+
+```js
+const back = Kit.netting.sheet({ origin: { x: -3, y: 2.4, z: -1.5 }, across: { x: 6, y: 0, z: 0 }, down: { x: 0, y: -2.4, z: 0 }, columns: 13, rows: 7 });
+```
+
+### `Kit.netting.step(net, dt, options)`
+
+Advances a net by one step. Call it on a fixed clock (`Kit.dynamics.stepsDue`); the net is changed in place.
+
+- `net` *Netting*
+- `dt` *number* - seconds
+- `[options]` *Partial\<NettingOptions\>*
+
+**Returns** *number* the largest distance any knot is from its rest place, metres (0 for a net at rest: skip drawing it)
+
+**Complexity** O(knots + passes x cords) time, no allocation
+
+```js
+if (Kit.netting.step(net, 1 / 60) > 0.001) lines.geometry.attributes.position.needsUpdate = true;
+```
+
+### `Kit.netting.push(net, x, y, z, radius)`
+
+Moves every free knot inside a ball out to its surface: the ball pushing the net. Call it after `step`.
+
+- `net` *Netting*
+- `x` *number* - centre of the ball
+- `y` *number*
+- `z` *number*
+- `radius` *number* - metres
+
+**Returns** *number* how many knots the ball is touching (0: no contact)
+
+**Complexity** O(knots) time, no allocation
+
+```js
+if (Kit.netting.push(net, ball.x, ball.y, ball.z, 0.11) > 0) slowTheBall();
+```
+
+### Types
+
+- **Vector**
+- **NettingOptions**
+  - `gravity` *number* - metres per second squared; small, because a net hangs taut
+  - `keep` *number* - share of a knot's motion kept each step (the rest is lost to the air and the cords)
+  - `home` *number* - how strongly a knot is pulled back to where it hangs at rest, per second squared
+  - `passes` *number* - times the links are satisfied per step; more is stiffer
+- **Netting**
+  - `columns` *number* - knots across
+  - `rows` *number* - knots down
+  - `positions` *Float32Array* - 3 per knot: where each is now
+  - `previous` *Float32Array* - 3 per knot: where each was a step ago (its velocity, implicitly)
+  - `rest` *Float32Array* - 3 per knot: where each hangs at rest
+  - `pinned` *Uint8Array* - 1 per knot: 1 for a knot tied to the frame
+  - `links` *Uint16Array* - 2 per cord: the two knots it joins (the index buffer of the net's line segments)
+  - `lengths` *Float32Array* - 1 per cord: its rest length
+
+## seat.js
+
+> Kit seat: fixed camera seats as rules, and the promises a seat makes about its picture. A seat does not say
+> where the camera is; it says what must fit from edge to edge and what must sit just under the interface, and
+> `solve` finds the place and the lens for whatever screen it is given. A promise is a named check over screen
+> rectangles ("the goal is whole", "the hero never covers the ball"); a watch counts the frames that break one
+> and remembers the first, so a playtest can assert that none did on every screen shape.
+>
+> Owns:  `Kit.seat.solve` (rule + screen -> place, look-at point and field of view), `Kit.seat.span` (how
+>        tall a subject stands on screen from a solved seat), `Kit.seat.disc` and `Kit.seat.rect` (screen
+>        rectangles of things and what to ask of them), and `Kit.seat.watch` (promises counted per frame).
+> Does not own: the camera object (the caller copies `at`, `look` and `fov` onto its own), moving cameras
+>        (kit/camera-rigs.js), what is drawn, or the interface whose band a seat keeps clear (the caller states
+>        its height).
+>
+> Conventions: metres, +Y up; a seated camera looks along the z axis (`toward` -1 or 1) at x = 0, pitched
+> down or up. Screen rectangles are CSS pixels, y down: `{ left, top, right, bottom }`.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.seat.solve(seat, size, band = 0)`
+
+Solves a seat for a screen.
+
+- `seat` *SeatRule*
+- `size` *{w: number, h: number, aspect: number, portrait: boolean}* - the screen, CSS pixels (a game's `ctx.size`)
+- `[band=0]` *number* - CSS pixels at the top of the screen that the interface covers
+
+**Returns** *SolvedSeat*
+
+**Complexity** O(1)
+
+```js
+const seat = Kit.seat.solve({ toward: -1, fit: { z: -11, halfWidth: 3 }, anchor: { y: 2.6, z: -11 }, least: 15,
+  portrait: { fov: 50, height: 4 }, landscape: { fov: 42, height: 4 } }, ctx.size, 200);
+camera.position.set(...seat.at); camera.fov = seat.fov; camera.updateProjectionMatrix(); camera.lookAt(...seat.look);
+```
+
+### `Kit.seat.span(solved, { z, from = 0, to }, screenHeight)`
+
+How tall something upright stands on screen from a solved seat: the pixels between two heights above a
+point of the centre line. This is what a pixel grid is fitted to (`Kit.pixelGrid.fit`).
+
+- `solved` *SolvedSeat*
+- `subject` *{z: number, from?: number, to: number}* - where it stands, and the heights of its foot (0) and its top
+- `screenHeight` *number* - pixels (CSS, or device pixels for a drawing buffer)
+
+**Returns** *number* pixels; negative when the subject is behind the camera
+
+**Complexity** O(1)
+
+```js
+Kit.seat.span(seat, { z: 1.4, to: 1.75 }, renderer.domElement.height)
+```
+
+### `Kit.seat.disc(viewPoint, radius, camera, size)`
+
+The screen rectangle of a ball of a radius round a point given in the camera's space.
+
+- `viewPoint` *{x: number, y: number, z: number}* - the point in the camera's space (-z is ahead)
+- `radius` *number* - world units
+- `camera` *{fov: number, near: number}* - vertical field of view in degrees, and the near plane
+- `size` *{w: number, h: number}* - the screen, CSS pixels
+
+**Returns** *?{left: number, top: number, right: number, bottom: number}* null when the point is behind the near plane
+
+**Complexity** O(1)
+
+### `Kit.seat.rect`
+
+Questions asked of screen rectangles; every one takes null (a thing that is not on screen) and answers false or null.
+
+### `Kit.seat.watch(promises)`
+
+Watches a table of promises.
+
+- `promises` *Object\<string, function(\*): boolean\>* - name -> a check that returns false when the promise is broken
+
+**Returns** *SeatWatch*
+
+**Complexity** check: O(promises)
+
+```js
+const watch = Kit.seat.watch({ 'the door is whole': (seen) => Kit.seat.rect.isWhole(seen.door, ctx.size) });
+watch.start(); // then each frame: watch.check({ door: doorRect }, () => ({ room: room.id }));
+```
+
+#### `Kit.seat.watch().start(isWanted = true)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seat.watch().isWatching()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seat.watch().check(seen, note)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seat.watch().report()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### Types
+
+- **SeatLens**
+  - `[fov]` *number* - vertical field of view, degrees (a seat that fits by distance)
+  - `[height]` *number* - the camera's height, metres (a seat that fits by distance)
+  - `[fovRange]` *number[]* - [least, most] vertical field of view, degrees (a seat with a fixed place)
+- **SeatRule**
+  - `toward` *number* - -1 when the camera looks towards -z, 1 towards +z
+  - `fit` *{z: number, halfWidth: number}* - the plane across the view that must be seen this wide
+  - `anchor` *{y: number, z: number, at?: number}* - the point the tilt is set by: it sits just below the band the interface covers (the highest thing that matters), or, with `at`, that share of the screen's height down from the top
+  - `[least]` *number* - least distance from the fit plane, metres (fit by distance)
+  - `[at]` *number[]* - the camera's fixed place [x, y, z] (fit by opening the lens)
+  - `portrait` *SeatLens* - the lens on a screen taller than wide
+  - `landscape` *SeatLens* - the lens on a screen wider than tall
+- **SolvedSeat**
+  - `at` *number[]* - the camera's place [x, y, z]
+  - `look` *number[]* - the point it looks at [x, y, z]
+  - `fov` *number* - vertical field of view, degrees
+- **SeatWatch**
+  - `start` *function(boolean=): void* - begin (or, with false, stop) checking, from a clean count
+  - `isWatching` *function(): boolean*
+  - `check` *function(\*, function(): Object=): void* - run every promise against what is seen now; the second argument is called only for a promise's first break, and what it returns is kept as the note
+  - `report` *function(): {frames: number, broken: Object\<string, number\>, first: Object\<string, Object\>}* - frames checked, frames each promise was broken in, and the note of each first break
+
+## pixel-grid.js
+
+> Kit pixel grid: how fine a pixel-look picture should be, as a rule. A game names a grain (chunky, standard,
+> fine) and says how big its subject is on screen; the rule answers with whole device pixels per texel, so
+> every texel is the same size on any screen and the subject carries the same detail on a tall phone, a small
+> one or a phone on its side. With it: the look settings that go with a grain, and the texel grid under a
+> moving thing in a perspective picture (which has no one texel size: it grows with depth).
+>
+> Owns:  `Kit.pixelGrid.GRAINS` (the named steps), `Kit.pixelGrid.fit` (subject size -> texel size and rows),
+>        `Kit.pixelGrid.settings` (a fitted grid -> overrides for `LookView.use('pixel', ...)`),
+>        `Kit.pixelGrid.texelAt` and `Kit.pixelGrid.snapShift` (stand a moving thing on the grid).
+> Does not own: drawing at that size (kit/look-view.js and look-ink.js, through `pixelRows`), the whole-pixel
+>        upscale (`Kit.look.texelScale`), snapping under an orthographic camera (look-view.js does that itself),
+>        or how big a subject is on screen (the caller measures: `Kit.seat.span` for a seated camera).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.pixelGrid.GRAINS`
+
+The named steps. `chunky` is a sprite of the 16-bit consoles, `standard` a detailed one, `fine` close to an
+illustration that still shows its texels.
+
+### `Kit.pixelGrid.fit(grain, { subjectPixels, subjectHeight, bufferHeight })`
+
+Fits the grid to a subject.
+
+- `grain` *string* - a key of `GRAINS`
+- `screen` *{subjectPixels: number, subjectHeight: number, bufferHeight: number}* - `subjectPixels`: the subject's height on screen, device pixels; `subjectHeight`: its height in world units; `bufferHeight`: the drawing buffer's height, device pixels
+
+**Returns** *PixelGrid*
+
+**Complexity** O(1)
+
+```js
+Kit.pixelGrid.fit('standard', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }).texelPixels // 4
+```
+
+### `Kit.pixelGrid.settings(grid)`
+
+The look overrides that draw a fitted grid: its rows, the grain's tones, and as much of the pixel preset's
+dither as texels of that size can carry (`Kit.look.ditherAt`).
+
+- `grid` *PixelGrid* - from `fit`
+
+**Returns** *{pixelRows: number, toneCount: number, dither: number}*
+
+```js
+view.use('pixel', Kit.pixelGrid.settings(Kit.pixelGrid.fit('fine', screen)));
+```
+
+### `Kit.pixelGrid.texelAt(fov, depth, rows)`
+
+World units one texel covers at a depth in front of a perspective camera.
+
+- `fov` *number* - the camera's vertical field of view, degrees
+- `depth` *number* - distance along the view, world units
+- `rows` *number* - texel rows of the picture
+
+**Returns** *number*
+
+### `Kit.pixelGrid.snapShift(viewPoint, fov, rows)`
+
+How far to move a point, along the camera's right and up, to stand it on the texel grid at its own depth.
+A body moved this way crosses the screen in whole texels, so it keeps one outline while it walks.
+
+- `viewPoint` *{x: number, y: number, z: number}* - the point in the camera's space (-z is ahead)
+- `fov` *number* - degrees
+- `rows` *number* - texel rows of the picture
+
+**Returns** *number[]* [right, up] world units; [0, 0] for a point behind the camera
+
+```js
+const [right, up] = Kit.pixelGrid.snapShift(point.copy(root.position).applyMatrix4(camera.matrixWorldInverse), camera.fov, grid.rows);
+```
+
+### Types
+
+- **Grain**
+  - `subjectRows` *number* - texel rows the subject (a standing character, usually) should get
+  - `toneCount` *number* - tones per ramp: more rows can carry more tones
+  - `level` *string* - the level of detail for figures at this size (kit/figure-shapes.js `LEVELS`)
+- **PixelGrid**
+  - `grain` *string* - the grain it was fitted for
+  - `texelPixels` *number* - device pixels a texel is across: whole, 1 or more
+  - `rows` *number* - texel rows of the whole picture (`bufferHeight / texelPixels`)
+  - `subjectRows` *number* - the rows the subject really gets (as near the grain's as whole pixels allow)
+  - `texelWorld` *number* - world units a texel covers on the subject
+
+## paint.js
+
+> Kit paint: flat scenery painted by hand in the tones of a palette, as data. A book collects quads, each with
+> its own ramp and tone, and becomes one mesh of the look's stamp path (kit/look-toon.js `LookPart.stamps`):
+> a backdrop, a stand, a shop front or a pitch is then one draw call however many colours it uses, and a
+> recolour is a palette write. With it comes a small pixel face for lettering signs.
+>
+> Owns:  `Kit.paint.TONE` (the tones a painter picks from), `Kit.paint.book` (quads, floors, walls, discs,
+>        lettering -> flat arrays), `Kit.paint.GLYPHS` and `Kit.paint.runs` (a word as runs of lit dots),
+>        and `Kit.paint.geometry` (the arrays as a THREE.BufferGeometry ready to dress with `{ stamps: true }`).
+> Does not own: colour (kit/palette.js: a ramp is a row of an atlas, named here only by its slot), the look
+>        (kit/look-*.js), lit or outlined forms (dress an ordinary mesh for those), or what is painted
+>        (kit/stadium.js lays out a sports ground with it; a game lays out its own scenery).
+>
+> Conventions: metres, +Y up. A quad is seen from both sides when its mesh's material is double sided.
+>
+> Pure but for `geometry`, which needs THREE when called: the rest runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.paint.TONE`
+
+Where a painted surface sits along its ramp, 0 (its darkest tone) .. 1 (lightest). Paint is never lit: these
+are the tones a pixel artist picks by hand. `base` is the ramp's own colour at every tone count.
+
+### `Kit.paint.GLYPHS`
+
+A 3 x 5 pixel face, capitals and digits: five rows of three, row by row from the top, '1' is paint.
+Enough for a sign, a scoreboard or a shirt number; not for prose.
+
+### `Kit.paint.FACE`
+
+The face's cell: dots across and down a glyph, and the dots from one glyph's left edge to the next.
+
+### `Kit.paint.runs(word)`
+
+The lit runs of a word in the pixel face: each run is a row and the first and last column of a stretch of
+paint, so a word costs a quad per run, not per dot.
+
+- `word` *string* - characters of `GLYPHS`
+
+**Returns** *{runs: Array\<{row: number, from: number, to: number}\>, columns: number, rows: number}* `columns`: the word's width in dots
+
+**Complexity** O(characters)
+
+```js
+Kit.paint.runs('TEA').columns // 11
+```
+
+### `Kit.paint.book(slotOf)`
+
+Opens a book of painted quads.
+
+- `slotOf` *function(string): number* - a ramp's name -> its row past the block's first row (`LookPart.blockRow`)
+
+**Returns** *PaintBook*
+
+**Complexity** O(1) per quad; a word is O(runs), a disc O(rings x sides)
+
+```js
+const book = Kit.paint.book((ramp) => rows[ramp] - rows.grass);
+book.floor(-5, 5, -5, 5, 0, 'grass', Kit.paint.TONE.base).word({ text: 'TEA', x: 0, y: 1, z: -5, dot: 0.1, ramp: 'sign', tone: Kit.paint.TONE.light });
+const mesh = new THREE.Mesh(Kit.paint.geometry(book));
+view.shading.dress(mesh, { ramp: rows.grass, stamps: true, blockRow: rows.grass, inkGroup: 0 });
+```
+
+#### `Kit.paint.book().quad(corners, ramp, tone)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().floor(fromX, toX, fromZ, toZ, y, ramp, tone)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().wall(fromX, toX, fromY, toY, z, ramp, tone)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().disc({ x = 0, y = 0, z = 0, rings, sides, squash = 1 })`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().word({ text, x, y, z, dot, ramp, tone, reads = 1 })`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().quads()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().arrays()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.paint.geometry(painted)`
+
+A book as a geometry for the look's stamp path: positions, a normal (paint is never lit, but the look wants
+one), `stampPaint` and `stampCentre`.
+
+- `painted` *PaintBook*
+
+**Returns** *THREE.BufferGeometry* dress its mesh with `{ stamps: true, blockRow, inkGroup: 0 }`
+
+**Complexity** O(vertices)
+
+### Types
+
+- **PaintBook**
+  - `quad` *function(number[][], string, number): PaintBook* - four corners [x, y, z] in order round it, a ramp, a tone
+  - `floor` *function(number, number, number, number, number, string, number): PaintBook* - a level rectangle: fromX, toX, fromZ, toZ, y, ramp, tone
+  - `wall` *function(number, number, number, number, number, string, number): PaintBook* - an upright rectangle across x: fromX, toX, fromY, toY, z, ramp, tone
+  - `disc` *function(Object): PaintBook* - a level disc of rings: `{ x, y, z, rings: [[radius, ramp, tone]...], sides, squash? }`
+  - `word` *function(Object): PaintBook* - lettering on a wall: `{ text, x, y, z, dot, ramp, tone, reads? }`, centred on (x, y); `reads` is 1 when a viewer looking along -z reads it (the default) and -1 when the viewer looks along +z
+  - `quads` *function(): number* - how many quads the book holds
+  - `arrays` *function(): {positions: number[], paints: number[]}* - 3 numbers per vertex, and 4 (slot, tone, 0, 0)
+
+## stadium.js
+
+> Kit stadium: a sports ground dressed from data. One row of numbers describes an end (terraces with aisles
+> and rails, a back wall, a roof on pillars, advertising boards with lettering, floodlights, a banded sky with
+> clouds) and another the playing surface (mown stripes, texture, worn patches, painted lines); each is
+> painted into a `Kit.paint` book, so an end is one draw call and a ground is a palette. Who sits where, and
+> the flat cards each spectator is made of, come as plain data for an instanced mesh.
+>
+> Owns:  `Kit.stadium.RAMPS` (the ramp names a ground's palette must have), `Kit.stadium.END`,
+>        `Kit.stadium.SURFACE` and `Kit.stadium.CROWD` (the default rows), `Kit.stadium.end` (paint an end,
+>        return its seats), `Kit.stadium.surface` (paint a pitch, court or track), `Kit.stadium.cards` (a
+>        spectator as cards) and `Kit.stadium.lift` (how a spectator bobs and jumps).
+> Does not own: paint itself (kit/paint.js), colour (a game's palette, under the names of `RAMPS`), the meshes
+>        (the caller makes one from each book with `Kit.paint.geometry`, and an instanced quad for the crowd),
+>        lit things that stand on the ground (goals, balls, people), or the rules of any sport.
+>
+> Conventions: metres, +Y up. An end stands behind an edge of the playing surface that runs along x; `place`
+> says where that edge is (`edge`, a z) and which way the surface lies from it (`toward`, 1 for +z or -1).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.stadium.RAMPS`
+
+The ramps a ground's palette must name. `skin0..`, `hair0..`, `crowd0..` and `scarf0..` are runs (their
+counts are in `CROWD.colors`) and each run's rows must be consecutive, because a spectator's card reaches
+its ramp by an index from the run's first.
+
+### `Kit.stadium.END`
+
+An end of a ground. Distances `behind` are from the edge of the playing surface, away from it.
+`glow` is the halo round a floodlight: give it the sky's own colour where the lamps are off and the halo
+is not there (the lamps stand in the sky band painted in the sky ramp's own colour for exactly that).
+
+### `Kit.stadium.SURFACE`
+
+A playing surface: stripes mown across it, short dashes of texture, patches worn to earth, and lines. Heights are layers above the turf.
+
+### `Kit.stadium.CROWD`
+
+A spectator is a few flat cards: `[width, height, lift above the seat, how far towards the pitch]`. People
+differ in size (`vary`), a share wear a scarf, a share have no hair card, and a share are `lively`: they
+bob in two-frame steps of `bob` metres (about a texel at a stand's distance), the way a sprite crowd moves.
+
+### `Kit.stadium.end(book, place, spec = END)`
+
+Paints an end into a book, farthest things first, and says who could sit in it.
+
+- `book` *Object* - a `Kit.paint.book`
+- `place` *{edge: number, toward: number, turn?: number}* - `edge`: z of the surface's edge; `toward`: 1 when the surface lies towards +z from it, -1 for -z; `turn`: which end this is (0, 1, ...), so two ends differ
+- `[spec=END]` *Object* - a row shaped like `END`
+
+**Returns** *Spectator[]* every seat of the terrace
+
+**Complexity** O(tiers x seats + boards x letters + sky blocks) time; about 500 quads for `END`
+
+```js
+const book = Kit.paint.book(slotOf);
+const seats = Kit.stadium.end(book, { edge: -11, toward: 1 });
+const stand = new THREE.Mesh(Kit.paint.geometry(book)); // dress with { stamps: true, blockRow, inkGroup: 0 }
+```
+
+### `Kit.stadium.surface(book, spec = SURFACE)`
+
+Paints a playing surface into a book.
+
+- `book` *Object* - a `Kit.paint.book`
+- `[spec=SURFACE]` *Object* - a row shaped like `SURFACE` (spread `SURFACE` and state what differs)
+
+**Returns** *Object* the book
+
+**Complexity** O(stripes + dashes + worn patches + line steps); about 350 quads for `SURFACE`
+
+```js
+Kit.stadium.surface(book, { ...Kit.stadium.SURFACE, worn: [{ x: 0, z: 0.2, across: 0.5, deep: 0.3 }], lines: [{ rect: [-26, 26, -11.05, -10.95] }] });
+```
+
+### `Kit.stadium.cards(member)`
+
+The cards a spectator is made of.
+
+- `member` *Spectator*
+
+**Returns** *Array\<{card: number[], run: string, index: number}\>* each card's `[width, height, lift, proud]`, and its ramp as a run of `RAMPS.crowd` and an index into it (the ramp is `run + index`, e.g. 'crowd3')
+
+**Complexity** O(1)
+
+### `Kit.stadium.lift(member, time, cheer = 0)`
+
+How far above their seat a spectator is now: the lively ones bob in steps, and when the ground erupts
+everyone jumps in a wave.
+
+- `member` *Spectator*
+- `time` *number* - seconds
+- `[cheer=0]` *number* - 0..1 how loud the ground is
+
+**Returns** *number* metres
+
+### Types
+
+- **Spectator**
+  - `x` *number*
+  - `y` *number*
+  - `z` *number* - the seat, metres
+  - `chance` *number* - 0..1, fixed: seats with a chance under a ground's attendance are taken
+  - `size` *number* - how big this person is against the cards' sizes
+  - `shirt` *number*
+  - `skin` *number*
+  - `hair` *number*
+  - `scarf` *number* - index into each run of ramps
+  - `hasHair` *boolean*
+  - `hasScarf` *boolean*
+  - `isLively` *boolean*
 
 ## ui/gallery.js
 

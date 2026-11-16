@@ -8,9 +8,11 @@
  * Owns:  `Kit.motion.stage` and the combinators `sequence`, `blend`, `layer`, `when`, `byDetail`; `refusal` /
  *        `requireFit` (can this plan run this stage, and if not, what is missing); `state` (a per-instance
  *        motion state), `advance` (one frame: fixed steps, then the pose, then the world transforms), `place`
- *        (teleport), `advanceStore` (every instance of a `Kit.body.store`); the two stages every kind of
- *        movement shares, `lean` (tilt into acceleration and turns) and `trail` (tails and other loose chains
- *        follow by simulation); and `course` / `drive` (a body steered along a table of speeds and turns).
+ *        (teleport), `advanceStore` (every instance of a `Kit.body.store`); `turnBody` / `restFrames` (turn a
+ *        bone about the body's axes, whichever way a plan's bones point); the stages every kind of
+ *        movement shares, `lean` (tilt into acceleration and turns), `trail` (tails and wings follow by
+ *        simulation) and `loose` (so does everything a plan declares loose: hair, a cloak, ears); and `course` /
+ *        `drive` (a body steered along a table of speeds and turns).
  * Does not own: how legs walk (kit/gait.js) or bodies swim (kit/swim.js), the fixed clock (`Kit.dynamics.stepsDue`),
  *        kinematics (kit/rig.js, kit/reach.js), plans (kit/body-plan.js), where an instance should go (the
  *        caller moves it; this reads the movement), or drawing.
@@ -22,7 +24,7 @@
  */
 (() => {
   const { FIXED_STEP } = Kit.dynamics;
-  const { VECTOR_STRIDE, QUATERNION_STRIDE, AXES } = Kit.rig;
+  const { VECTOR_STRIDE, QUATERNION_STRIDE, QUATERNION_W, AXES } = Kit.rig;
   const TAU = Math.PI * 2;
   /** Metres per second squared. Leans, strides and tails are sized against it. */
   const GRAVITY = 9.81;
@@ -49,6 +51,20 @@
     gravity: Object.freeze([0, -GRAVITY, 0]),
     drag: 2.5, // per second
     stiffnessScale: 2.2, // chain straightening rate (per second) per square root of the base bone's stiffness hint (1/s^2)
+  });
+  /** Tunables of `loose`. */
+  const LOOSE_DEFAULTS = Object.freeze({
+    below: 100, // 1/s^2: a bone whose stiffness hint is under this is loose (the default hint is 120; tails and hair state 20 to 40)
+    except: Object.freeze(['leg', 'arm', 'tail', 'wing']), // roles other stages move: limbs are solved, tails and wings have `trail`
+    gravity: Object.freeze([0, -GRAVITY, 0]),
+    drag: 3, // per second
+    stiffnessScale: 2.2, // as `trail`: straightening rate per square root of the base bone's stiffness hint
+    shortestTip: 0.01, // metres: a last bone shorter than this has no end to swing
+    solidGirth: 0.07, // metres: a stiff bone at least this thick is a solid the loose chains are kept out of
+    solidShare: 0.85, // of a bone's half girth its balls take: drawn shapes are rounder than a cylinder
+    mostBallsPerBone: 4,
+    wornWithin: 1.25, // a chain whose rest points lie within this many radii of a solid's ball is worn round it and does not collide with it
+    thickness: 0.1, // of the chain's own girth: how far its points keep from the floor and the solids
   });
   /** Tunables of `course`. */
   const COURSE_DEFAULTS = Object.freeze({ acceleration: 2.5, turnAcceleration: 4, x: 0, z: 0, heading: 0 });
@@ -555,6 +571,78 @@
     return best;
   };
 
+  // ---- turning a bone about the body's axes ------------------------------------------------------------------------------
+
+  /** @type {WeakMap<Object, Float32Array>} */
+  const framesByRest = new WeakMap();
+
+  /**
+   * For every bone of a body, the world rotation of its PARENT at rest: the frame `turnBody` needs to turn a
+   * bone about the body's axes whichever way the plan's bones were authored to point.
+   * @param {Object} plan a `BodyPlan`
+   * @param {Object} rest its proportioned rest pose (a bake's `rest`)
+   * @returns {Float32Array} 4 per bone (x, y, z, w); the identity for a root. Shared: do not write it
+   * @complexity O(bones) the first time for a rest pose, O(1) after
+   * @example const frames = Kit.motion.restFrames(motion.plan, motion.rest);
+   */
+  const restFrames = (plan, rest) => {
+    const known = framesByRest.get(rest);
+    if (known) return known;
+    const world = Kit.body.worldTransforms(plan, rest, Kit.rig.create(plan.boneCount));
+    const frames = new Float32Array(plan.boneCount * QUATERNION_STRIDE);
+    for (let bone = 0; bone < plan.boneCount; bone++) {
+      const parent = plan.parent[bone];
+      if (parent < 0) frames[bone * QUATERNION_STRIDE + QUATERNION_W] = 1;
+      else frames.set(world.rotation.subarray(parent * QUATERNION_STRIDE, (parent + 1) * QUATERNION_STRIDE), bone * QUATERNION_STRIDE);
+    }
+    framesByRest.set(rest, frames);
+    return frames;
+  };
+
+  const scratchTurn = new Float32Array(QUATERNION_STRIDE);
+  /** out = first * second for quaternions given as four numbers each (`out` may hold either). */
+  const multiplyInto = (out, outAt, firstX, firstY, firstZ, firstW, secondX, secondY, secondZ, secondW) => {
+    out[outAt] = firstW * secondX + firstX * secondW + firstY * secondZ - firstZ * secondY;
+    out[outAt + 1] = firstW * secondY - firstX * secondZ + firstY * secondW + firstZ * secondX;
+    out[outAt + 2] = firstW * secondZ + firstX * secondY - firstY * secondX + firstZ * secondW;
+    out[outAt + QUATERNION_W] = firstW * secondW - firstX * secondX - firstY * secondY - firstZ * secondZ;
+  };
+
+  /**
+   * Turns a bone by [pitch, yaw, tilt] about the BODY's axes (left, up, forward as they lie when its parent is
+   * at rest), on top of the rotation it has. Unlike `Kit.rig.turn`, which turns about the bone's own axes, the
+   * same numbers mean the same lean on any plan: a twist of the hips, a nod, a spine leaning into a step.
+   * @param {Float32Array} rotation the pose's local rotations, 4 per bone; the bone's is rewritten
+   * @param {Float32Array} frames from `Kit.motion.restFrames`
+   * @param {number} bone
+   * @param {number} pitch radians, positive forwards (a nod down)
+   * @param {number} yaw radians, positive towards the body's left
+   * @param {number} tilt radians, positive towards the body's left
+   * @returns {void}
+   * @complexity O(1), no allocation
+   * @example Kit.motion.turnBody(motion.pose.rotation, Kit.motion.restFrames(plan, rest), headBone, 0.2, 0, 0);   // a nod
+   */
+  const turnBody = (rotation, frames, bone, pitch, yaw, tilt) => {
+    const sinPitch = Math.sin(pitch / 2);
+    const cosPitch = Math.cos(pitch / 2);
+    const sinYaw = Math.sin(yaw / 2);
+    const cosYaw = Math.cos(yaw / 2);
+    // Leaning left is a negative turn about the forward axis.
+    const sinRoll = Math.sin(-tilt / 2);
+    const cosRoll = Math.cos(-tilt / 2);
+    // yaw * (pitch * roll): the body turns, then nods, then tilts, each about the axis the last one left it.
+    multiplyInto(scratchTurn, 0, 0, sinYaw, 0, cosYaw, sinPitch * cosRoll, -sinPitch * sinRoll, cosPitch * sinRoll, cosPitch * cosRoll);
+    const at = bone * QUATERNION_STRIDE;
+    const frameX = frames[at];
+    const frameY = frames[at + 1];
+    const frameZ = frames[at + 2];
+    const frameW = frames[at + QUATERNION_W];
+    // In the parent's own frame the turn is (frame^-1 * turn * frame); it goes before the bone's rotation.
+    multiplyInto(scratchTurn, 0, -frameX, -frameY, -frameZ, frameW, scratchTurn[0], scratchTurn[1], scratchTurn[2], scratchTurn[QUATERNION_W]);
+    multiplyInto(scratchTurn, 0, scratchTurn[0], scratchTurn[1], scratchTurn[2], scratchTurn[QUATERNION_W], frameX, frameY, frameZ, frameW);
+    multiplyInto(rotation, at, scratchTurn[0], scratchTurn[1], scratchTurn[2], scratchTurn[QUATERNION_W], rotation[at], rotation[at + 1], rotation[at + 2], rotation[at + QUATERNION_W]);
+  };
+
   // ---- shared stages --------------------------------------------------------------------------------------------------
 
   /**
@@ -646,6 +734,188 @@
           Kit.body.worldTransforms(plan, motion.pose, world, motion.x, motion.y, motion.z, motion.heading, joints[0] + 1, plan.subtreeEnd[joints[0]]);
         }
         trails.epoch = motion.epoch;
+      },
+    });
+  };
+
+  const scratchTip = new Float32Array(VECTOR_STRIDE);
+  const scratchArc = new Float32Array(QUATERNION_STRIDE);
+
+  /** The loose chains of a plan: runs of bones whose stiffness hint is low, each from the body outwards. */
+  const looseChains = (plan, tune) => {
+    const except = Kit.body.roleMask([...tune.except]);
+    const isLoose = (bone) => bone > 0 && plan.stiffness[bone] < tune.below && !(plan.roles[bone] & except);
+    const firstLooseChild = new Int16Array(plan.boneCount).fill(-1);
+    for (let bone = plan.boneCount - 1; bone > 0; bone--) if (isLoose(bone)) firstLooseChild[plan.parent[bone]] = bone;
+    const chains = [];
+    for (let bone = 1; bone < plan.boneCount; bone++) {
+      if (!isLoose(bone) || isLoose(plan.parent[bone])) continue;
+      const joints = [];
+      for (let link = bone; link >= 0; link = firstLooseChild[link]) joints.push(link);
+      chains.push(joints);
+    }
+    return chains;
+  };
+
+  /**
+   * The solids loose chains are kept out of: every stiff, thick bone that is not part of a loose chain, as a
+   * row of balls from its joint to its end. Returns the bones, how many balls each has, and room for the balls.
+   */
+  const solidsOf = (plan, world, chains, tune) => {
+    const isInChain = new Uint8Array(plan.boneCount);
+    chains.forEach((joints) => {
+      for (let bone = joints[0]; bone < plan.subtreeEnd[joints[0]]; bone++) isInChain[bone] = 1;
+    });
+    const bones = [];
+    const perBone = [];
+    for (let bone = 1; bone < plan.boneCount; bone++) {
+      if (isInChain[bone] || plan.girth[bone] < tune.solidGirth || plan.stiffness[bone] < tune.below) continue;
+      Kit.body.tailPosition(plan, world, bone, scratchTip);
+      const at = bone * VECTOR_STRIDE;
+      const length = Math.hypot(scratchTip[0] - world.translation[at], scratchTip[1] - world.translation[at + 1], scratchTip[2] - world.translation[at + 2]);
+      bones.push(bone);
+      perBone.push(Math.max(1, Math.min(tune.mostBallsPerBone, Math.round(length / (plan.girth[bone] * tune.solidShare)))));
+    }
+    const count = perBone.reduce((sum, each) => sum + each, 0);
+    return { bones: Int16Array.from(bones), perBone: Uint8Array.from(perBone), radius: Float32Array.from(bones, (bone) => (plan.girth[bone] / 2) * tune.solidShare), count, balls: new Float32Array(count * Kit.dynamics.BALL_STRIDE) };
+  };
+
+  /** Writes where a body's solids are now into their balls: evenly along each bone, joint to end. */
+  const writeBalls = (plan, world, solids) => {
+    const { balls } = solids;
+    let ball = 0;
+    for (let index = 0; index < solids.bones.length; index++) {
+      const bone = solids.bones[index];
+      const at = bone * VECTOR_STRIDE;
+      Kit.body.tailPosition(plan, world, bone, scratchTip);
+      for (let part = 0; part < solids.perBone[index]; part++, ball++) {
+        const along = (part + 0.5) / solids.perBone[index];
+        const ballAt = ball * Kit.dynamics.BALL_STRIDE;
+        for (let axis = 0; axis < VECTOR_STRIDE; axis++) balls[ballAt + axis] = world.translation[at + axis] + (scratchTip[axis] - world.translation[at + axis]) * along;
+        balls[ballAt + VECTOR_STRIDE] = solids.radius[index];
+      }
+    }
+  };
+
+  /** Builds the simulated chains of a `loose` stage for one instance: a point per joint, and one more for the end of the last bone. */
+  const createLoose = (motion, tune) => {
+    const { plan } = motion;
+    const world = refreshWorld(motion);
+    const between = (from, to) =>
+      Math.hypot(world.translation[to] - world.translation[from], world.translation[to + 1] - world.translation[from + 1], world.translation[to + 2] - world.translation[from + 2]);
+    const found = looseChains(plan, tune);
+    const solids = solidsOf(plan, world, found, tune);
+    const chains = found
+      .map((joints) => {
+        const last = joints[joints.length - 1];
+        Kit.body.tailPosition(plan, world, last, scratchTip);
+        const tipLength = Math.hypot(
+          scratchTip[0] - world.translation[last * VECTOR_STRIDE],
+          scratchTip[1] - world.translation[last * VECTOR_STRIDE + 1],
+          scratchTip[2] - world.translation[last * VECTOR_STRIDE + 2]
+        );
+        const hasTip = tipLength > tune.shortestTip;
+        const lengths = [...joints.slice(1).map((joint, link) => between(joints[link] * VECTOR_STRIDE, joint * VECTOR_STRIDE)), ...(hasTip ? [tipLength] : [])];
+        if (!lengths.length) return null;
+        return {
+          joints: Int16Array.from(joints),
+          hasTip,
+          points: Kit.dynamics.chain({
+            count: lengths.length + 1,
+            lengths,
+            gravity: tune.gravity,
+            drag: tune.drag,
+            stiffness: tune.stiffnessScale * Math.sqrt(plan.stiffness[joints[0]]),
+            balls: solids.count,
+            thickness: plan.girth[last] * tune.thickness,
+          }),
+          tipLength,
+          collides: null,
+        };
+      })
+      .filter(Boolean);
+    // A chain collides with every solid except the ones it is worn round: where its rest points already are.
+    writeBalls(plan, world, solids);
+    chains.forEach((chain) => {
+      const used = [];
+      for (let ball = 0; ball < solids.count; ball++) {
+        const ballAt = ball * Kit.dynamics.BALL_STRIDE;
+        const isWornRound = Array.from(chain.joints.slice(1))
+          .map((joint) => world.translation.subarray(joint * VECTOR_STRIDE, joint * VECTOR_STRIDE + VECTOR_STRIDE))
+          .concat(chain.hasTip ? [Kit.body.tailPosition(plan, world, chain.joints[chain.joints.length - 1], [0, 0, 0])] : [])
+          .some((point) => Math.hypot(point[0] - solids.balls[ballAt], point[1] - solids.balls[ballAt + 1], point[2] - solids.balls[ballAt + 2]) < solids.balls[ballAt + VECTOR_STRIDE] * tune.wornWithin);
+        if (!isWornRound) used.push(ball);
+      }
+      chain.collides = Int16Array.from(used);
+    });
+    return { chains, solids, epoch: -1 };
+  };
+
+  /**
+   * A stage that lets everything a plan declares loose follow the body by simulation: hair strands, plaits, a
+   * cloak, floppy ears - any bone whose `stiffness` hint is low (`Kit.motion.LOOSE_DEFAULTS.below`; the plan
+   * default is stiff) and that no other stage moves. Each run of such bones is shadowed by a `Kit.dynamics`
+   * chain dragged from its base, with a point at the END of the last bone too, so a single loose bone (a
+   * cloak panel) swings like a pendulum. The chain steps on the fixed clock, so it behaves the same at any
+   * frame rate. Its points are kept above the ground the body stands on and out of the body's own solids (every
+   * stiff, thick bone, as a row of balls), except the solids a part is worn round. Put it last, after whatever
+   * moves the body.
+   * @param {{below?: number, except?: string[], gravity?: number[], drag?: number, stiffnessScale?: number}} [options]
+   *   see `Kit.motion.LOOSE_DEFAULTS`
+   * @returns {Stage} needs nothing: a body with nothing loose is left alone
+   * @complexity O(chain points x iterations x fixed steps) per frame; allocates the chains on an instance's first frame
+   * @example const walk = Kit.motion.sequence(Kit.gait.plant(), Kit.motion.trail(), Kit.motion.loose());
+   */
+  const loose = (options = {}) => {
+    const tune = { ...LOOSE_DEFAULTS, ...options };
+    return stage({
+      name: 'loose',
+      pose(motion, plan, dt) {
+        const record = memory(motion, 'loose', (fresh) => createLoose(fresh, tune));
+        if (!record.chains.length) return;
+        const world = refreshWorld(motion);
+        const position = world.translation;
+        // The body's solids as they are this frame, before anything loose is moved; the floor is where the body stands.
+        writeBalls(plan, world, record.solids);
+        for (let index = 0; index < record.chains.length; index++) {
+          const { joints, points, hasTip, collides } = record.chains[index];
+          const stride = Kit.dynamics.BALL_STRIDE;
+          for (let ball = 0; ball < collides.length; ball++) for (let part = 0; part < stride; part++) points.balls[ball * stride + part] = record.solids.balls[collides[ball] * stride + part];
+          points.ballCount = collides.length;
+          points.floor = motion.y;
+          const last = joints[joints.length - 1];
+          const base = joints[0] * VECTOR_STRIDE;
+          // The way the chain leaves the body this frame, before it is bent: towards its second joint, or the end of its only bone.
+          if (joints.length > 1) scratchTip.set(position.subarray(joints[1] * VECTOR_STRIDE, joints[1] * VECTOR_STRIDE + VECTOR_STRIDE));
+          else Kit.body.tailPosition(plan, world, last, scratchTip);
+          const awayX = scratchTip[0] - position[base];
+          const awayY = scratchTip[1] - position[base + 1];
+          const awayZ = scratchTip[2] - position[base + 2];
+          if (record.epoch !== motion.epoch) Kit.dynamics.placeChain(points, position[base], position[base + 1], position[base + 2], awayX, awayY, awayZ);
+          Kit.dynamics.stepChain(points, dt, position[base], position[base + 1], position[base + 2], awayX, awayY, awayZ);
+          Kit.reach.follow(plan.parent, motion.pose, world, joints, points.positions, plan.jointLimits);
+          if (hasTip) {
+            // The last bone has no child joint to aim: turn it so its own end lies towards the chain's last point.
+            const lastAt = last * VECTOR_STRIDE;
+            const tipAt = (points.count - 1) * VECTOR_STRIDE;
+            if (joints.length > 1) Kit.rig.worldTransforms(plan.parent, motion.pose, world, 0, 0, 0, 0, last, last + 1);
+            Kit.body.tailPosition(plan, world, last, scratchTip);
+            Kit.rig.shortestArc(
+              scratchTip[0] - position[lastAt],
+              scratchTip[1] - position[lastAt + 1],
+              scratchTip[2] - position[lastAt + 2],
+              points.positions[tipAt] - position[lastAt],
+              points.positions[tipAt + 1] - position[lastAt + 1],
+              points.positions[tipAt + 2] - position[lastAt + 2],
+              scratchArc
+            );
+            Kit.rig.turnWorld(plan.parent, motion.pose, world, last, scratchArc);
+            // The world joint is refreshed too: what reads the pose after this stage sees the bone where its limits leave it.
+            if (Kit.reach.clamp(motion.pose, last, plan.jointLimits)) Kit.rig.worldTransforms(plan.parent, motion.pose, world, 0, 0, 0, 0, last, last + 1);
+          }
+          Kit.body.worldTransforms(plan, motion.pose, world, motion.x, motion.y, motion.z, motion.heading, joints[0] + 1, plan.subtreeEnd[joints[0]]);
+        }
+        record.epoch = motion.epoch;
       },
     });
   };
@@ -744,6 +1014,7 @@
     SMOOTHING,
     LEAN_DEFAULTS,
     TRAIL_DEFAULTS,
+    LOOSE_DEFAULTS,
     COURSE_DEFAULTS,
     stage,
     sequence,
@@ -760,8 +1031,11 @@
     advance,
     advanceStore,
     carrier,
+    restFrames,
+    turnBody,
     lean,
     trail,
+    loose,
     course,
     drive,
     shortestTurn,

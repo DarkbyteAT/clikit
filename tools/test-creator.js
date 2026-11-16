@@ -158,6 +158,29 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     session.undo();
     close(Kit.creator.rows.valuesOf(session.schema())['dial:build'], 1.1, 0.01, 'control: another control is another step');
   });
+  test('creator session: a drag is one undo step from its start to its end, however slowly its edits arrive (control: the same edits without a gesture are several)', () => {
+    const dragged = makeSession();
+    const start = dragged.session.recipe();
+    dragged.session.beginGesture();
+    [1.02, 1.04, 1.06].forEach((value) => {
+      dragged.session.setDial('height', value);
+      dragged.clock.advance(Kit.creator.MERGE_WINDOW_MS * 5);
+    });
+    dragged.session.endGesture();
+    assert.ok(dragged.session.undo());
+    same(dragged.session.recipe(), start, 'the whole slow drag is undone by one press');
+    const nudged = makeSession();
+    [1.02, 1.04, 1.06].forEach((value) => {
+      nudged.session.setDial('height', value);
+      nudged.clock.advance(Kit.creator.MERGE_WINDOW_MS * 5);
+    });
+    nudged.session.undo();
+    close(Kit.creator.rows.valuesOf(nudged.session.schema())['dial:height'], 1.04, 0.01, 'control: without a gesture, slow edits are separate steps');
+    dragged.session.redo();
+    dragged.session.setDial('height', 1.08);
+    dragged.session.undo();
+    close(Kit.creator.rows.valuesOf(dragged.session.schema())['dial:height'], 1.06, 0.01, 'an edit after the gesture ended is a new step');
+  });
   test('creator session: ending a gesture splits steps, an edit after undo drops the redo, and a no-change edit makes no step', () => {
     const { session } = makeSession();
     session.setDial('height', 1.05);

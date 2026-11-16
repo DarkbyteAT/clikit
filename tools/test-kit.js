@@ -2804,6 +2804,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-settings
 // ---- Kit.figure: shapes, layout, update planning, grounding and framing (pure half) ----
 require('./test-figure.js')({ Kit, sandbox, test, assert });
 require('./test-gait.js')({ Kit, sandbox, test, assert });
+require('./test-act.js')({ Kit, sandbox, test, assert });
 require('./test-proof.js')({ Kit, sandbox, test, assert });
 // ---- Kit.sculpt and Kit.figure.sculptLayers: a body as blended, skinned layers ----
 require('./test-sculpt.js')({ Kit, sandbox, test, assert });
@@ -2811,4 +2812,416 @@ require('./test-sculpt.js')({ Kit, sandbox, test, assert });
 require('./test-looks.js')({ Kit, sandbox, test, assert });
 // ---- the character creator's pure pieces (rows, session, slots, camera) over the wardrobe catalogue ----
 require('./test-creator.js')({ Kit, sandbox, test, assert });
+// ---- flight (kit/flight.js): a spinning ball against air, ground and bars ----
+loadKitFile('kit/flight.js');
+test('flight: a dropped ball falls at g, bounces lower each time and comes to rest on the ground', () => {
+  const still = { ...Kit.flight.AIR, drag: 0 };
+  const dropped = Kit.flight.ball({ position: { x: 0, y: 5.11, z: 0 } });
+  for (let index = 0; index < 60; index++) Kit.flight.step(dropped, 1 / 120, { air: still });
+  assert.ok(Math.abs(dropped.position.y - (5.11 - 0.5 * 9.81 * 0.25)) < 0.03, 'half a second of free fall is 1.23 m');
+  const { hits, end } = Kit.flight.trace(dropped, { air: still, maxSteps: 2400 });
+  const bounces = hits.filter((hit) => hit.kind === 'ground').map((hit) => hit.speed);
+  assert.ok(bounces.length >= 3 && bounces.every((speed, index) => index === 0 || speed < bounces[index - 1]), 'each bounce is slower than the last');
+  assert.ok(end.isResting && Math.abs(end.position.y - 0.11) < 1e-6, 'it ends lying on the grass');
+  assert.throws(() => Kit.flight.ball({ radius: 0 }), /radius must be a positive number/);
+});
+test('flight: drag slows a shot, spin about +Y bends a ball flying along -Z towards -X, and wind carries it', () => {
+  const shot = (spinY, air = Kit.flight.AIR) => Kit.flight.trace(Kit.flight.ball({ position: { x: 0, y: 1, z: 0 }, velocity: { x: 0, y: 3, z: -25 }, spin: { x: 0, y: spinY, z: 0 } }), { air, ground: null, maxSteps: 60 }).end;
+  const straight = shot(0);
+  assert.ok(Math.abs(straight.position.x) < 1e-9, 'no spin, no bend');
+  assert.ok(Math.hypot(straight.velocity.x, straight.velocity.z) < 24 && straight.position.z > -12.5, 'drag has taken speed off');
+  const curled = shot(60);
+  assert.ok(curled.position.x < -0.3 && curled.position.x > -2.5, `a hard spin bends it of the order of a metre, got ${curled.position.x}`);
+  assert.ok(Math.abs(shot(-60).position.x + curled.position.x) < 1e-6, 'the opposite spin bends it the same amount the other way');
+  assert.ok(shot(0, { ...Kit.flight.AIR, wind: { x: 12, y: 0, z: 0 } }).position.x > 0.05, 'a crosswind carries the ball with it');
+});
+test('flight: a fast ball cannot skip a thin post; a square hit comes straight back, a glancing one is turned aside', () => {
+  const post = Kit.flight.bar('post', { x: 0, y: 0, z: -5 }, { x: 0, y: 2.44, z: -5 }, 0.06);
+  const fire = (x) => Kit.flight.trace(Kit.flight.ball({ position: { x, y: 1, z: 0 }, velocity: { x: 0, y: 0, z: -40 } }), { air: { ...Kit.flight.AIR, gravity: 0, drag: 0 }, ground: null, bars: [post], step: 1 / 30, maxSteps: 8 });
+  const square = fire(0);
+  assert.strictEqual(square.hits.length, 1, 'one hit, even at 1.3 m per step');
+  assert.strictEqual(square.hits[0].id, 'post');
+  assert.ok(Math.abs(square.hits[0].speed - 40) < 1e-6 && square.end.velocity.z > 20, 'it comes back at the bar\'s bounce share of its speed');
+  const glancing = fire(0.12);
+  assert.ok(glancing.hits.length === 1 && glancing.end.velocity.x > 5 && glancing.end.velocity.z < 0, 'a glancing hit is turned aside and carries on');
+  assert.strictEqual(fire(0.2).hits.length, 0, 'a ball that passes clear of the post touches nothing');
+});
+test('flight: crossing finds where a step crossed a plane, and trace leaves the ball it was given alone', () => {
+  assert.deepStrictEqual({ ...Kit.flight.crossing({ x: 0, y: 1, z: 1 }, { x: 2, y: 3, z: -1 }, 'z', 0) }, { x: 1, y: 2, z: 0 });
+  assert.strictEqual(Kit.flight.crossing({ x: 0, y: 1, z: 2 }, { x: 0, y: 1, z: 1 }, 'z', 0), null, 'both ends in front of the plane');
+  const kicked = Kit.flight.ball({ velocity: { x: 0, y: 5, z: -10 } });
+  const path = Kit.flight.trace(kicked, { stopWhen: (now) => now.position.z < -3 });
+  assert.ok(path.points.length > 10 && path.end.position.z < -3 && path.end.position.z > -3.2, 'the trace stops at the step that satisfies stopWhen');
+  assert.deepStrictEqual({ ...kicked.position }, { x: 0, y: 0, z: 0 }, 'the original ball has not moved');
+});
+// ---- slingshot (kit/slingshot.js): pull back, aim mirrored, flick to curve ----
+loadKitFile('kit/slingshot.js');
+test('slingshot: pull is the drag length, the aim mirrors the pull, and a drag up the screen is no pull', () => {
+  const straight = Kit.slingshot.read(0, 85);
+  assert.ok(Math.abs(straight.pull - 0.5) < 1e-9 && straight.angle === 0 && straight.isArmed);
+  assert.ok(Kit.slingshot.read(-50, 100).angle > 0.4, 'pulled down-left aims right');
+  assert.ok(Kit.slingshot.read(50, 100).angle < -0.4, 'pulled down-right aims left');
+  assert.strictEqual(Kit.slingshot.read(0, 999).pull, 1, 'pull is capped at full');
+  assert.strictEqual(Kit.slingshot.read(-300, 10).angle, Kit.slingshot.DEFAULTS.maxAngle, 'the aim is capped at maxAngle');
+  assert.deepStrictEqual({ ...Kit.slingshot.read(30, -80) }, { pull: 0, angle: 0, isArmed: false });
+  assert.strictEqual(Kit.slingshot.read(0, 10).isArmed, false, 'a tiny pull is a cancelled shot');
+});
+test('slingshot: a gesture released at rest has no curve; a late sideways flick curves and keeps the aim held before it', () => {
+  const sling = Kit.slingshot.gesture();
+  assert.strictEqual(sling.release(0).isArmed, false, 'a release with no gesture is not a shot');
+  sling.begin(200, 400, 0);
+  sling.move(200, 520, 300);
+  sling.move(180, 540, 600);
+  assert.ok(sling.isActive() && sling.aim().angle > 0);
+  const calm = sling.release(900);
+  assert.strictEqual(calm.curve, 0);
+  assert.ok(Math.abs(calm.pull - Math.hypot(20, 140) / 170) < 1e-9 && !sling.isActive());
+  const flicked = (sideways) => {
+    sling.begin(200, 400, 0);
+    sling.move(200, 540, 400);
+    sling.move(200 + sideways, 545, 560);
+    return sling.release(570);
+  };
+  const right = flicked(60);
+  assert.ok(right.curve > 0.7 && right.angle === 0 && Math.abs(right.pull - 140 / 170) < 1e-9, 'flick right: curve right, aim as held 110 ms earlier');
+  assert.ok(Math.abs(flicked(-60).curve + right.curve) < 0.1, 'flick left mirrors it');
+  assert.strictEqual(flicked(8).curve, 0, 'a wobble inside the deadzone is not a flick');
+  sling.begin(200, 400, 0);
+  sling.move(260, 520, 40);
+  assert.strictEqual(sling.release(50).curve, 0, 'a whole gesture shorter than the flick window has nothing to flick from');
+});
+// ---- netting (kit/netting.js): knots and cords ----
+loadKitFile('kit/netting.js');
+test('netting: a sheet pins its rim, links neighbours, bulges where a ball pushes it and settles back', () => {
+  const net = Kit.netting.sheet({ origin: { x: -2, y: 2, z: 0 }, across: { x: 4, y: 0, z: 0 }, down: { x: 0, y: -2, z: 0 }, columns: 9, rows: 5 });
+  assert.strictEqual(net.positions.length, 9 * 5 * 3);
+  assert.strictEqual(net.links.length / 2, 8 * 5 + 9 * 4, 'one cord to the right and one down from every knot that has such a neighbour');
+  assert.ok(Math.abs(net.lengths[0] - 0.5) < 1e-6);
+  assert.strictEqual(net.pinned.reduce((sum, value) => sum + value, 0), 2 * 9 + 2 * 3, 'the rim is pinned by default');
+  const middle = (2 * 9 + 4) * 3;
+  assert.strictEqual(Kit.netting.push(net, 0, 1, 5, 0.3), 0, 'a ball far from the net touches nothing');
+  assert.ok(Kit.netting.push(net, 0, 1, 0.2, 0.6) >= 1, 'a ball at the net touches knots');
+  assert.ok(net.positions[middle + 2] < -0.3, 'the middle knot is pushed out to the ball\'s far side');
+  const corner = net.positions.slice(0, 3);
+  let farthest = 1;
+  for (let index = 0; index < 240; index++) farthest = Kit.netting.step(net, 1 / 60);
+  assert.ok(farthest < 0.08, `four seconds later the net hangs near rest again, ${farthest}`);
+  assert.deepStrictEqual([...net.positions.slice(0, 3)], [...corner], 'a pinned knot never moves');
+  const stretched = net.lengths.some((length, cord) => {
+    const [first, second] = [net.links[cord * 2] * 3, net.links[cord * 2 + 1] * 3];
+    return Math.hypot(net.positions[first] - net.positions[second], net.positions[first + 1] - net.positions[second + 1], net.positions[first + 2] - net.positions[second + 2]) > length * 1.15;
+  });
+  assert.ok(!stretched, 'no cord is left stretched');
+  assert.throws(() => Kit.netting.sheet({ origin: {}, across: {}, down: {}, columns: 1, rows: 4 }), /at least 2 columns/);
+});
+// ---- Spot Kick Showdown rules (games/penalty-data.js, penalty-sim.js, penalty-bots.js) ----
+['games/penalty-data.js', 'games/penalty-sim.js', 'games/penalty-bots.js'].forEach(loadKitFile);
+{
+  const { SPOT_KICK_DATA: SPOT_DATA, SPOT_KICK_SIM: SPOT, SPOT_KICK_BOTS: SPOT_BOTS } = sandbox;
+  const classic = SPOT_DATA.BALLS[0];
+  const gloves = { reach: 0.46, holdSpeed: 17 };
+  const kicked = (aim, dive = null, keeper = gloves) => {
+    const kick = SPOT.createKick({ launch: SPOT.launchOf(aim, classic), ballRow: classic, keeper, dive });
+    SPOT.playKick(kick);
+    return kick;
+  };
+  test('spot kick launch: a longer pull is faster and higher, the angle picks the side, a flick is spin', () => {
+    const soft = SPOT.launchOf({ pull: 0.4, angle: 0, curve: 0 }, classic);
+    const hard = SPOT.launchOf({ pull: 0.9, angle: 0, curve: 0 }, classic);
+    assert.ok(Math.hypot(hard.velocity.y, hard.velocity.z) > Math.hypot(soft.velocity.y, soft.velocity.z) && hard.velocity.y > soft.velocity.y);
+    assert.ok(soft.velocity.z < 0, 'the goal is towards -Z');
+    assert.ok(SPOT.launchOf({ pull: 0.6, angle: 0.3, curve: 0 }, classic).velocity.x > 0 && SPOT.launchOf({ pull: 0.6, angle: -0.3, curve: 0 }, classic).velocity.x < 0);
+    assert.ok(soft.spin.y === 0, "no flick, no spin");
+    assert.ok(SPOT.launchOf({ pull: 0.6, angle: 0, curve: 1 }, classic).spin.y !== 0);
+    assert.ok(SPOT.launchOf({ pull: 0.9, angle: 0, curve: 0 }, classic, { power: 1.2 }).velocity.z < hard.velocity.z, 'a stronger boot is faster');
+  });
+  test('spot kick outcomes: goal, post, miss, parry and save all come from the one simulation', () => {
+    const outcomesAcross = [0.2, 0.3, 0.36, 0.4, 0.44, 0.5].map((angle) => kicked({ pull: 0.6, angle, curve: 0 }).outcome);
+    assert.deepStrictEqual(outcomesAcross, ['goal', 'goal', 'goal', 'post', 'miss', 'miss'], 'sweeping the aim outwards: in, onto the post, wide');
+    const outcomesUp = [0.3, 0.88, 0.93, 1].map((pull) => kicked({ pull, angle: 0.2, curve: 0 }).outcome);
+    assert.deepStrictEqual(outcomesUp, ['goal', 'goal', 'post', 'miss'], 'pulling harder: in, onto the bar, over');
+    const goal = kicked({ pull: 0.6, angle: 0.3, curve: 0 });
+    assert.ok(goal.touched.net && !goal.touched.keeper && goal.isOver && Math.abs(goal.crossed.x - 1.79) < 0.05);
+    assert.strictEqual(kicked({ pull: 0.6, angle: 0, curve: 0 }).outcome, 'parry', 'straight at a keeper who never moved: off the body');
+    const aim = { pull: 0.5, angle: 0.2, curve: 0 };
+    const crossing = SPOT.crossingOf(SPOT.launchOf(aim, classic), classic);
+    const dive = SPOT.diveOf({ x: crossing.x, y: crossing.y }, 0, { diveSpeed: 6 });
+    const stopped = kicked(aim, dive);
+    assert.ok(stopped.touched.keeper && stopped.outcome !== 'goal', 'hands at the crossing point in time stop it');
+    const outcomes = new Set();
+    // A grid of shots against a keeper sent to each: every outcome the game names must be reachable.
+    [0.35, 0.5, 0.65, 0.8, 0.93, 1].forEach((pull) => [-0.4, -0.3, -0.15, 0, 0.2, 0.38].forEach((angle) => [null, 'there'].forEach((mode) => {
+      const shot = { pull, angle, curve: 0 };
+      const at = SPOT.crossingOf(SPOT.launchOf(shot, classic), classic);
+      outcomes.add(kicked(shot, mode ? SPOT.diveOf({ x: at.x, y: at.y }, 0, { diveSpeed: 7 }) : null, { reach: 0.46, holdSpeed: 30 }).outcome);
+    })));
+    assert.deepStrictEqual([...outcomes].sort(), ['goal', 'miss', 'parry', 'post', 'save']);
+    const late = kicked(aim, SPOT.diveOf({ x: crossing.x, y: crossing.y }, crossing.seconds - 0.05, { diveSpeed: 6 }));
+    assert.strictEqual(late.outcome, 'goal', 'the same dive begun as the ball arrives is too late');
+  });
+  test('spot kick is deterministic and a bent shot crosses away from where it first pointed', () => {
+    const first = kicked({ pull: 0.7, angle: 0.1, curve: 0.8 });
+    const second = kicked({ pull: 0.7, angle: 0.1, curve: 0.8 });
+    assert.deepStrictEqual({ ...first.ball.position }, { ...second.ball.position });
+    assert.strictEqual(first.time, second.time);
+    const straight = SPOT.crossingOf(SPOT.launchOf({ pull: 0.7, angle: 0.1, curve: 0 }, classic), classic);
+    const bent = SPOT.crossingOf(SPOT.launchOf({ pull: 0.7, angle: 0.1, curve: 0.8 }, classic), classic);
+    assert.ok(Math.abs(bent.x - straight.x) > 0.25, `curve moves the crossing, ${bent.x} vs ${straight.x}`);
+    const solved = SPOT.solveAim(1.8, { pull: 0.7, curve: 0.8 }, classic);
+    assert.ok(Math.abs(SPOT.crossingOf(SPOT.launchOf(solved, classic), classic).x - 1.8) < 0.08, 'solveAim finds the angle for a bent shot');
+  });
+  test('spot kick shootout: best of five ends early when it is beyond reach, else sudden death in pairs', () => {
+    const play = (kicks) => kicks.reduce((shootout, didScore) => SPOT.recordKick(shootout, didScore), SPOT.createShootout());
+    assert.strictEqual(SPOT.kickerOf(SPOT.createShootout()), 'you');
+    assert.strictEqual(SPOT.kickerOf(play([true])), 'them');
+    assert.strictEqual(SPOT.statusOf(play([true, false, true, false, true])).winner, null, '3-0 with three of theirs left');
+    assert.strictEqual(SPOT.statusOf(play([true, false, true, false, true, false])).winner, 'you', '3-0 with two left');
+    const level = play([true, true, true, true, true, true, true, true, true, true]);
+    assert.ok(SPOT.statusOf(level).isSuddenDeath && SPOT.statusOf(level).winner === null);
+    assert.strictEqual(SPOT.statusOf(SPOT.recordKick(level, true)).winner, null, 'they still have their kick of the pair');
+    assert.strictEqual(SPOT.statusOf(SPOT.recordKick(SPOT.recordKick(level, true), false)).winner, 'you');
+    assert.strictEqual(SPOT.statusOf(SPOT.recordKick(SPOT.recordKick(level, false), true)).winner, 'them');
+    assert.strictEqual(SPOT.statusOf(SPOT.recordKick(SPOT.recordKick(level, true), true)).winner, null);
+    assert.strictEqual(SPOT.pressureOf(SPOT.createShootout()), 0);
+    const toWin = play([true, false, true, false, true, true, true, false]); // 4-1, your fifth wins it... already won
+    assert.ok(SPOT.statusOf(toWin).winner === 'you');
+    const mustScore = play([false, true, false, true, true, true, true, false, true]); // 3-3 after their... you 3 of 5, they 3 of 4
+    assert.ok(SPOT.pressureOf(mustScore) > 0, 'their kick to win weighs on them');
+    assert.ok(SPOT.pressureOf(level) > SPOT.pressureOf(SPOT.createShootout(), 0.1), 'sudden death weighs more than a loud ground alone');
+    assert.strictEqual(SPOT.swayAt(1.3, 0), 0, 'no pressure, no sway');
+    assert.ok(SPOT.swayAt(1.3, 1) !== 0);
+  });
+  test('spot kick rivals: a gambler goes at the strike, a reader after its reaction; a seen dive is answered', () => {
+    const rng = Kit.rng(5);
+    const launch = SPOT.launchOf({ pull: 0.7, angle: 0.3, curve: 0 }, classic);
+    const base = SPOT_DATA.LADDER[0].rival.keeper;
+    const gamble = SPOT.rivalDive({ ...base, guess: 1 }, { launch, ballRow: classic }, rng);
+    assert.ok(gamble.kind === 'gamble' && gamble.start === 0);
+    const read = SPOT.rivalDive({ ...base, guess: 0, readNoise: 0 }, { launch, ballRow: classic }, rng);
+    assert.ok(read.kind === 'read' && read.start === base.reaction && read.target.x > 1, 'a read goes to the side the ball is going');
+    const sides = Array.from({ length: 200 }, () => SPOT.rivalDive({ ...base, guess: 1, bias: 0, adapt: 1 }, { launch, ballRow: classic, history: [2, 2, 2] }, rng).target.x > 0);
+    assert.ok(sides.filter(Boolean).length > 140, 'a keeper who remembers goes where you keep shooting');
+    const taker = { ...SPOT_DATA.LADDER[0].rival.taker, eyesUp: 1, switchWindow: 0.2 };
+    const intent = { targetX: 1.8, pull: 0.7, curve: 0.3, tell: 1 };
+    const early = { start: -0.5, target: { x: 1.5, y: 1 } };
+    assert.strictEqual(SPOT.takerAnswer(intent, taker, early, rng).targetX, -1.8, 'an early dive to the right side is punished');
+    assert.strictEqual(SPOT.takerAnswer(intent, taker, { ...early, start: -0.1 }, rng).targetX, 1.8, 'a dive inside the window is not seen');
+    assert.strictEqual(SPOT.takerAnswer(intent, taker, { ...early, target: { x: -1.5, y: 1 } }, rng).targetX, 1.8, 'a dive the wrong way needs no answer');
+    assert.strictEqual(SPOT.takerAnswer(intent, taker, null, rng), intent);
+    const struck = SPOT.takerAim(intent, { ...taker, spray: 0 }, classic, 0, rng);
+    assert.ok(Math.abs(SPOT.crossingOf(SPOT.launchOf(struck, classic), classic).x - 1.8) < 0.1, 'a taker without spray hits the spot meant');
+  });
+  test('spot kick rewards: goals and saves pay, streaks multiply, a top corner pays more', () => {
+    const corner = kicked({ pull: 0.88, angle: 0.34, curve: 0 });
+    assert.strictEqual(corner.outcome, 'goal');
+    const plain = SPOT.rewardOf(kicked({ pull: 0.5, angle: 0.2, curve: 0 }), 'taker', 0);
+    assert.ok(plain.isSuccess && !plain.isCorner && plain.coins === SPOT_DATA.REWARDS.goal);
+    assert.ok(SPOT.rewardOf(corner, 'taker', 0).isCorner && SPOT.rewardOf(corner, 'taker', 0).coins === SPOT_DATA.REWARDS.goal + SPOT_DATA.REWARDS.corner);
+    assert.ok(SPOT.rewardOf(corner, 'taker', 2).coins > SPOT.rewardOf(corner, 'taker', 0).coins);
+    assert.deepStrictEqual({ ...SPOT.rewardOf(corner, 'keeper', 3) }, { coins: 0, isSuccess: false, isCorner: false });
+  });
+  test('spot kick progress: the ladder climbs by wins, cups open in order, the shop buys and equips', () => {
+    const progress = SPOT_DATA.createProgress({});
+    assert.strictEqual(progress.next().rival.id, SPOT_DATA.LADDER[0].rival.id);
+    assert.ok(!progress.isRoadOpen() && progress.isCupOpen(SPOT_DATA.CUPS[0]) && !progress.isCupOpen(SPOT_DATA.CUPS[1]));
+    assert.strictEqual(progress.buy('ball', 'feather'), false, 'no coins, no ball');
+    assert.strictEqual(progress.recordMatch({ won: false, coins: 30, goals: 2, saves: 1, index: 0 }).climbed, false);
+    assert.strictEqual(progress.rungsWon(), 0);
+    SPOT_DATA.LADDER.slice(0, 4).forEach((entry) => progress.recordMatch({ won: true, coins: 100, goals: 4, saves: 2, index: entry.index }));
+    assert.strictEqual(progress.rungsWon(), 4);
+    assert.ok(progress.isCupOpen(SPOT_DATA.CUPS[1]), 'winning the first cup opens the second');
+    assert.strictEqual(progress.recordMatch({ won: true, coins: 0, goals: 3, saves: 3, index: 0 }).climbed, false, 'a rematch lower down does not climb');
+    assert.ok(progress.wallet.get() >= 430 + SPOT_DATA.CUPS[0].prize);
+    assert.ok(progress.buy('ball', 'feather') && progress.equip('ball', 'feather'));
+    assert.strictEqual(progress.ball().id, 'feather');
+    const taker = SPOT_DATA.PERKS.find((perk) => perk.role === 'taker');
+    const before = { ...SPOT_DATA.PLAYER_STATS };
+    assert.ok(progress.buy('perk', taker.id) && progress.equip('perk', taker.id));
+    assert.strictEqual(progress.equipped().taker, taker.id);
+    assert.ok(Object.keys(before).some((stat) => progress.stats.get(stat) !== before[stat]), 'a perk changes a stat');
+    progress.noteShot('marsh', { x: 1.2, y: 0.4 });
+    assert.strictEqual(progress.shotsSeen('marsh').length, 1);
+    const beyond = progress.matchAt(SPOT_DATA.LADDER.length + 3);
+    assert.ok(beyond.rival.keeper.reaction <= SPOT_DATA.LADDER[SPOT_DATA.LADDER.length - 1].rival.keeper.reaction, 'the road keeps getting harder');
+    const notes = SPOT_DATA.scoutOf(SPOT_DATA.LADDER[0].rival);
+    assert.ok(notes.keeper.length >= 1 && notes.taker.length >= 1 && notes.keeper.every((line) => typeof line === 'string'));
+  });
+  test('spot kick bots: a stand-in match is seeded, finishes with a winner, and the long arc can be driven', () => {
+    const stats = SPOT_DATA.createProgress({}).stats;
+    const played = () => SPOT_BOTS.playMatch(SPOT_DATA.LADDER[0], { stats, ballRow: classic, matches: 5 }, Kit.rng(11));
+    const first = played();
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(first)), JSON.parse(JSON.stringify(played())));
+    assert.strictEqual(typeof first.won, 'boolean');
+    assert.ok(SPOT_BOTS.practiceOf(40) > SPOT_BOTS.practiceOf(2) && SPOT_BOTS.matchPrize(true, 3) > SPOT_BOTS.matchPrize(true, 0) && SPOT_BOTS.matchPrize(true, 0) > SPOT_BOTS.matchPrize(false, 0));
+    const state = SPOT_BOTS.PROGRESSION.createState(3);
+    const actions = SPOT_BOTS.PROGRESSION.actions(state);
+    assert.ok(actions.length >= 1 && actions.every((action) => typeof action.id === 'string'));
+    assert.ok(SPOT_BOTS.PROGRESSION.apply(state, actions[0], () => 0.5).seconds > 0);
+    assert.ok(SPOT_BOTS.PROGRESSION.summary(state).remaining > 0);
+  });
+  test('spot kick first rival teaches: most shots are on target, and slower than any later rival', () => {
+    const KICKS = 400;
+    const ON_TARGET_AT_LEAST = 0.85; // share of shots that would go in past a keeper who is not there
+    const out = { reach: gloves.reach, holdSpeed: gloves.holdSpeed };
+    const read = (taker) => {
+      const rng = sandbox.Kit.rng(7);
+      let onTarget = 0;
+      let seconds = 0;
+      for (let shot = 0; shot < KICKS; shot++) {
+        const aim = SPOT.takerAim(SPOT.takerIntent(taker, rng), taker, classic, 0, rng);
+        const launch = SPOT.launchOf(aim, classic);
+        const kick = SPOT.createKick({ launch, ballRow: classic, keeper: out, dive: SPOT.diveOf({ x: 9, y: 1 }, 0, { diveSpeed: 6 }) });
+        SPOT.playKick(kick);
+        onTarget += kick.outcome === 'goal' ? 1 : 0;
+        seconds += SPOT.crossingOf(launch, classic).seconds;
+      }
+      return { onTarget: onTarget / KICKS, seconds: seconds / KICKS };
+    };
+    const [first, ...later] = SPOT_DATA.LADDER.map((entry) => read(entry.rival.taker));
+    assert.ok(first.onTarget >= ON_TARGET_AT_LEAST, `the first rival puts ${first.onTarget} on target`);
+    assert.ok(later.every((each) => each.seconds < first.seconds), 'every later rival strikes it faster');
+  });
+}
+// ---- seat, pixel-grid, paint, stadium (kit/seat.js, pixel-grid.js, paint.js, stadium.js) ----
+['seat', 'pixel-grid', 'paint', 'stadium'].forEach((name) => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', `${name}.js`), 'utf8'), sandbox, { filename: `${name}.js` }));
+{
+  const RADIANS = Math.PI / 180;
+  /** A value made in the sandbox as a plain value of this realm, so deepStrictEqual compares what it holds. */
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const screenOf = (w, h) => ({ w, h, aspect: w / h, portrait: h >= w });
+  const SCREENS = [screenOf(390, 844), screenOf(360, 640), screenOf(844, 390)];
+  const rule = { toward: -1, fit: { z: -11, halfWidth: 3 }, anchor: { y: 2.6, z: -11 }, least: 15, portrait: { fov: 50, height: 4 }, landscape: { fov: 42, height: 4 } };
+  test('seat: a solved seat shows its fit plane from edge to edge on every screen, and keeps the anchor under the band', () => {
+    SCREENS.forEach((size) => {
+      const band = size.portrait ? 200 : 60;
+      const seat = Kit.seat.solve(rule, size, band);
+      const halfWidthSeen = Math.abs(seat.at[2] - rule.fit.z) * Math.tan((seat.fov / 2) * RADIANS) * size.aspect;
+      assert.ok(halfWidthSeen >= rule.fit.halfWidth - 1e-9, `${size.w}x${size.h}: the fit plane is ${halfWidthSeen} wide`);
+      assert.ok(seat.at[2] > rule.fit.z, 'a seat that looks towards -z sits on the +z side');
+      // The anchor's height on screen, measured from the centre with span (foot at the look point's height).
+      const anchorAbove = Kit.seat.span(seat, { z: rule.anchor.z, from: seat.look[1], to: rule.anchor.y }, size.h);
+      assert.ok(Math.abs(size.h / 2 - anchorAbove - band) < 0.5, `${size.w}x${size.h}: the anchor sits ${size.h / 2 - anchorAbove} px down, the band is ${band}`);
+    });
+  });
+  test('seat: a fixed place opens its lens within the range, and span grows as a subject nears', () => {
+    const fixed = { toward: -1, fit: { z: -11, halfWidth: 2.9 }, anchor: { y: 2.7, z: -11 }, at: [0.6, 1.5, 0], portrait: { fovRange: [40, 76] }, landscape: { fovRange: [40, 76] } };
+    const [tall, wide] = [Kit.seat.solve(fixed, SCREENS[0]), Kit.seat.solve(fixed, SCREENS[2])];
+    assert.deepStrictEqual(plain(tall.at), fixed.at);
+    assert.ok(tall.fov > wide.fov && wide.fov === 40, 'a narrow screen needs the wider lens; a wide one stops at the least');
+    const seat = Kit.seat.solve(rule, SCREENS[0], 200);
+    assert.ok(Kit.seat.span(seat, { z: 1, to: 1.75 }, 844) > Kit.seat.span(seat, { z: -8, to: 1.75 }, 844));
+  });
+  test('seat: rectangles, discs and a watch that counts broken promises and keeps the first', () => {
+    const size = { w: 400, h: 800 };
+    const camera = { fov: 60, near: 0.5 };
+    const ahead = Kit.seat.disc({ x: 0, y: 0, z: -10 }, 1, camera, size);
+    assert.ok(Math.abs((ahead.left + ahead.right) / 2 - 200) < 1e-9 && Math.abs((ahead.top + ahead.bottom) / 2 - 400) < 1e-9, 'a point straight ahead is at the centre');
+    assert.strictEqual(Kit.seat.disc({ x: 0, y: 0, z: 1 }, 1, camera, size), null, 'behind the camera');
+    const { rect } = Kit.seat;
+    assert.ok(rect.isWhole(ahead, size) && !rect.isWhole({ left: -5, top: 10, right: 50, bottom: 60 }, size) && !rect.isWhole(null, size));
+    assert.ok(rect.overlaps(ahead, { left: 190, top: 390, right: 500, bottom: 900 }) && !rect.overlaps(ahead, null));
+    assert.deepStrictEqual(plain(rect.cut({ left: -5, top: 10, right: 50, bottom: 900 }, size)), { left: 0, top: 10, right: 50, bottom: 800 });
+    assert.strictEqual(rect.cut({ left: 500, top: 10, right: 600, bottom: 60 }, size), null);
+    assert.deepStrictEqual(plain(rect.union(null, ahead)), plain(ahead));
+    const watch = Kit.seat.watch({ 'the door is whole': (seen) => rect.isWhole(seen.door, size) });
+    assert.strictEqual(watch.isWatching(), false);
+    watch.start();
+    watch.check({ door: ahead }, () => ({ moment: 'fine' }));
+    watch.check({ door: null }, () => ({ moment: 'first' }));
+    watch.check({ door: null }, () => ({ moment: 'second' }));
+    assert.deepStrictEqual(plain(watch.report()), { frames: 3, broken: { 'the door is whole': 2 }, first: { 'the door is whole': { moment: 'first' } } });
+    watch.start();
+    assert.deepStrictEqual(plain(watch.report()), { frames: 0, broken: {}, first: {} });
+  });
+  test('pixel-grid: texels are whole device pixels, finer grains give more rows, and the subject keeps near its rows', () => {
+    [[480, 1688], [210, 780], [440, 1280], [240, 844]].forEach(([subjectPixels, bufferHeight]) => {
+      const grids = ['chunky', 'standard', 'fine'].map((grain) => Kit.pixelGrid.fit(grain, { subjectPixels, subjectHeight: 1.75, bufferHeight }));
+      grids.forEach((grid) => {
+        assert.ok(Number.isInteger(grid.texelPixels) && grid.texelPixels >= 1);
+        assert.ok(Math.abs(grid.rows * grid.texelPixels - bufferHeight) < 1e-9 && Math.abs(grid.texelWorld * grid.subjectRows - 1.75) < 1e-9);
+      });
+      assert.ok(grids[0].rows <= grids[1].rows && grids[1].rows <= grids[2].rows);
+    });
+    assert.strictEqual(Kit.pixelGrid.fit('standard', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }).texelPixels, 4);
+    assert.throws(() => Kit.pixelGrid.fit('gritty', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }), /no grain "gritty"/);
+    const fine = Kit.pixelGrid.settings(Kit.pixelGrid.fit('fine', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }));
+    const chunky = Kit.pixelGrid.settings(Kit.pixelGrid.fit('chunky', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }));
+    assert.ok(fine.pixelRows > chunky.pixelRows && fine.toneCount > chunky.toneCount && fine.dither > chunky.dither, 'a finer grid carries more tones and more dither');
+  });
+  test('pixel-grid: a snapped point lands on a whole texel of its own depth', () => {
+    const [fov, rows] = [50, 422];
+    const point = { x: 0.337, y: -1.218, z: -6.5 };
+    const [right, up] = Kit.pixelGrid.snapShift(point, fov, rows);
+    const texel = Kit.pixelGrid.texelAt(fov, 6.5, rows);
+    [(point.x + right) / texel, (point.y + up) / texel].forEach((texels) => assert.ok(Math.abs(texels - Math.round(texels)) < 1e-9));
+    assert.ok(Math.abs(right) <= texel / 2 && Math.abs(up) <= texel / 2, 'never more than half a texel');
+    assert.deepStrictEqual(plain(Kit.pixelGrid.snapShift({ x: 1, y: 1, z: 2 }, fov, rows)), [0, 0], 'behind the camera');
+  });
+  test('paint: a book holds quads with a slot and a tone each; a word is a quad per run; a disc is rings', () => {
+    const slots = { grass: 0, sign: 3 };
+    const book = Kit.paint.book((ramp) => slots[ramp]);
+    book.floor(-1, 1, -2, 2, 0, 'grass', Kit.paint.TONE.base).wall(0, 1, 0, 1, -5, 'sign', Kit.paint.TONE.light);
+    assert.strictEqual(book.quads(), 2);
+    const { positions, paints } = book.arrays();
+    assert.strictEqual(positions.length, 2 * 6 * 3);
+    assert.deepStrictEqual(plain(paints.slice(0, 4)), [0, 0.5, 0, 0]);
+    assert.deepStrictEqual(plain(paints.slice(24, 28)), [3, 0.8, 0, 0]);
+    assert.throws(() => book.quad([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], 'mauve', 0.5), /no slot for the ramp "mauve"/);
+    const tea = Kit.paint.runs('TEA');
+    assert.strictEqual(tea.columns, 11);
+    assert.deepStrictEqual(plain(tea.runs[0]), { row: 0, from: 0, to: 2 }, 'the bar of the T');
+    assert.ok(tea.runs.length < 'TEA'.length * 15, 'runs, not dots');
+    assert.throws(() => Kit.paint.runs('T@A'), /no "@"/);
+    const before = book.quads();
+    book.word({ text: 'TEA', x: 0, y: 1, z: 0, dot: 0.1, ramp: 'sign', tone: 0.5 });
+    assert.strictEqual(book.quads() - before, tea.runs.length);
+    const xs = book.arrays().positions.filter((_value, index) => index % 3 === 0).slice(before * 6);
+    assert.ok(Math.abs(Math.min(...xs) + 0.55) < 1e-9 && Math.abs(Math.max(...xs) - 0.55) < 1e-9, 'centred on x');
+    const mirrored = Kit.paint.book(() => 0).word({ text: 'T', x: 0, y: 0, z: 0, dot: 1, ramp: 'sign', tone: 0.5, reads: -1 }).arrays().positions;
+    assert.ok(Math.max(...mirrored.filter((_value, index) => index % 3 === 0)) > 1.49, 'lettering for a viewer looking the other way runs the other way');
+    assert.strictEqual(Kit.paint.book(() => 0).disc({ rings: [[0.5, 'a', 0.2], [1, 'a', 0.5]], sides: 12 }).quads(), 24);
+  });
+  test('stadium: an end and a surface are painted from data in ramps the module names, and the same every time', () => {
+    const named = new Set([...Kit.stadium.RAMPS.surface, ...Kit.stadium.RAMPS.end]);
+    const used = new Set();
+    const bookOf = () => Kit.paint.book((ramp) => (used.add(ramp), 0));
+    const book = bookOf();
+    const seats = Kit.stadium.end(book, { edge: -11, toward: 1 });
+    assert.ok([...used].every((ramp) => named.has(ramp)), `unnamed ramps: ${[...used].filter((ramp) => !named.has(ramp))}`);
+    assert.ok(book.quads() > 300 && book.quads() < 900, `${book.quads()} quads`);
+    const zs = book.arrays().positions.filter((_value, index) => index % 3 === 2);
+    assert.ok(Math.max(...zs) < -11, 'everything of an end stands behind its edge');
+    assert.ok(seats.length > 250 && seats.every((seat) => seat.z < -11 && seat.y > 0 && seat.chance >= 0 && seat.chance < 1));
+    const again = Kit.stadium.end(bookOf(), { edge: -11, toward: 1 });
+    assert.deepStrictEqual(plain(again.map((seat) => seat.chance)), plain(seats.map((seat) => seat.chance)), 'no random');
+    const other = Kit.stadium.end(bookOf(), { edge: 6, toward: -1, turn: 1 });
+    assert.ok(other.every((seat) => seat.z > 6) && other[0].chance !== seats[0].chance, 'the other end faces the other way and seats other people');
+    const taken = seats.filter((seat) => seat.chance < 0.45).length / seats.length;
+    assert.ok(taken > 0.35 && taken < 0.55, `attendance 0.45 seats ${taken}`);
+    seats.forEach((seat) => {
+      const cards = Kit.stadium.cards(seat);
+      assert.ok(cards.length >= 2 && cards.length <= Kit.stadium.CROWD.mostCards && cards.every(({ run, index }) => index < Kit.stadium.CROWD.colors[run]));
+    });
+    const lively = seats.find((seat) => seat.isLively);
+    const lifts = new Set(Array.from({ length: 40 }, (_unused, step) => Kit.stadium.lift(lively, step * 0.1)));
+    assert.deepStrictEqual(plain([...lifts].sort()), [0, Kit.stadium.CROWD.bob], 'a lively spectator bobs in two steps, never between');
+    assert.strictEqual(Kit.stadium.lift(seats.find((seat) => !seat.isLively), 3.3), 0);
+    const pitch = Kit.stadium.surface(bookOf(), { ...Kit.stadium.SURFACE, worn: [{ x: 0, z: 0, across: 0.5, deep: 0.3 }], lines: [{ rect: [-1, 1, 0, 0.1] }, { arc: { x: 0, z: 0, radius: 3, from: -0.5, to: 0.5, steps: 8 } }] });
+    assert.strictEqual(pitch.quads(), 25 + 300 + 7 + 1 + 8, 'stripes, dashes, a worn patch, a line and an arc');
+  });
+  test('spot kick stage: the grid is whole pixels on every screen and the default grain is a step finer than chunky', () => {
+    ['games/penalty-stage.js'].forEach(loadKitFile);
+    const STAGE = sandbox.SPOT_KICK_STAGE;
+    assert.strictEqual(STAGE.LOOK.grain, 'standard');
+    SCREENS.forEach((size) => {
+      [1, 2].forEach((ratio) => {
+        const [chunky, standard, fine] = ['chunky', 'standard', 'fine'].map((grain) => STAGE.gridOf(grain, size, size.h * ratio));
+        [chunky, standard, fine].forEach((grid) => assert.ok(Number.isInteger(grid.texelPixels)));
+        assert.ok(chunky.rows <= standard.rows && standard.rows <= fine.rows);
+        if (ratio === 2) assert.ok(standard.subjectRows >= 90 && standard.subjectRows <= 150, `${size.w}x${size.h}: a character stands ${standard.subjectRows} rows tall`);
+      });
+    });
+    assert.ok(new Set(STAGE.WORLD_RAMPS).size === STAGE.WORLD_RAMPS.length, 'no ramp named twice');
+  });
+}
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

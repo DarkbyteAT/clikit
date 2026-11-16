@@ -1,7 +1,7 @@
 /**
  * Kit creator stage: the part of the screen the character stands in, as components. A gesture layer (drag to
  * turn, pinch or wheel to zoom, arrow keys and + / - for the keyboard), a left rail (undo, redo), a right rail
- * (zoom, hold-to-compare, walk), the character's name, and the quick look presets.
+ * (zoom, hold-to-compare, the performance picker), the character's name, and the quick look presets.
  *
  * Owns:  `Kit.creator.StageGestures`, `StageRails`, `StageTitle`, `LookChips`, `HoldButton` and the stage
  *        stylesheet. Each is a component over plain props, so a screen composes them and a test can mount one.
@@ -135,11 +135,12 @@
 
   /**
    * The rails of tools beside the character.
-   * @param {{director: Object, status: Object, held: Object, walking: ?Object, onUndo: function(): void, onRedo: function(): void}} props
-   *   `status` a signal of `{ canUndo, canRedo }`; `held` the compare signal; `walking` a boolean signal, or null when the preview cannot walk
+   * @param {{director: Object, status: Object, held: Object, performance: ?Object, choices: function(): Object[], onUndo: function(): void, onRedo: function(): void}} props
+   *   `status` a signal of `{ canUndo, canRedo }`; `held` the compare signal; `performance` a signal of the chosen
+   *   performance's id with `choices` reading its rows (kit/creator-perform.js), or null when the preview cannot move
    * @returns {Object} a vnode
    */
-  const StageRails = ({ director, status, held, walking, onUndo, onRedo }) => {
+  const StageRails = ({ director, status, held, performance, choices, onUndo, onRedo }) => {
     const { canUndo, canRedo } = status.value;
     return html`
       <div class="cr-rail cr-rail-left">
@@ -150,7 +151,7 @@
         <${Button} id="cr-zoom-in" class="cr-tool" label="Zoom in" onClick=${() => director.zoomBy(ZOOM_STEP)}><${Icon} name="plus" /><//>
         <${Button} id="cr-zoom-out" class="cr-tool" label="Zoom out" onClick=${() => director.zoomBy(1 / ZOOM_STEP)}><${Icon} name="minus" /><//>
         <${HoldButton} id="cr-compare" held=${held} label="Hold to see the character as this session began" icon="eye" />
-        ${walking ? html`<${Button} id="cr-walk" class="cr-tool" pressed=${walking} label="Walk preview" onClick=${() => (walking.value = !walking.value)}><${Icon} name="walk" /><//>` : null}
+        ${performance ? html`<${Kit.creator.PerformPicker} choice=${performance} choices=${choices} />` : null}
       </div>`;
   };
 
