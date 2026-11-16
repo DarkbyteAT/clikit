@@ -324,6 +324,7 @@
        * Head framing: each cell is centred on the ball that holds its figure's head, and every species' head is
        * drawn the same size (individuals of one species keep theirs against each other), so a hound's or a
        * fish's head fills its cell as a person's does. A body with no head bone is framed by its whole self.
+       * The rest of a body may reach past its cell: see `solo`.
        */
       const frameHeads = (columns, rows) => {
         const heads = shown.map((entry) => {
@@ -339,12 +340,26 @@
           const [column, row] = [index % columns, Math.floor(index / columns)];
           entry.scale = radius / largest.get(entry.cell.recipe.species);
           entry.figure.root.scale.setScalar(entry.scale);
-          // The head's middle, turned with the figure about its own axis, lands on the middle of the cell.
+          // The head's middle, turned with the figure about its own axis, lands on the middle of the cell. The camera
+          // looks a little down, so a head nearer the camera than the figure's axis is drawn lower: it is raised by that.
           const turn = entry.cell.yaw * TURN;
           const [x, y, z] = heads[index].center;
+          const toCamera = (z * Math.cos(turn) - x * Math.sin(turn)) * entry.scale;
           entry.figure.root.position.x = (column - (columns - 1) / 2) * side - (x * Math.cos(turn) + z * Math.sin(turn)) * entry.scale;
-          entry.figure.root.position.y = (rows - 1 - row + 0.5) * side - y * entry.scale;
+          entry.figure.root.position.y = (rows - 1 - row + 0.5) * side - y * entry.scale + toCamera * Math.tan((CAMERA.pitchDegrees * Math.PI) / 180);
         });
+      };
+
+      /**
+       * Draws one cell of the page alone, or all of them again. A close-up of a head cannot hold the body behind
+       * it, which reaches into the cells beside it (a hound's back, a fish's whole length); a picture of each cell
+       * alone, cut to the cell, shows the head and nothing of its neighbours (tools/dev/proof.js does this).
+       * @param {?number} index the cell to draw alone; null: every cell
+       * @returns {number} how many cells the page holds
+       */
+      const solo = (index) => {
+        shown.forEach((entry, at) => (entry.figure.root.visible = index === null || at === index));
+        return shown.length;
       };
 
       /** The crowd drawn by `crowd`, if any (a sheet replaces it and the reverse). */
@@ -417,6 +432,7 @@
         },
         debugState: () => ({ cells: shown.length, grid }),
         show,
+        solo,
         crowd,
       };
     },

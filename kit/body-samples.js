@@ -23,7 +23,7 @@
    */
   const EAR_POINT = Object.freeze({ stub: 0.007, least: 5, most: 9, usual: 7 });
   /** How thick a fin is drawn, metres: a blade of flesh with a rounded edge, not a card. */
-  const FIN_DEPTH = 0.03;
+  const FIN_DEPTH = 0.024;
   /** The role that goes with a side suffix: 'Left' -> 'left'. */
   const sideRoles = (side) => (side === 'Left' ? 'left' : 'right');
 
@@ -248,7 +248,7 @@
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
         { name: 'trunk', parent: 'ground', at: [0, 0.5, 0], roles: ['spine'], girth: 0.16, shape: flattened(0.185, { width: 0.5 }), joint: 'free', paint: 'skin' },
-        { name: 'head', parent: 'trunk', at: [0, 0, 0.24], tail: [0, 0, 0.2], roles: ['head'], girth: 0.13, shape: flattened(0.165, { width: 0.5, taper: 0.4 }) },
+        { name: 'head', parent: 'trunk', at: [0, 0, 0.24], tail: [0, 0, 0.2], roles: ['head'], girth: 0.13, shape: flattened(0.172, { width: 0.5, taper: 0.62 }) },
         { name: 'jaw', parent: 'head', at: [0, -0.05, 0.1], tail: [0, 0, 0.1], roles: ['jaw'], girth: 0.03, shape: drawn(0.034, 0.7) },
         { name: 'rear', parent: 'trunk', at: [0, 0, -0.24], roles: ['spine'], girth: 0.12, shape: flattened(0.155, { width: 0.46 }) },
         { name: 'tailRoot', parent: 'rear', at: [0, 0, -0.2], roles: ['tail'], girth: 0.07, shape: flattened(0.105, { width: 0.44 }) },
@@ -282,10 +282,12 @@
           girth: 0.02,
           shape: fin(
             [
-              [0.14, -0.03],
-              [-0.02, 0.16],
-              [-0.17, 0.12],
-              [-0.14, -0.03],
+              [0.16, -0.05],
+              [0.03, 0.19],
+              [-0.08, 0.17],
+              [-0.18, 0.1],
+              [-0.25, 0.08],
+              [-0.25, -0.05],
             ],
             'z'
           ),
@@ -337,83 +339,90 @@
    */
   const FACES = {
     biped: {
-    // A face through the shared vocabulary (kit/body-face.js): where this head keeps its features, then the
-    // relief every biped has and the plainest eyes and mouth. The ear's point is a stub hidden in a round ear; the
+      // A face through the shared vocabulary (kit/body-face.js): where this head keeps its features, then the
+      // relief every biped has and the plainest eyes and mouth. The ear's point is a stub hidden in a round ear; the
       // pointed-eared species draw it out with a dial (`EAR_POINT`).
-    anchors: face.anchors('head', { eye: { elevation: 3, spacing: 52 }, brow: { elevation: 20, spacing: 54 }, nose: { elevation: -14 }, mouth: { elevation: -33 }, ear: { elevation: -3, spacing: 176 }, cheek: { elevation: -22, spacing: 78 }, chin: { elevation: -53 } }),
-    features: [
-      ...face.dotEyes(0.019, { scale: FACE_SCALE.biped }),
-      ...face.eyeSockets([0.03, 0.03], { scale: FACE_SCALE.biped }),
-      ...face.lineMouth([0.036, 0.012], { scale: FACE_SCALE.biped }),
-      ...face.lips([0.036, 0.012], { scale: FACE_SCALE.biped }),
-      ...face.browRidge({ scale: FACE_SCALE.biped }),
-      ...face.cheeks({ scale: FACE_SCALE.biped }),
-      ...face.chin({ scale: FACE_SCALE.biped }),
-      ...face.nose('straight', { scale: FACE_SCALE.biped }),
-      ...face.ears({ height: 0.05, width: 0.03, point: { length: EAR_POINT.stub, back: 0.004, radius: 0.0085 } }, { scale: FACE_SCALE.biped }),
-    ],
+      anchors: face.anchors('head', { eye: { elevation: 3, spacing: 52 }, brow: { elevation: 20, spacing: 54 }, nose: { elevation: -14 }, mouth: { elevation: -33 }, ear: { elevation: -3, spacing: 176 }, cheek: { elevation: -22, spacing: 78 }, chin: { elevation: -53 } }),
+      features: [
+        ...face.dotEyes(0.019, { scale: FACE_SCALE.biped }),
+        ...face.eyeSockets([0.03, 0.03], { scale: FACE_SCALE.biped }),
+        ...face.lineMouth([0.036, 0.012], { scale: FACE_SCALE.biped }),
+        ...face.lips([0.036, 0.012], { scale: FACE_SCALE.biped }),
+        ...face.browRidge({ scale: FACE_SCALE.biped }),
+        ...face.cheeks({ scale: FACE_SCALE.biped }),
+        ...face.chin({ scale: FACE_SCALE.biped }),
+        ...face.nose('straight', { scale: FACE_SCALE.biped }),
+        ...face.ears({ height: 0.05, width: 0.03, point: { length: EAR_POINT.stub, back: 0.004, radius: 0.0085 } }, { scale: FACE_SCALE.biped }),
+      ],
     },
     quadruped: {
-    // The head points forward, so its features sit far round it: eyes on top of the skull, ears behind them,
-    // a nose on the end of the muzzle. The same vocabulary, other anchors.
-    anchors: face.anchors('head', { eye: { elevation: 52, spacing: 84, azimuth: 0 }, brow: { elevation: 62, spacing: 70 }, nose: { elevation: 0 }, mouth: { elevation: -18 }, ear: { elevation: 62, spacing: 250 }, cheek: { elevation: -10, spacing: 150 }, chin: { elevation: -40 } }),
-    features: [
-      ...face.dotEyes(0.016, { scale: FACE_SCALE.quadruped }),
-      ...face.eyeSockets([0.022, 0.022], { scale: FACE_SCALE.quadruped, depth: 0.002 }),
-      ...face.browRidge({ scale: FACE_SCALE.quadruped }),
-      // A dark nose pad on the end of the muzzle, over a rounded button.
-      ...face.nose('button', { scale: FACE_SCALE.quadruped }),
-      ...face.dotEyes(0.02, { scale: FACE_SCALE.quadruped }).map((feature) => ({ ...feature, id: 'nosePad', anchor: 'nose', spacing: undefined, glow: false, elevation: 4, frames: { rest: [feature.frames.open[0]] }, rest: 'rest' })),
-      // Pricked ears: a broad plate each, drawn to a point, standing well off the skull.
-      ...face.ears({ height: 0.06, width: 0.05, thickness: 0.014, flare: 62, lobe: false, point: { length: 0.07, back: 0.012, radius: 0.016 } }, { scale: FACE_SCALE.quadruped }),
-    ],
+      // The head points forward and its anchors are counted from the middle of its shape, which lies in the
+      // muzzle: the eyes sit on the slope where the skull drops to the muzzle, the ears behind them on the crown,
+      // the nose on the muzzle's end. The same vocabulary, other anchors.
+      anchors: face.anchors('head', { eye: { elevation: 40, spacing: 180 }, brow: { elevation: 58, spacing: 196 }, nose: { elevation: 0 }, mouth: { elevation: -18 }, ear: { elevation: 62, spacing: 250 }, cheek: { elevation: -10, spacing: 150 }, chin: { elevation: -40 } }),
+      features: [
+        ...face.dotEyes(0.02, { scale: FACE_SCALE.quadruped }),
+        ...face.eyeSockets([0.024, 0.024], { scale: FACE_SCALE.quadruped, depth: 0.002 }),
+        ...face.browRidge({ scale: FACE_SCALE.quadruped }),
+        // The end of the muzzle is the nose's shape already: a dark pad on its upper half.
+        ...face.nosePad([0.04, 0.03], { scale: FACE_SCALE.quadruped, elevation: 7 }),
+        // Pricked ears: a broad plate each, drawn to a point, standing well off the skull.
+        ...face.ears({ height: 0.06, width: 0.05, thickness: 0.014, flare: 62, lobe: false, point: { length: 0.07, back: 0.012, radius: 0.016 } }, { scale: FACE_SCALE.quadruped }),
+      ],
     },
     fish: {
-    // Eyes on the sides of the head and a gill line pressed in behind each: the face vocabulary on a fish.
-    anchors: face.anchors('head', { eye: { elevation: 14, spacing: 156 }, cheek: { elevation: -4, spacing: 236 }, nose: { elevation: 0 }, mouth: { elevation: -10 }, ear: { elevation: 0, spacing: 180 }, brow: { elevation: 30, spacing: 150 }, chin: { elevation: -40 } }),
-    features: [
-      ...face.dotEyes(0.024, { scale: FACE_SCALE.fish }),
-      { id: 'gill', anchor: 'cheek', size: [0.03, 0.2], carve: true, blend: 0.008, shape: { kind: 'sphere', radius: 0.1, scale: [0.14, 1, 0.16], at: [0, 0, 0.004] } },
-    ],
+      // The trunk swallows the back half of the head, so the face is kept to the front of it: an eye on each
+      // side and a gill line pressed in behind each, where head meets trunk. The face vocabulary on a fish.
+      anchors: face.anchors('head', { eye: { elevation: 16, spacing: 50 }, cheek: { elevation: -4, spacing: 84 }, nose: { elevation: 0 }, mouth: { elevation: -10 }, ear: { elevation: 0, spacing: 180 }, brow: { elevation: 30, spacing: 60 }, chin: { elevation: -40 } }),
+      features: [...face.dotEyes(0.026, { scale: FACE_SCALE.fish }), { id: 'gill', anchor: 'cheek', size: [0.03, 0.2], carve: true, blend: 0.008, shape: { kind: 'sphere', radius: 0.1, scale: [0.14, 1, 0.16], at: [0, 0, 0.004] } }],
     },
   };
   Object.keys(FACES).forEach((id) => {
     PLANS[`${id}Faced`] = { extends: id, ...FACES[id] };
   });
 
-  /**
-   * A left wing's arm blade, [up, out] from the shoulder, and its hand blade, [out, up] from the wrist; the right
-   * wing mirrors `out`. The trailing edge of each is cut into feather tips.
-   */
   /** How thick a wing is drawn, metres: a mass of feathers, not a card. */
   const WING_DEPTH = 0.046;
-  /** Degrees each wing hangs down from the shoulder at rest, so the wings are folded behind the back until they are spread. */
-  const WING_FOLD = 30;
+  /** Where a left wing's wrist is from its shoulder, [out, up, back]: above and behind the shoulder, so a wing at rest is folded. */
+  const WING_WRIST = [0.2, 0.3, -0.06];
+  /**
+   * A left wing folded at rest, in two masses; the right wing mirrors `out`. `WING_ARM`: the arm and the short
+   * feathers under it, [up, out] from the shoulder: it rises to the wrist above the shoulder and its lower edge
+   * is cut into feather tips. `WING_HAND`: the long flight feathers, [out, up] from the wrist: they hang down the
+   * back past the hip and end in three tips.
+   */
   const WING_ARM = [
-    [0.03, 0],
-    [0.27, 0.44],
-    [0.16, 0.46],
-    [0.02, 0.44],
-    [-0.07, 0.4],
-    [-0.09, 0.31],
-    [-0.17, 0.3],
-    [-0.15, 0.2],
-    [-0.22, 0.18],
-    [-0.19, 0.06],
+    [0.06, 0],
+    [0.26, 0.1],
+    [0.36, 0.2],
+    [0.3, 0.27],
+    [0.12, 0.29],
+    [-0.1, 0.27],
+    [-0.3, 0.24],
+    [-0.22, 0.2],
+    [-0.38, 0.17],
+    [-0.28, 0.12],
+    [-0.4, 0.09],
+    [-0.26, 0.04],
+    [-0.3, 0],
+    [-0.05, -0.02],
   ];
   const WING_HAND = [
-    [-0.02, 0.05],
-    [0.06, 0.02],
-    [0.3, -0.34],
-    [0.2, -0.4],
-    [0.17, -0.3],
-    [0.08, -0.37],
-    [0.06, -0.25],
-    [-0.04, -0.31],
-    [-0.03, -0.17],
-    [-0.1, -0.21],
-    [-0.1, -0.06],
+    [-0.06, 0.02],
+    [0.04, 0.06],
+    [0.09, -0.05],
+    [0.1, -0.4],
+    [0.08, -0.78],
+    [0.04, -0.98],
+    [0.01, -0.8],
+    [-0.02, -0.9],
+    [-0.05, -0.7],
+    [-0.08, -0.76],
+    [-0.1, -0.5],
+    [-0.1, -0.2],
   ];
+  /** Where the flight feathers end from the wrist, [out, up, back]: the hand's long axis. */
+  const WING_TIP = [0.03, -0.95, -0.03];
 
   /**
    * Parts by id, as `PartSpec` rows without their id.
@@ -500,11 +509,11 @@
     wings: {
       fits: ['back'],
       bones: [
-        // Each wing is two flat blades: an arm out to the wrist, and a hand that sweeps down from it.
-        { name: 'wingLeft', at: [0.06, 0, 0], turn: [0, 0, -WING_FOLD], roles: ['wing', 'left'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, out]), 'y', WING_DEPTH), wear: 'solid' },
-        { name: 'wingLeftTip', parent: 'wingLeft', at: [0.42, 0.22, -0.06], tail: [0.3, -0.34, -0.04], roles: ['wing', 'left', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [out, up]), 'x', WING_DEPTH), wear: 'solid' },
-        { name: 'wingRight', at: [-0.06, 0, 0], turn: [0, 0, WING_FOLD], roles: ['wing', 'right'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, -out]), 'y', WING_DEPTH), wear: 'solid' },
-        { name: 'wingRightTip', parent: 'wingRight', at: [-0.42, 0.22, -0.06], tail: [-0.3, -0.34, -0.04], roles: ['wing', 'right', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [-out, up]), 'x', WING_DEPTH), wear: 'solid' },
+        // Each wing is two masses of feathers: an arm up to the wrist, and a hand whose long feathers hang down from it.
+        { name: 'wingLeft', at: [0.06, 0, 0], roles: ['wing', 'left'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, out]), 'y', WING_DEPTH), wear: 'solid' },
+        { name: 'wingLeftTip', parent: 'wingLeft', at: WING_WRIST, tail: WING_TIP, roles: ['wing', 'left', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [out, up]), 'x', WING_DEPTH), wear: 'solid' },
+        { name: 'wingRight', at: [-0.06, 0, 0], roles: ['wing', 'right'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, -out]), 'y', WING_DEPTH), wear: 'solid' },
+        { name: 'wingRightTip', parent: 'wingRight', at: [-WING_WRIST[0], WING_WRIST[1], WING_WRIST[2]], tail: [-WING_TIP[0], WING_TIP[1], WING_TIP[2]], roles: ['wing', 'right', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [-out, up]), 'x', WING_DEPTH), wear: 'solid' },
       ],
     },
   };

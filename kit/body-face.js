@@ -6,7 +6,7 @@
  * them on a plan (a ridge, cheeks, a chin: every individual has them) or on a part (a nose to choose).
  *
  * Owns:  `Kit.body.face`: the style tables `NOSES` and `EARS`, the builders `nose`, `ears`, `browRidge`,
- *        `cheeks`, `chin`, `lips`, `eyeSockets`, `dotEyes` and `lineMouth`, `anchors` (where a head of a given shape keeps
+ *        `cheeks`, `chin`, `lips`, `eyeSockets`, `dotEyes`, `lineMouth` and `nosePad`, `anchors` (where a head of a given shape keeps
  *        its features) and `ANCHOR_NAMES`.
  * Does not own: placing features or dials (kit/body-surface.js), the modelling (kit/sculpt-relief.js), eye and
  *        mouth stamps of a full creator (kit/body-wardrobe.js), or any species (the catalogues).
@@ -22,6 +22,11 @@
   const REFERENCE = Object.freeze({ height: 0.21, width: 0.2 });
   /** The anchors a face is hung on. A plan states each as an `AnchorSpec` (`anchors` makes the usual set). */
   const ANCHOR_NAMES = Object.freeze(['eye', 'brow', 'nose', 'mouth', 'ear', 'cheek', 'chin']);
+  /**
+   * How much of its radius an ear's point keeps at its end. A finer point is thinner than a cell of the sculpt
+   * grid and is cut off short, or leaves a fleck of its tip floating over the ear.
+   */
+  const POINT_TAPER = 0.5;
   /** How much of a solid's radius is sunk into the surface it grows from, so its edge is a slope and not a step. */
   const SUNK = 0.3;
 
@@ -156,7 +161,7 @@
     if (row.lobe !== false) features.push({ ...common, id: 'ear', shape: pressed([halfWidth * 0.5, halfHeight * 0.34, thickness * 0.6], [halfWidth * 0.75, -halfHeight * 0.8, plateAt[2]], scale) });
     if (row.point) {
       const from = [plateAt[0], halfHeight * 0.45, plateAt[2]];
-      features.push({ ...common, id: 'earTip', size: scaled([row.width, row.point.length], scale), shape: { kind: 'capsule', at: scaled(from, scale), end: scaled([row.point.back, row.point.length, 0], scale), radius: row.point.radius * scale, taper: 0.22 } });
+      features.push({ ...common, id: 'earTip', size: scaled([row.width, row.point.length], scale), shape: { kind: 'capsule', at: scaled(from, scale), end: scaled([row.point.back, row.point.length, 0], scale), radius: row.point.radius * scale, taper: POINT_TAPER } });
     }
     return features;
   };
@@ -266,5 +271,24 @@
     return [{ id: 'mouth', anchor: 'mouth', size: scaled(size, scale), frames: { rest: [{ outline: smile, paint: { channel, shade: 0 }, least: 1 }] }, rest: 'rest' }];
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { face: Object.freeze({ REFERENCE, ANCHOR_NAMES, NOSES, EARS, anchors, nose, ears, browRidge, cheeks, chin, lips, eyeSockets, dotEyes, lineMouth }) });
+  /**
+   * A nose pad: a dark patch with one glint on the 'nose' anchor, for a muzzle whose end is already the nose's
+   * shape (a hound, a cat). Painted with shades of one colour channel. Id 'nosePad'.
+   * @param {number[]} size [width, height] metres at the reference head
+   * @param {{scale?: number, channel?: string, elevation?: number}} [options] `channel`: default 'skin';
+   *   `elevation`: degrees above the anchor (a pad sits on the upper half of a muzzle's end; default 0)
+   * @returns {Object[]} `FeatureSpec`s
+   * @complexity O(1)
+   * @example plan.features = [...Kit.body.face.dotEyes(0.016), ...Kit.body.face.nosePad([0.04, 0.03], { elevation: 6 })];
+   */
+  const nosePad = (size, { scale = 1, channel = 'skin', elevation = 0 } = {}) => {
+    const { ellipse } = Kit.surface;
+    const layers = [
+      { outline: ellipse(0, 0, 1, 1, 14), paint: { channel, shade: 0 }, least: 2 },
+      { outline: ellipse(-0.25, 0.4, 0.3, 0.2, 8), paint: { channel, shade: 4 }, least: 1, fixed: true },
+    ];
+    return [{ id: 'nosePad', anchor: 'nose', elevation, size: scaled(size, scale), frames: { rest: layers }, rest: 'rest' }];
+  };
+
+  Kit.body = Object.assign(Kit.body || {}, { face: Object.freeze({ REFERENCE, ANCHOR_NAMES, NOSES, EARS, anchors, nose, ears, browRidge, cheeks, chin, lips, eyeSockets, dotEyes, lineMouth, nosePad }) });
 })();

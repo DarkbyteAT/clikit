@@ -11,13 +11,17 @@ const path = require('path');
 const { ROOT } = require('./project');
 const { openArcade, SHOT_MS } = require('./browser');
 
-/** Pixels per cell across (PROOF_CELL in the environment overrides it for bigger cells), and the most rows per picture (a picture stays readable when scaled to a screen). */
-const PAGE = { cellWidth: Number(process.env.PROOF_CELL) || 230, rows: 4, mostPages: 40, settleMs: 350 };
+/** Pixels per cell across (PROOF_CELL in the environment overrides it for bigger cells), the most rows per picture (a picture stays readable when scaled to a screen), and the waits for a page and for one cell of it to be drawn. */
+const PAGE = { cellWidth: Number(process.env.PROOF_CELL) || 230, rows: 4, mostPages: 40, settleMs: 350, soloMs: 120 };
 const OUT = path.join(ROOT, 'shots', 'proof');
 
-/** Stacks PNG buffers of equal width into one file, top to bottom, on a 2D canvas in the page (no image library needed). */
-async function stack(session, strips, file) {
-  const encoded = await session.page.evaluate(async (sources) => {
+/**
+ * Joins PNG buffers into one picture on a 2D canvas in the page (no image library needed): top to bottom, or left
+ * to right when `across`.
+ * @returns {Promise<Buffer>} the PNG
+ */
+async function join(session, strips, across = false) {
+  const encoded = await session.page.evaluate(async ({ sources, across }) => {
     const images = await Promise.all(
       sources.map(
         (source) =>
@@ -29,15 +33,40 @@ async function stack(session, strips, file) {
           })
       )
     );
+    const [along, beside] = across ? ['width', 'height'] : ['height', 'width'];
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(...images.map((image) => image.width));
-    canvas.height = images.reduce((sum, image) => sum + image.height, 0);
+    canvas[beside] = Math.max(...images.map((image) => image[beside]));
+    canvas[along] = images.reduce((sum, image) => sum + image[along], 0);
     const context = canvas.getContext('2d');
-    images.reduce((top, image) => (context.drawImage(image, 0, top), top + image.height), 0);
+    images.reduce((start, image) => (context.drawImage(image, across ? start : 0, across ? 0 : start), start + image[along]), 0);
     return canvas.toDataURL('image/png').split(',')[1];
-  }, strips.map((strip) => `data:image/png;base64,${strip.toString('base64')}`));
+  }, { sources: strips.map((strip) => `data:image/png;base64,${strip.toString('base64')}`), across });
+  return Buffer.from(encoded, 'base64');
+}
+
+/** Stacks PNG buffers of equal width into one file, top to bottom. */
+async function stack(session, strips, file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, Buffer.from(encoded, 'base64'));
+  fs.writeFileSync(file, await join(session, strips));
+}
+
+/**
+ * One row of close-ups, each cell photographed alone and cut to its cell: the body behind a head reaches into the
+ * cells beside it, and would cover its neighbours' heads if the row were photographed whole.
+ * @returns {Promise<Buffer>} the row as one PNG
+ */
+async function soloRow(session, columns) {
+  const cells = await session.page.evaluate(() => Kit.currentGame.solo(null));
+  const { width, height } = session.page.viewportSize();
+  const cellWidth = width / columns;
+  const tiles = [];
+  for (let cell = 0; cell < columns; cell++) {
+    await session.page.evaluate((index) => Kit.currentGame.solo(index), cell < cells ? cell : -1);
+    await session.page.waitForTimeout(PAGE.soloMs);
+    tiles.push(await session.page.screenshot({ timeout: SHOT_MS, clip: { x: Math.round(cell * cellWidth), y: 0, width: Math.round(cellWidth), height } }));
+  }
+  await session.page.evaluate(() => Kit.currentGame.solo(null));
+  return join(session, tiles, true);
 }
 
 /**
@@ -80,7 +109,7 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         await session.page.waitForTimeout(PAGE.settleMs);
         const numbered = (count) => `${catalog}-${suite}${framing ? `-${framing}` : ''}-${preset}${rigid ? '-rigid' : ''}${count > 1 ? `-${String(filed + 1).padStart(2, '0')}` : ''}.png`;
         if (rows === 1) {
-          strips.push(await session.page.screenshot({ timeout: SHOT_MS }));
+          strips.push(await soloRow(session, first.columns));
           if (strips.length === PAGE.rows || page === Math.min(pageCount, mostPages) - 1) {
             await flush(numbered(Math.ceil(pageCount / PAGE.rows)));
             filed += 1;
