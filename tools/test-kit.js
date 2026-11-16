@@ -273,6 +273,46 @@ test('upgrades.preview gives the stat at the next (or any) level and leaves leve
 });
 const settle = () => new Promise((r) => setTimeout(r, 5));
 const drain = (...ss) => { for (let i = 0; i < 400; i++) ss.forEach((x) => x.tick(0.05)); };
+// ---- slices (Kit.slices in kit/flow.js) ----
+test('slices: jobs share a frame\'s milliseconds in order, an unfinished job ends the run, a dropped job never runs', () => {
+  let clock = 0;
+  const slices = Kit.slices({ now: () => clock });
+  const done = [];
+  /** A job that needs `total` milliseconds and uses up to 2 a call (or all it is given, if less). */
+  const jobOf = (name, total) => {
+    let left = total;
+    return (milliseconds) => {
+      const used = Math.min(left, milliseconds, 2);
+      clock += used;
+      left -= used;
+      if (left <= 0) done.push(name);
+      return left <= 0;
+    };
+  };
+  assert.strictEqual(slices.run(4), true, 'an empty queue is done');
+  slices.add(jobOf('a', 1));
+  slices.add(jobOf('b', 5));
+  const dropped = slices.add(jobOf('c', 1));
+  slices.add(jobOf('d', 1));
+  assert.strictEqual(slices.run(4), false);
+  assert.deepStrictEqual(done, ['a'], 'a finished inside the slice; b had a turn, did not finish and ended the run');
+  assert.ok(clock <= 4, `the frame spent ${clock} ms of a 4 ms slice`);
+  assert.strictEqual(slices.drop(dropped), true);
+  assert.strictEqual(slices.drop(dropped), false, 'a job is dropped once');
+  assert.strictEqual(slices.run(0), false, 'a slice with no time left gives nobody a turn');
+  assert.deepStrictEqual(done, ['a']);
+  for (let frame = 0; frame < 10 && !slices.run(4); frame++);
+  assert.deepStrictEqual(done, ['a', 'b', 'd'], 'the rest finish in order over later frames; the dropped job never runs');
+  assert.strictEqual(slices.size(), 0);
+  // Control: a job that never finishes is still given one turn a frame, and never more.
+  let turns = 0;
+  slices.add(() => (turns += 1) < 0);
+  slices.run(4);
+  slices.run(4);
+  assert.strictEqual(turns, 2);
+  assert.throws(() => slices.add('later'), /a job is a function/);
+});
+
 // ---- ballistics + envelope (kit/ballistics.js, Kit.envelope in kit/flow.js) ----
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'ballistics.js'), 'utf8'), sandbox, { filename: 'ballistics.js' });
 test('ballistics.direction is a unit vector: yaw 0 looks down -z, positive yaw turns to +x, loft raises it', () => {

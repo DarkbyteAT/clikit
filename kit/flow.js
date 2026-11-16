@@ -5,6 +5,7 @@
  *   spawnTable - "what appears now":                   table.pick(t) from rows with { from, until, weight }
  *   path       - composable 2D motion (t) => { x, y }: enemies, fish, moving platforms, camera rails
  *   envelope   - a number fired to a peak, held, then eased back to zero: camera pushes, recoil, glow pulses
+ *   slices     - work that must never hold a frame, done a few milliseconds a frame: slices.run(4)
  *
  * Owns:  the time-driven models above.
  * Does not own: the clock that drives them (Kit.clock in core.js, the frame loop in shell.js) or
@@ -365,6 +366,56 @@
         value = Number.isFinite(rate) ? Kit.math.damp(value, target, rate, dt) : target;
         return value;
       },
+    };
+  };
+
+  // ---- slices --------------------------------------------------------------------------------------------------------
+
+  /**
+   * @callback SliceStep
+   * @param {number} milliseconds what is left of this frame's slice (never less than 0)
+   * @returns {boolean} true when the job has finished; false to be called again on a later frame
+   */
+
+  /**
+   * A queue of work that must never hold a frame (sculpting a figure, building a level, decoding a save): each
+   * job is a step that works for about the milliseconds it is given. `run` hands one frame's slice to the jobs
+   * in order: a job that finishes inside the slice lets the next begin; one that does not ends the run and goes
+   * on next frame, so a frame never spends more than the slice plus one step's overshoot.
+   * @param {{now?: function(): number}} [options] `now`: a clock in milliseconds (default `performance.now`)
+   * @returns {{add: function(SliceStep): SliceStep, drop: function(SliceStep): boolean, run: function(number): boolean,
+   *   size: function(): number}} `add` queues a job and returns it; `drop` takes a job out unfinished; `run` is
+   *   true when nothing is left (give it what is left of the frame's slice after a more urgent queue: 0 or less
+   *   does nothing); `size` counts the jobs waiting
+   * @complexity run: O(jobs finished this frame); add, drop: O(jobs)
+   * @example
+   * const building = Kit.slices();
+   * building.add((milliseconds) => figure.settle(milliseconds));   // each frame: building.run(4);
+   */
+  Kit.slices = ({ now = () => performance.now() } = {}) => {
+    /** @type {SliceStep[]} */
+    const jobs = [];
+    return {
+      add(step) {
+        if (typeof step !== 'function') throw new Error(`Kit.slices.add: a job is a function (milliseconds) => done, got ${typeof step}.`);
+        jobs.push(step);
+        return step;
+      },
+      drop(step) {
+        const index = jobs.indexOf(step);
+        if (index >= 0) jobs.splice(index, 1);
+        return index >= 0;
+      },
+      run(milliseconds) {
+        const until = now() + milliseconds;
+        // A job gets a turn only while the slice has time left; one that does not finish ends the run.
+        for (let left = milliseconds; jobs.length && left > 0; left = until - now()) {
+          if (!jobs[0](left)) break;
+          jobs.shift();
+        }
+        return jobs.length === 0;
+      },
+      size: () => jobs.length,
     };
   };
 })();
