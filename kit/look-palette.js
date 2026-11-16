@@ -69,6 +69,11 @@
     inkDepth: 0.55,
     inkFloor: 0.12,
   };
+  /**
+   * How much of `shadowDepth` a ramp uses, by its number of shadow tones: with one shadow tone the single step
+   * must stay gentle (a face half in shadow should not look bearded); each further tone reaches deeper.
+   */
+  const SHADOW_REACH = { oneTone: 0.55, perExtraTone: 0.15 };
   /** Below this chroma a colour has no usable hue of its own. */
   const NEUTRAL_CHROMA = 0.015;
   /** The highlight is always at least this much lighter than the base (OKLCH lightness), even for near-white bases. */
@@ -100,14 +105,15 @@
 
   /**
    * Band edges on the light value n.L (-1 facing away .. 1 facing the light), by tone count. A pixel's tone is
-   * the number of edges at or below its light. The top edge is high so the highlight stays a small accent.
+   * the number of edges at or below its light. The top edge is high so the highlight stays a small accent, and
+   * the shadow edges sit below zero so a face turned a little from the light is not half dark.
    * @type {Record<number, number[]>}
    */
   const BAND_EDGES = {
-    2: [0.1],
-    3: [0.1, 0.62],
-    4: [-0.2, 0.1, 0.62],
-    5: [-0.35, -0.05, 0.25, 0.66],
+    2: [0],
+    3: [-0.05, 0.62],
+    4: [-0.3, 0.05, 0.62],
+    5: [-0.4, -0.1, 0.25, 0.66],
     6: [-0.45, -0.2, 0.05, 0.3, 0.68],
   };
   /** An edge no light value reaches: pads the shader's fixed-length edge array. */
@@ -269,7 +275,9 @@
     const rampSpec = spec !== null && typeof spec === 'object' && !Array.isArray(spec) ? /** @type {RampSpec} */ (spec) : { base: /** @type {string|number} */ (spec) };
     const shape = { ...RAMP_SHAPE, ...rampSpec.shape };
     const tones = rampSpec.tones ? resampleTones(rampSpec.tones, toneCount) : generateTones(rampSpec.base, shape, toneCount);
-    return { tones, ink: rampSpec.ink === undefined ? inkOf(tones[0], shape) : rgbOf(rampSpec.ink) };
+    if (rampSpec.ink !== undefined) return { tones, ink: rgbOf(rampSpec.ink) };
+    // Ink comes from the full-depth shadow, so the line colour is the same whatever the tone count.
+    return { tones, ink: inkOf(rampSpec.tones ? tones[0] : toneAround(toOklch(rgbOf(rampSpec.base)), shape, 1, 0), shape) };
   };
 
   const resampleTones = (authored, toneCount) => {
@@ -282,9 +290,10 @@
     const baseRgb = rgbOf(baseColor);
     const base = toOklch(baseRgb);
     const baseIndex = baseToneIndex(toneCount);
+    const reach = Math.min(1, SHADOW_REACH.oneTone + SHADOW_REACH.perExtraTone * (baseIndex - 1));
     return Array.from({ length: toneCount }, (_, index) => {
       if (index === baseIndex) return baseRgb;
-      return index < baseIndex ? toneAround(base, shape, (baseIndex - index) / baseIndex, 0) : toneAround(base, shape, 0, (index - baseIndex) / (toneCount - 1 - baseIndex));
+      return index < baseIndex ? toneAround(base, shape, (reach * (baseIndex - index)) / baseIndex, 0) : toneAround(base, shape, 0, (index - baseIndex) / (toneCount - 1 - baseIndex));
     });
   };
 
@@ -442,7 +451,7 @@
    * @param {number[]} edges ascending band edges
    * @returns {number} tone index, 0 (darkest) .. edges.length
    * @complexity O(edges)
-   * @example Kit.look.bandOf(0.1, [0.1, 0.62]) // 1: a value on an edge belongs to the lighter band
+   * @example Kit.look.bandOf(-0.05, [-0.05, 0.62]) // 1: a value on an edge belongs to the lighter band
    */
   const bandOf = (light, edges) => edges.reduce((tone, edge) => tone + (light >= edge ? 1 : 0), 0);
 

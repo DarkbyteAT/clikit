@@ -2664,9 +2664,11 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-palette.
     const atlas = look.atlas({ toneCount: 3 });
     const hero = atlas.load(look.PALETTES.ember);
     const inkBefore = atlas.colorAt(hero.rows.skin, look.INK_COLUMN).join();
+    const shadowAtThree = lightnessOf(atlas.colorAt(hero.rows.skin, 0));
     assert.strictEqual(look.hexOf(atlas.colorAt(hero.rows.skin, 1)), '#e9b48c', 'three tones: base in column 1');
     atlas.retone(6);
     assert.strictEqual(atlas.toneCount, 6);
+    assert.ok(lightnessOf(atlas.colorAt(hero.rows.skin, 0)) < shadowAtThree - 0.05, 'more shadow tones reach deeper than one gentle step');
     assert.strictEqual(look.hexOf(atlas.colorAt(hero.rows.skin, 4)), '#e9b48c', 'six tones: base in column 4');
     assert.ok(lightnessOf(atlas.colorAt(hero.rows.skin, look.INK_COLUMN)) < lightnessOf(atlas.colorAt(hero.rows.skin, 0)), 'ink is darker than the darkest tone');
     assert.strictEqual(atlas.colorAt(hero.rows.skin, look.INK_COLUMN).join(), inkBefore, 'the outline colour does not change with the band count');
@@ -2674,6 +2676,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-palette.
 
   test('look.bandOf: a light value on an edge belongs to the lighter band; edgesFor pads with unreachable edges', () => {
     const edges = look.BAND_EDGES[4];
+    assert.ok(edges[0] < edges[1] && edges[1] < edges[2], 'the edges under test rise');
     assert.strictEqual(look.bandOf(-1, edges), 0);
     assert.strictEqual(look.bandOf(edges[0] - 1e-9, edges), 0, 'just below the first edge');
     assert.strictEqual(look.bandOf(edges[0], edges), 1, 'exactly on the first edge');
