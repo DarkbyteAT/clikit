@@ -7325,6 +7325,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[filled]` *Object\<string, string\>* - socket name -> part id, written by `Kit.body.assemble`
   - `[features]` *Object[]* - surface features (eyes, a nose, a scar) placed on bones by azimuth and elevation: `FeatureSpec` rows of kit/body-surface.js, kept as data on `spec` and laid out by that file
   - `[regions]` *Object[]* - painted areas of bones (a sleeve, a hairline, stripes): `RegionSpec` rows of kit/body-surface.js, kept as data on `spec`
+  - `[anchors]` *Object\<string, Object\>* - named places on this body's bones (an eye, a nose, an ear): `AnchorSpec` rows of kit/body-surface.js by name, kept as data on `spec`. A feature that names an anchor sits there, so a nose made for one head sits right on any head that says where its nose is
 - **BodyPlan**
   - `id` *string*
   - `spec` *BodyPlanSpec* - the data it was compiled from, so a plan can be extended and recompiled
@@ -7632,7 +7633,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `ramps` *ReadonlyArray\<Object\>* - the individual's ramps, one per colour channel of the species
   - `individual` *Individual*
 - **CatalogSpec**
-  - `plans` *Object\<string, Object\>* - plan id -> `BodyPlanSpec` without its id
+  - `plans` *Object\<string, Object\>* - plan id -> `BodyPlanSpec` without its id; a row may say `extends: '<plan id>'` and state only what it adds or replaces (the same skeleton with a face), one step deep
   - `[parts]` *Object\<string, Object\>* - part id -> `PartSpec` without its id
   - `nodes` *Object\<string, Object\>* - lineage nodes (kit/lineage.js) whose `set` follows `SpeciesDefinition`
   - `[traits]` *Object\<string, Object\>* - lineage traits; two traits of one node may not fill the same socket

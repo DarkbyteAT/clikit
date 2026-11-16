@@ -323,7 +323,8 @@
 
   /**
    * @typedef {Object} CatalogSpec
-   * @property {Object<string, Object>} plans plan id -> `BodyPlanSpec` without its id
+   * @property {Object<string, Object>} plans plan id -> `BodyPlanSpec` without its id; a row may say `extends: '<plan id>'` and state only what it adds or
+   *   replaces (the same skeleton with a face), one step deep
    * @property {Object<string, Object>} [parts] part id -> `PartSpec` without its id
    * @property {Object<string, Object>} nodes lineage nodes (kit/lineage.js) whose `set` follows `SpeciesDefinition`
    * @property {Object<string, Object>} [traits] lineage traits; two traits of one node may not fill the same socket
