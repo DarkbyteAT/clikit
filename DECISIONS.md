@@ -890,3 +890,85 @@ machine at load 20 to 40, so only the ratios mean anything.
   spheres; the warm targets of 150 / 60 / 20 ms are missed for the eight-layer person (about 245 / 95 / 38);
   low-detail drapes thinner than the least share fall back to a rigid board; the look view does not yet pick
   the level itself (the caller passes `levelFor(pixels)`).
+
+## Sculpted figures cheap enough for games: one culled, simplified surface per figure, a level chosen by size (sculpt-cost branch)
+
+- **The problem.** A dressed wardrobe person was 8 skinned meshes of 69 k triangles at high detail (10.6 k
+  at low), each drawn twice (toon and ink hull): 21 draw calls and 139 k triangles a figure in the browser, and
+  a "low" crowd member of 10 k where the old rigid body was 1.8 k. Nothing chose the level; callers passed it.
+- **What a figure is now.** `Kit.figure.sculptLayers` returns, beside its layers, one `surface`
+  (`SculptSurface`): every layer end to end in one skinned mesh, with a paint per vertex (ramp slot, which is
+  also the line class, ink group, shiny). `kit/look-toon.js` reads it with `LOOK_VERTEX_PAINT` (additive: a
+  part with `vertexPaint: true`). No vertex is shared between two layers, so the paint is constant over a
+  triangle and needs no flat varying (WebGL1 has none). Rigid pieces that are plainly shaded (a held blade, a
+  pack, a fin too thin for the grid) ride in the same mesh, placed by their bone in the bind pose and owned
+  wholly by it (`joined`); stamps, region-painted and fixed-tone pieces keep their own material. A figure is
+  the surface, its hull and its face: 3 draw calls (renderer.info, toon), 4 in the pixel look (2 of them the
+  indexed passes), and a crowd of any size is the same 3 or 4.
+  Rejected: a material group per layer in one geometry (still a draw per group); a texture atlas of paints
+  (needs a UV unwrap of an implicit surface); one flat-shaded varying (WebGL2 only, and single figures must
+  run on WebGL1).
+- **Fewer triangles, three mechanisms in this order.**
+  1. *What a layer hides is not meshed* (`Kit.sculpt.surface`, `cover` / `under`). A cut surface marks the
+     grid nodes it holds; the layers are made from the outermost in and the skin last, and a cell whose inside
+     corners are all under a layer, with no bare node among their 18 neighbours, makes no vertex. A garment's
+     wall now reaches `SCULPT.wallShare` (0.3) of a cell below the surface it sits on, because a coarse mesh of
+     that surface sags between its vertices and the 2 mm wall left pinholes at hems. Measured from 26
+     directions at 160 x 160 rays on four dressed bodies at two levels: 0 of 665,600 rays see anything else
+     (6 neighbours: up to 25 differ; 26 neighbours: nothing gained over 18). It removes 21% of the triangles
+     at high, 15% at medium and 3% at low: less than hoped, because the margin is a cell and at coarse levels a
+     garment is only a few cells wide. Rejected: testing the upper layer's predicate at each lower vertex (the
+     predicate is the dearest call in the kernel); culling under worn solids and drapes (they are other fields
+     and they swing: what a hat hides at rest it shows in a nod).
+  2. *Edges collapse within an error* (`Kit.sculpt.simplify`): quadric error, collapse onto one end (a kept
+     vertex is never moved, so it is still on the field's surface and keeps its normal, owners and weights
+     untouched), cheapest first from a heap. It refuses whatever would open or pinch the surface (link
+     condition, open edges only along themselves), fold a triangle, or leave an edge spanning more than half a
+     change of owner (a knee keeps its loops). The turn of the vertex normal is part of the cost
+     (`SIMPLIFY.turn`): the normals are smoothed over 44 mm and carry form the positions do not, and without
+     the term tone edges ran straight across what had been curves (seen on a skirt and a cloak, sheets kept).
+     The tolerance is `DETAIL[level].error` of a cell: a level's cell is about four pixels at the largest size
+     the level is drawn, so 0.06 to 0.13 of a cell is a quarter to half a pixel there (0.66, 1.7, 3.6 mm).
+     Then `DETAIL[level].triangles` is a budget (25 k, 8 k, 2.5 k, 1 k): the cheapest further collapses until
+     it is met, whatever they cost, with the worst distance reported (`surface.error`).
+     Rejected: coarser cells (thin limbs fall off the grid and small features go first, which is the
+     opposite of what an error-driven collapse does); vertex clustering (fast, but not manifold and blind to
+     weights); optimal vertex placement (moves vertices off the surface and needs weights blended);
+     adaptive (octree) surface nets (the right long-term answer, since it would also save the sampling and
+     the collapse time, but a new mesher with crack handling: not in this round).
+  3. *A `far` level* for crowds: the grid of low (a coarser grid loses the limbs) simplified to 1,000
+     triangles. The target was 600. At 600 heads go angular and skin shows through shirts at 64 pixels
+     (sheet kept); at 1,000 it holds. Layers stand at least the level's error apart (`stackGarments`, `slack`)
+     so a coarse level's flat triangles do not cut through the layer below. What would reach 600: garments
+     as paint on one surface at far (needs seams whose two sides collapse together) rather than as shells.
+- **Not done: replacing the inverted hull.** The hull doubles the triangles drawn in the toon look (the
+  pixel look already inks in screen space and draws none). A screen-space outline at native resolution is
+  the indexed path the pixel look uses; switching toon to it changes its anti-aliasing and line weight, which
+  is a look decision, not a cost one. The numbers per figure below are per pass; double them for toon.
+- **Choosing the level** (`kit/figure-detail.js`, pure). `detailFor(pixels, shown)` over the bands far up to
+  64, low up to 150, medium up to 330, else high, with 16% hysteresis round the band shown. Heights are in
+  pixels of the target, so a pixel look counts texels. `Kit.figure.build(view, bake, { level: 'auto' })`
+  registers the figure with the view, which measures each such figure every frame (`pixelsTall`) and calls
+  `figure.resize`; the new level is sculpted in slices of 4 ms a frame (one figure at a time, the rest wait)
+  while the old one is drawn, and swapped when ready; figures of one bake share the result through the cache.
+  The default level stays 'high' (the creator, the portrait and the sheets rely on it); a game passes
+  `level: 'auto'`. Rejected: making auto the default now (changes what five existing callers get; proposed
+  once games have run on it). `Kit.figure.crowd` still takes one level for the whole crowd.
+- **Time.** The simplifier costs about what culling saves, and more: wardrobe person, eight layers, warm,
+  process CPU, node 22, load average 11 on 4 cores, before / after: high 237 / 322 ms, medium 103 / 153,
+  low 44 / 74, far - / 97 (targets 150 / 60 / 20: missed, and further than before). A sculpt never blocks a
+  frame for long: surfaces are now meshed in stages (`surfaceSteps`) and the simplifier pauses every 1,200
+  collapses. A Worker was weighed again and not taken: the hosted page's policy on worker scripts is not
+  stated in the repository (scripts come only from an allowed CDN list; the kit is not on one, so a worker
+  would need a blob URL, which such a policy normally refuses) and cannot be tried headless here. The kernel
+  is pure and its results are typed arrays, so it can move if the policy allows. What would meet the
+  targets: adaptive sampling so that flat regions are never meshed finely (it removes the collapse work and
+  about half the sampling), then typed scratch for the distance calls (see the first sculpt entry).
+- **Memory.** `sculptCache` is bounded by bytes (`SCULPT.keptBytes`, 12 MB) as well as by count (24). A
+  person's arrays: 917 / 345 / 107 / 43 kB at high / medium / low / far (2,164 / 908 / 338 kB before). 500
+  dial changes at medium hold the cache at 24 bakes and 8.3 MB throughout.
+- **Trade-offs taken.** Changing a held prop now sculpts the figure again (it is part of the surface), as
+  changing a hat already did. A layer's arrays are views of the surface (no copy), so a layer cannot be
+  written to. Skins are open under clothes: code that needs a closed skin asks for `{ cull: false }`.
+- **Revisit if** a phone shows vertex cost dominating (then replace the hull in toon), crowds need mixed
+  levels, or sculpt time hurts editing (adaptive meshing, or a Worker once the policy is known).

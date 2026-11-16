@@ -85,7 +85,8 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [look-show.js](#look-showjs) (0) - Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from primitives, each with its own 
 - [figure-shapes.js](#figure-shapesjs) (0) - Kit figure shapes: the surface of one bone, as plain arrays.
 - [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
-- [sculpt.js](#sculptjs) (17) - Kit sculpt: smooth surfaces from simple solids.
+- [sculpt.js](#sculptjs) (21) - Kit sculpt: smooth surfaces from simple solids.
+- [figure-detail.js](#figure-detailjs) (0) - Kit figure detail: which level of detail a figure needs for how large it is drawn, chosen so that nobody has to pass one.
 - [figure-sculpt.js](#figure-sculptjs) (0) - Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone.
 - [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
 - [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
@@ -8026,7 +8027,8 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
   - `[inkClass=0]` *number* - 0..15. Where two classes meet on one surface (a sleeve and the skin below it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
   - `[regions]` *LookRegions* - the mesh is painted from a baked region map instead of one ramp
-  - `[blockRow]` *number* - with `regions` or `stamps`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
+  - `[vertexPaint]` *boolean* - the geometry has a three-number `vertexPaint` attribute: per vertex, its ramp slot (a row from `blockRow`, and its line class), its ink group and 1 where it is shiny, instead of the part's one `ramp`, `inkClass`, `inkGroup` and `shiny` (several paints in one mesh, so one draw: a sculpted figure's layers)
+  - `[blockRow]` *number* - with `regions`, `stamps` or `vertexPaint`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
   - `[shell]` *number* - with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
   - `[stamps]` *boolean* - the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js `stamps`): each vertex names its slot and tone, and it is never outlined
   - `[outlined=true]` *boolean* - false: no hull outline of its own, though it keeps its ink group
@@ -8097,7 +8099,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `isWebGL2` *boolean* - whether the renderer is WebGL2 (a sculpted crowd needs it)
   - `atlas` *ReturnType\<typeof Kit.palette.atlas\>* - the palette table; `atlas.load(palette)` gives a figure its rows
   - `shading` *Object* - from Kit.look.shading: `shading.dress(mesh, part)`
-  - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
+  - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor). An anchor given `sized` (`{ height(): metres, resize(pixels, milliseconds), isBusy() }`) is told each frame how tall it is drawn
   - `remove` *function(THREE.Object3D): void* - take a figure's root out of the scene and drop its dither anchor
   - `use` *function(string, Object=): Object* - switch to a preset, with optional knob overrides; returns the settings
   - `set` *function(string, \*): Object* - change one knob; returns the settings
@@ -8423,6 +8425,13 @@ stay those of a small one. A solid thinner than `FEWEST_CELLS_ACROSS` cells cann
 what to do with it then (kit/figure-sculpt.js leaves it a rigid piece) is the caller's choice, so one
 earring never makes a whole body's grid finer.
 
+A level is made for a size on screen (kit/figure-detail.js): at the largest a level is drawn, its cell is
+about four pixels. `error` is how far a mesh of the level may then stand off the surface it was meshed on,
+as a share of the cell (`simplify`'s tolerance: about a third of a pixel at that size, less than the chord
+of one cell across a limb), and `triangles`, where given, the most a whole figure may have whatever that
+costs in error. `far` is meshed on the cell of `low` (a coarser grid would lose the limbs) and is for a
+figure a few dozen pixels tall: a crowd.
+
 ### `Kit.sculpt.KINDS`
 
 Distance functions by shape kind, each `(shape) -> (x, y, z) -> metres` in the shape's own space, before
@@ -8628,32 +8637,59 @@ border is as smooth as the solids and not stepped like the grid.
 const bone = field.solids[Kit.sculpt.nearestAt(field, x, y, z)].owner;
 ```
 
-### `Kit.sculpt.surface(field, { offset = 0, cut = null, near = null, depth = 0.002, walls = true } = {})`
+### `Kit.sculpt.surface(field, options)`
 
-The surface of a field as a mesh, by surface nets: one vertex in every grid cell the surface passes
-through, placed at the average of where the surface crosses the cell's edges and then moved onto the
-field's true surface, and one quad across every grid edge it crosses. The mesh is closed, evenly
-tessellated and smooth where the field is.
-
-`offset` pushes the surface out (a layer of cloth over a body is the body's field at a positive offset, at
-most the field's `margin`). `cut(x, y, z)` keeps only the part of the solid where it returns true. The
-cut's edge is found by bisection along each grid edge, and a vertex where the cut meets the surface (a hem,
-a hairline) is placed on the cut itself, so an edge is as crisp as the predicate, not as coarse as the
-grid. A cut solid is a shell: it reaches `depth` below the field's own surface and is hollow beneath, and
-faces wholly deeper than that are dropped (a layer does not carry what is buried in the body it lies on).
-`walls: false` also drops the faces a cut makes through the thickness, leaving an open sheet that lies on
-the surface (paint, not cloth).
+`surfaceSteps` run to its end in one go (see it for the method and the options).
 
 - `field` *Field*
-- `[options]` *{offset?: number, cut?: function(number, number, number): boolean, near?: ArrayLike\<number\>, depth?: number, walls?: boolean}* - `depth`: metres (default 0.002), used only with a `cut`; `near`: per solid of the field, non-zero when the cut can hold at points nearest that solid (a sleeve's cut holds only near the arm's solids): the cut is then not asked anywhere else, which is most of a body
+- `[options]` *{offset?: number, cut?: function(number, number, number): boolean, near?: ArrayLike\<number\>, depth?: number, walls?: boolean, cover?: Uint8Array, under?: Uint8Array}*
 
 **Returns** *SurfaceArrays*
 
-**Complexity** O(nodes of the field's band) time (a `cut` is called once per band node within the shell, and 7 times per grid edge it crosses); O(surface cells) memory for the mesh
+**Complexity** as `surfaceSteps`
 
 ```js
 const skin = Kit.sculpt.surface(field); const sleeve = Kit.sculpt.surface(field, { offset: 0.008, cut: isSleeve });
 ```
+
+### `Kit.sculpt.simplify(mesh, options)`
+
+`simplifySteps` run to its end in one go (see it for the method and the options).
+
+- `mesh` *{positions: Float32Array, normals: Float32Array, indices: ArrayLike\<number\>}*
+- `[options]` *{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike\<number\>, weights: ArrayLike\<number\>}, locked?: ?ArrayLike\<number\>}*
+
+**Returns** *Simplified*
+
+**Complexity** as `simplifySteps`
+
+```js
+const light = Kit.sculpt.simplify(skin, { tolerance: 0.001 }); const weights = Kit.sculpt.pick(skinWeights, 4, light.kept);
+```
+
+### `Kit.sculpt.pick(values, size, kept)`
+
+The values of the vertices kept: `size` numbers per vertex, for the vertices `kept` names, in that order.
+
+- `values` *Values* - `size` per vertex of the mesh before
+- `size` *number* - numbers per vertex
+- `kept` *ArrayLike\<number\>* - vertex indices (`Simplified.kept`)
+
+**Returns** *Values* a new array of the same type
+
+**Complexity** O(kept x size)
+
+```js
+const owners = Kit.sculpt.pick(layer.owners, 4, light.kept);
+```
+
+### `Kit.sculpt.SIMPLIFY`
+
+Tunables of `simplify`.
+
+### `Kit.sculpt.COVER`
+
+What a `cover` says of a node (`surface`): nothing, that a layer was asked about it and does not lie there, or that one does.
 
 ### `Kit.sculpt.weights(positions, solids, { spread = 0.03, reach = 0, sharpness = 2 } = {})`
 
@@ -8706,9 +8742,33 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
   - `positions` *Float32Array* - 3 per vertex, in the field's space
   - `normals` *Float32Array* - 3 per vertex, unit length, outward
   - `indices` *Uint16Array\|Uint32Array* - 3 per triangle
+- **Simplified**
+  - `positions` *Float32Array* - 3 per kept vertex (each where it was: no vertex is moved)
+  - `normals` *Float32Array*
+  - `indices` *Uint16Array\|Uint32Array*
+  - `kept` *Uint32Array* - per kept vertex, its index in the mesh given (rising): `pick` carries any other attribute over
+  - `error` *number* - the largest cost of a collapse made, metres (root mean square distance to the planes a vertex stood for, with the turn of its normal counted in)
+  - `distance` *number* - the largest such distance alone, metres: how far the form may have moved
 - **SkinArrays**
   - `owners` *Uint16Array* - 4 per vertex: owner ids (bone indices), strongest first; unused slots are 0
   - `weights` *Float32Array* - 4 per vertex: their shares, summing to 1
+
+## figure-detail.js
+
+> Kit figure detail: which level of detail a figure needs for how large it is drawn, chosen so that nobody has
+> to pass one. A level is made for a band of on-screen heights (kit/figure-shapes.js `LEVEL_BY_PIXELS`, with
+> `far` below them for crowds); a figure moves to the next band only once it is clearly inside it, so one that
+> hovers at a boundary does not flicker between two meshes.
+>
+> Owns:  `Kit.figure.DETAIL_BANDS` (the bands, `far` included), `detailFor` (pixels and the level shown now ->
+>        the level to show) and `pixelsTall` (a height in the world and a camera -> target pixels).
+> Does not own: what a level is made of (kit/figure-shapes.js `LEVELS`, kit/sculpt.js `DETAIL`), measuring a
+>        figure or a camera (kit/look-view.js does, each frame), or swapping the meshes (kit/figure.js).
+>
+> Heights are in pixels of the target a look draws on: a pixel look's texels, not the screen's pixels, so a
+> figure 100 texels tall is drawn at the level of 100 pixels however large the texels are shown.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-sculpt.js.
 
 ## figure-sculpt.js
 
@@ -8750,11 +8810,24 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
   - `weights` *Float32Array* - 4 shares per vertex
   - `[faceShare]` *Float32Array* - on a body surface: per vertex, how much of it the head's bones move (0..1); a look lights a face and a form differently
 - **Sculpted**
-  - `layers` *SculptLayer[]* - shared between equal bakes: never write to their arrays
+  - `layers` *SculptLayer[]* - shared between equal bakes: never write to their arrays (views of `surface`'s, a layer each)
+  - `surface` *SculptSurface* - every layer as one mesh: what a figure draws
+  - `bytes` *number* - what the arrays take, bytes
   - `replaced` *Set\<string\>* - ids of the layout pieces the layers stand in for (do not draw them)
+  - `joined` *Set\<string\>* - ids of the layout pieces that are drawn in the surface as they are: rigid, each moved wholly by its own bone, with the triangles it was authored with (a sword, a pack; do not draw them either)
   - `matrices` *Float32Array* - the bone matrices the layers were made in (the bind pose), 16 per bone
   - `clearance` *{leads: Int16Array, turns: Float32Array}* - see `limbClearance`
   - `signature` *string* - what the layers depend on (see `sculptSignature`)
+- **SculptSurface** - The layers of a bake as one skinned mesh: a figure is one draw however many garments it wears.
+  - `positions` *Float32Array* - 3 per vertex, in the bake's sculpting pose
+  - `normals` *Float32Array*
+  - `indices` *Uint16Array\|Uint32Array*
+  - `owners` *Uint16Array* - 4 bone indices per vertex
+  - `weights` *Float32Array* - 4 shares per vertex
+  - `faceShare` *Float32Array* - per vertex, how much of it the head's bones move where its layer is a body surface, else 0
+  - `paint` *Uint8Array* - 3 per vertex: its layer's ramp slot (also its line class), its ink group, and 1 where it is shiny
+  - `ranges` *Array\<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}\>*
+  - `error` *number* - the furthest a vertex was moved off the planes it stood for when the mesh was simplified, metres (`Kit.sculpt.simplify`'s `distance`)
 - **Garment** - The regions of one worn part with one paint and one raise (its waist, chest and sleeves are separate regions, one per bone): one layer.
   - `key` *string* - '<part>|<ramp>|<raise>'
   - `part` *?string*
@@ -8810,6 +8883,8 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
   - `setBake` *function(Object, Object=, {settle?: boolean}=): Object* - draws another bake with the fewest changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is still moving (a dial being dragged): the sculpted surfaces are bent to the new proportions by the skeleton at once, and sculpted again by `settle()`
   - `settle` *function(number=): boolean* - sculpts the surfaces for the bake shown if they were only bent to it (or, built with `sculpt: 'steps'`, not sculpted yet); true when it did. With a number it works for about that many milliseconds and returns false until the work, spread over as many calls as it takes, is done
   - `isSettled` *function(): boolean* - false while the surfaces wait for `settle()`
+  - `level` *function(): string* - the level of detail shown now
+  - `resize` *function(number, number=): string* - tells the figure how tall it is drawn, in target pixels: it moves to the level that height asks for (`Kit.figure.detailFor`, so not at every wobble), sculpting the new level for about the given milliseconds a call (default 4) and swapping when it is ready; returns the level shown. A view calls it every frame for a figure built with `level: 'auto'`; any figure may be told by hand
   - `frame` *function(number): Object* - a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
   - `counters` *function(): {meshes: number, skinned: number, materialsCreated: number, geometriesCreated: number}* - `meshes`: draw objects in all, of which `skinned` are sculpted surfaces
   - `dispose` *function(): void*

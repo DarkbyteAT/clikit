@@ -136,6 +136,9 @@ Kit.pack.toText(catalog.encode(recipe));                              // an 8-ch
 | `look-show.js` | the `look` screen (`Kit.play('look')`): two stand-in figures, every knob, and on-request measurements |
 | `figure-shapes.js` | pure. `Kit.figure` shape builders (capsule, sphere, box, lathe, extrude) to plain arrays per level of detail, `shapeKey`, `writeBoneMatrix` |
 | `figure-layout.js` | pure. `Kit.figure.layout` (bake -> pieces with ramps and ink groups), `planUpdate` (what an edit changes), `measureRest` / `fitView` (grounding, framing) |
+| `sculpt.js` | pure. `Kit.sculpt`: solids -> a distance `Field` (`sample`), a field -> a mesh (`surface`, with `cover` / `under` so hidden surface is not meshed), `simplify` (edge collapse within an error, skin kept), `weights` |
+| `figure-sculpt.js` | pure. `Kit.figure.sculptLayers` / `sculptTask` (a bake -> its layers and the one `surface` a figure draws), `sculptCache` (bounded by count and bytes) |
+| `figure-detail.js` | pure. `Kit.figure.detailFor` (height drawn -> level of detail, with hysteresis), `pixelsTall`, `DETAIL_BANDS` |
 | `figure.js` | `Kit.figure.build` (a bake drawn through `Kit.look`, posed in one pass, updated incrementally), `geometryCache`, `crowd` (instanced, one bake) |
 | `figure-show.js` | the `figures` screen (`Kit.play('figures')`): the body samples in 3D, live edits, a debug pose and the binding probe |
 
