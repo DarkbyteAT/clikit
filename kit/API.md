@@ -85,6 +85,8 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [look-show.js](#look-showjs) (0) - Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from primitives, each with its own 
 - [figure-shapes.js](#figure-shapesjs) (0) - Kit figure shapes: the surface of one bone, as plain arrays.
 - [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
+- [sculpt.js](#sculptjs) (17) - Kit sculpt: smooth surfaces from simple solids.
+- [figure-sculpt.js](#figure-sculptjs) (0) - Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone.
 - [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
 - [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
 - [motion.js](#motionjs) (25) - Kit motion: movement as small stages that compose.
@@ -7624,6 +7626,9 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >        ready for `Kit.body.catalog`).
 > Does not own: any behaviour. There is no code here beyond freezing the tables.
 >
+> A bone's `girth` is its mass data (kit/dynamics.js reads it) and is lean; what is drawn is its `shape` row, a
+> stylised solid stated beside it (`drawn`, `flattened`, `fin` below), so every plan is presentable as it stands.
+>
 > Conventions (kit/body-plan.js): metres, +Y up, +Z forward, +X the body's left. Every plan starts with a
 > `ground` bone at the origin, so a `size` dial on the root scales the whole body about the point it stands on.
 >
@@ -8224,6 +8229,382 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `halfWidth` *number*
   - `halfHeight` *number*
 
+## sculpt.js
+
+> Kit sculpt: smooth surfaces from simple solids. Several solids (capsules, balls, boxes, turned profiles, flat
+> outlines) are blended into one distance field, like clay pressed together, and the field's surface is turned
+> into one mesh whose every vertex knows which solids it belongs to. A limb then runs into a torso without a
+> seam, a layer of cloth is the same surface pushed out and cut along a hem, and a rig can bend the result by
+> its weights instead of moving rigid pieces that overlap.
+>
+> Owns:  `Kit.sculpt.distanceOf` (a shape descriptor of kit/figure-shapes.js -> a signed distance function),
+>        `solid` (a descriptor placed by a transform, with its bounds), `sample` (solids -> a `Field`: distances on
+>        a grid, blended), `surface` (a field -> positions, normals and triangles by surface nets; a `cut` trims
+>        it along any boundary, found exactly), `weights` (vertices -> the up to four owners that move each),
+>        `smoothMin` and the `DETAIL` table.
+> Does not own: what the solids are (a body's bones, a part), which layers a figure has (kit/figure-sculpt.js),
+>        THREE, or drawing.
+>
+> Conventions: metres; a field's grid is axis-aligned in the space the solids were placed in (a body's rest
+> pose). Distances are negative inside. Triangles wind counter-clockwise seen from outside.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-sculpt.js.
+
+### `Kit.sculpt.DETAIL`
+
+Grid cell size by level of detail, metres, and the most cells along the longest side of what is sampled
+(`cellFor`): a body twice as tall is meshed with cells twice as large, so its cost and its look on screen
+stay those of a small one. A solid thinner than `FEWEST_CELLS_ACROSS` cells cannot be meshed (`isTooThin`);
+what to do with it then (kit/figure-sculpt.js leaves it a rigid piece) is the caller's choice, so one
+earring never makes a whole body's grid finer.
+
+### `Kit.sculpt.KINDS`
+
+Distance functions by shape kind, each `(shape) -> (x, y, z) -> metres` in the shape's own space, before
+its `at`, `scale` and `basis`. A kind listed in `SLOPED` also writes the distance's slope into `SLOPE`.
+Adding a kind of solid means adding a row here and a builder in kit/figure-shapes.js.
+
+### `Kit.sculpt.FAR`
+
+"Far outside": the value of a node nothing was measured at, metres (its negative: far inside).
+
+### `Kit.sculpt.invertAffine(matrix)`
+
+Inverts the upper 3 x 4 of a column-major 4 x 4 affine matrix.
+
+- `matrix` *ArrayLike\<number\>* - 16 numbers, column-major
+
+**Returns** *number[]* the inverse's 12 numbers row by row (three rows of x, y, z, translation)
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.invertAffine([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 1, 0, 0, 1]) // [0.5, 0, 0, -0.5, 0, 0.5, 0, 0, 0, 0, 0.5, 0]
+```
+
+### `Kit.sculpt.smoothMin(first, second, radius)`
+
+The smaller of two distances, rounded where they meet: within `radius` of each other the result dips below
+both, which fills the crease between two solids with a fillet about that wide.
+
+- `first` *number*
+- `second` *number*
+- `radius` *number* - metres; 0 is a plain minimum (a crisp crease)
+
+**Returns** *number* never more than `radius / 4` below the smaller
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.smoothMin(0.01, 0.01, 0.04) // 0: two surfaces a centimetre away each are joined here
+```
+
+### `Kit.sculpt.polygonDistance(points, u, v)`
+
+Distance from (u, v) to a closed polygon, negative inside: the even-odd rule for the sign, nearest edge for the size.
+
+- `points` *ArrayLike\<number\>\|number[][]* - u, v per corner, flat; or [[u, v], ...]
+- `u` *number*
+- `v` *number*
+
+**Returns** *number*
+
+**Complexity** O(corners), no allocation for a flat array
+
+```js
+Kit.sculpt.polygonDistance([[0, 0], [1, 0], [1, 1], [0, 1]], 0.5, 0.5) // -0.5
+```
+
+### `Kit.sculpt.sectionTable(section, leastU = -Infinity)`
+
+The distance table of a closed flat section, shared by every shape with the same section (a dial that
+stretches a torso keeps its profile, so it keeps its table).
+
+- `section` *number[][]* - [[u, v], ...]
+- `leastU` *number* - the table starts no lower than this along u (0 for a profile turned about its axis)
+
+**Returns** *SectionTable*
+
+**Complexity** O(table nodes x corners) the first time a section is seen (about 2000 x 30), O(corners) to look it up
+
+```js
+const table = Kit.sculpt.sectionTable([[0, 0], [0.1, 0], [0.1, 0.3], [0, 0.3]], 0);
+```
+
+### `Kit.sculpt.distanceOf(shape)`
+
+The signed distance function of a shape descriptor (kit/figure-shapes.js `ShapeDescriptor`), honouring its
+`at`, `scale`, `basis` and `inflate`.
+
+- `shape` *Object* - a `ShapeDescriptor`
+
+**Returns** *function(number, number, number): number* metres, negative inside, in the descriptor's (bone) space
+
+**Complexity** O(1) to make (O(table) the first time a lathe's or an extrude's section is seen); O(1) per call
+
+```js
+Kit.sculpt.distanceOf({ kind: 'sphere', radius: 0.1, at: [0, 0.2, 0] })(0, 0.2, 0) // -0.1
+```
+
+### `Kit.sculpt.solid(shape, matrix, { owner = 0, blend = 0, positions } = {})`
+
+Places a shape in the field's space.
+
+- `shape` *Object* - a `ShapeDescriptor`
+- `matrix` *Float32Array\|number[]* - column-major 4 x 4 from the shape's space to the field's (a bone's rest transform, `Kit.figure.writeBoneMatrix`)
+- `[options]` *{owner?: number, blend?: number, positions?: Float32Array}* - `positions`: points of the shape's surface in its own space (its built mesh), for the bounds; without them the shape is built at low detail
+
+**Returns** *Solid*
+
+**Complexity** O(surface points) for the bounds
+
+```js
+const forearm = Kit.sculpt.solid({ kind: 'capsule', end: [0, -0.25, 0], radius: 0.04, endRadius: 0.03, at: [0, 0, 0] }, boneMatrix, { owner: 7 });
+```
+
+### `Kit.sculpt.cellFor(solids, detail = 'high')`
+
+The grid cell for a set of solids at a level of detail: the level's own, or larger when the solids' longest
+side would otherwise span more than the level's `most` cells.
+
+- `solids` *Solid[]*
+- `[detail='high']` *string* - a key of `DETAIL`
+
+**Returns** *number* metres
+
+**Complexity** O(solids)
+
+```js
+Kit.sculpt.cellFor(bodySolids, 'high') // 0.011 for a body up to 1.32 m on its longest side
+```
+
+### `Kit.sculpt.isTooThin(part, cell)`
+
+Is a solid too thin to be meshed on a grid of this cell (it could fall between the samples)?
+
+- `part` *Solid*
+- `cell` *number* - metres (`cellFor`)
+
+**Returns** *boolean*
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.isTooThin(earring, Kit.sculpt.cellFor(solids)) // true: draw it as a rigid piece instead
+```
+
+### `Kit.sculpt.sample(solids, { detail = 'high', cell: givenCell, margin = 0 } = {})`
+
+Samples solids into a field: the blended distance to all of them at every grid node near a surface. The
+grid is walked in blocks that are halved down to single nodes only where a surface can pass (a distance
+changes by at most a metre per metre, so one measurement at a block's centre rules the whole block in or
+out), and each block measures only the solids that can matter inside it: the cost follows the solids'
+surface area, not the grid's volume.
+
+Solids of one `group` blend with a fillet where their surfaces cross, and not where they run side by side
+(a waist inside a chest; a plain rounded minimum would swell there and ripple the body). A group then joins
+the groups before it near its `anchor`.
+
+- `solids` *Solid[]*
+- `[options]` *{detail?: string, cell?: number, margin?: number}* - `detail`: a key of `DETAIL` (default 'high'); `cell` overrides the cell `cellFor` gives; `margin`: the furthest a surface will be pushed out of this field (`surface`'s `offset`), metres (default 0)
+
+**Returns** *Field*
+
+**Complexity** O(surface area / cell^2 x band width in cells x solids near a node) distance evaluations; O(nodes) memory (one float and one short per node returned)
+
+```js
+const field = Kit.sculpt.sample(bodySolids, { detail: 'medium', margin: 0.03 });
+```
+
+### `Kit.sculpt.valueAt(field, x, y, z)`
+
+The field's value at any point, by blending the eight nodes round it.
+
+- `field` *Field*
+- `x` *number*
+- `y` *number*
+- `z` *number*
+
+**Returns** *number* metres; meaningless (a blend with `FAR`) further than the field's band from its surfaces
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.valueAt(field, 0, 1.2, 0) < 0 // inside the chest
+```
+
+### `Kit.sculpt.slopeAt(field, x, y, z, out)`
+
+The slope of the field at a point: that of the blend of the eight nodes round it (`valueAt`), so it reads
+no node `valueAt` would not. Not unit length.
+
+- `field` *Field*
+- `x` *number*
+- `y` *number*
+- `z` *number*
+- `out` *number[]\|Float64Array* - receives [x, y, z], metres per metre
+
+**Returns** *number[]\|Float64Array* `out`
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.slopeAt(field, 0.2, 1.2, 0, [0, 0, 0]) // about [1, 0, 0] on the right side of a chest
+```
+
+### `Kit.sculpt.nearestAt(field, x, y, z)`
+
+Which solid is nearest a point. A node knows its nearest solid; where the nodes round a point disagree (it
+is near the border between two solids), the solids they name are measured at the point itself, so the
+border is as smooth as the solids and not stepped like the grid.
+
+- `field` *Field*
+- `x` *number*
+- `y` *number*
+- `z` *number*
+
+**Returns** *number* index into `field.solids`, or -1 where no node round the point was measured
+
+**Complexity** O(1): eight lookups, and up to eight distance evaluations near a border
+
+```js
+const bone = field.solids[Kit.sculpt.nearestAt(field, x, y, z)].owner;
+```
+
+### `Kit.sculpt.surface(field, { offset = 0, cut = null, near = null, depth = 0.002, walls = true } = {})`
+
+The surface of a field as a mesh, by surface nets: one vertex in every grid cell the surface passes
+through, placed at the average of where the surface crosses the cell's edges and then moved onto the
+field's true surface, and one quad across every grid edge it crosses. The mesh is closed, evenly
+tessellated and smooth where the field is.
+
+`offset` pushes the surface out (a layer of cloth over a body is the body's field at a positive offset, at
+most the field's `margin`). `cut(x, y, z)` keeps only the part of the solid where it returns true. The
+cut's edge is found by bisection along each grid edge, and a vertex where the cut meets the surface (a hem,
+a hairline) is placed on the cut itself, so an edge is as crisp as the predicate, not as coarse as the
+grid. A cut solid is a shell: it reaches `depth` below the field's own surface and is hollow beneath, and
+faces wholly deeper than that are dropped (a layer does not carry what is buried in the body it lies on).
+`walls: false` also drops the faces a cut makes through the thickness, leaving an open sheet that lies on
+the surface (paint, not cloth).
+
+- `field` *Field*
+- `[options]` *{offset?: number, cut?: function(number, number, number): boolean, near?: ArrayLike\<number\>, depth?: number, walls?: boolean}* - `depth`: metres (default 0.002), used only with a `cut`; `near`: per solid of the field, non-zero when the cut can hold at points nearest that solid (a sleeve's cut holds only near the arm's solids): the cut is then not asked anywhere else, which is most of a body
+
+**Returns** *SurfaceArrays*
+
+**Complexity** O(nodes of the field's band) time (a `cut` is called once per band node within the shell, and 7 times per grid edge it crosses); O(surface cells) memory for the mesh
+
+```js
+const skin = Kit.sculpt.surface(field); const sleeve = Kit.sculpt.surface(field, { offset: 0.008, cut: isSleeve });
+```
+
+### `Kit.sculpt.weights(positions, solids, { spread = 0.03, reach = 0 } = {})`
+
+Which owners move each vertex, and how much. A vertex belongs fully to the solid it lies on; near another
+solid (within `spread` of being as close) it is shared, so the surface bends smoothly across a joint.
+
+- `positions` *Float32Array* - 3 per vertex, in the field's space
+- `solids` *Solid[]*
+- `[options]` *{spread?: number, reach?: number}* - `spread`: metres over which ownership fades from one solid to the next (default 0.03); `reach`: how far off the solids the vertices lie (a layer's offset), metres
+
+**Returns** *SkinArrays*
+
+**Complexity** O(vertices x solids whose bounds are near)
+
+```js
+const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
+```
+
+### Types
+
+- **SectionTable** - A flat section's distance, measured once on a 2D grid.
+  - `values` *Float32Array* - distance at each node, u fastest
+  - `sizeU` *number* - nodes along u
+  - `sizeV` *number*
+  - `fromU` *number* - u of node 0
+  - `fromV` *number*
+  - `step` *number* - metres between nodes
+  - `corners` *Float64Array* - the section, flat (for points off the table)
+- **Solid**
+  - `owner` *number* - who moves it (a bone index): becomes the vertices' skin
+  - `distance` *function(number, number, number): number* - signed distance in the field's space
+  - `min` *number[]* - [x, y, z] of its bounds in the field's space
+  - `max` *number[]*
+  - `thinness` *number* - its smallest half-thickness, metres (see `isTooThin`)
+  - `blend` *number* - how wide a fillet it makes where it meets other solids, metres
+  - `[group=0]` *number* - solids of one group blend with each other everywhere (the segments of an arm)
+  - `[anchor]` *number[]* - [x, y, z]: where the solid's group joins the groups sampled before it (a shoulder). The join's fillet fades to nothing `joinReach` away from here, so an arm hanging beside a torso stays a separate arm instead of melting into the ribs. Without it the group joins everywhere
+  - `[join]` *number* - the fillet where the solid's group joins the rest, metres (default: the group's widest `blend`)
+  - `[joinReach]` *number* - metres from `anchor` over which the join stays full (default: 2.5 x `join`)
+- **Field**
+  - `values` *Float32Array* - distance at each node, x fastest, then y, then z. Only nodes near a surface are measured (`band`); the rest hold `FAR` outside the solids and `-FAR` deep inside them
+  - `nearest` *Int16Array* - index (into the solids sampled) of the solid nearest each measured node, else -1
+  - `band` *Int32Array* - the measured nodes
+  - `margin` *number* - the furthest a surface may be pushed out of this field (`surface`'s `offset`), metres
+  - `size` *number[]* - nodes along [x, y, z]
+  - `origin` *number[]* - [x, y, z] of node (0, 0, 0)
+  - `cell` *number* - metres between nodes
+  - `solids` *Solid[]* - what was sampled
+- **SurfaceArrays**
+  - `positions` *Float32Array* - 3 per vertex, in the field's space
+  - `normals` *Float32Array* - 3 per vertex, unit length, outward
+  - `indices` *Uint16Array\|Uint32Array* - 3 per triangle
+- **SkinArrays**
+  - `owners` *Uint16Array* - 4 per vertex: owner ids (bone indices), strongest first; unused slots are 0
+  - `weights` *Float32Array* - 4 per vertex: their shares, summing to 1
+
+## figure-sculpt.js
+
+> Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone. The
+> body's own solids are blended into one skin per paint (kit/sculpt.js), so limbs run into the torso and a
+> head into its neck; every painted region (a sleeve, trousers, hair) becomes a layer of its own, the same
+> surface pushed out and cut along the region's edge, so cloth has thickness and a hem instead of being a
+> colour on the skin. Each layer's vertices carry bone weights, so one mesh bends with the rig.
+>
+> Owns:  `Kit.figure.sculptLayers` (a bake and its layout -> the layers as plain arrays, and which layout
+>        pieces they replace), `SCULPT` (its tunables) and `restMatrices` (a bake's rest pose as bone matrices).
+> Does not own: the blending and meshing (kit/sculpt.js), what pieces a bake has (kit/figure-layout.js), the
+>        regions' predicates (kit/region.js, kit/body-surface.js), or THREE (kit/figure.js binds the arrays
+>        to skinned meshes).
+>
+> What is sculpted: the solids of the body itself and of its solid features (a nose, an ear). What stays rigid:
+> attached parts (a sword, a hat: thin and hard-edged, which a grid would blur) and flat stamps (a face).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-sculpt.js.
+
+### Types
+
+- **Limb**
+  - `lead` *number* - the limb's first bone (the one whose parent belongs to something else)
+  - `bones` *number[]* - the bones further along it
+  - `direction` *number[]* - unit [x, y, z]: where it points at rest, from its joint
+  - `outward` *number[]* - unit [x, y, z]: away from the trunk
+  - `offset` *number* - metres its joint is to the side of the root
+  - `key` *string* - its ink key ('arms-left')
+- **SculptLayer**
+  - `id` *string* - 'skin:<ramp>' for a body surface, 'region:<part>|<ramp>|<raise>' for a painted layer
+  - `ramp` *number* - index into the bake's ramps
+  - `inkGroup` *number*
+  - `inkClass` *number* - which line class it draws as (its ramp)
+  - `positions` *Float32Array* - 3 per vertex, in the bake's sculpting pose (`matrices`)
+  - `normals` *Float32Array*
+  - `indices` *Uint16Array\|Uint32Array*
+  - `owners` *Uint16Array* - 4 bone indices per vertex
+  - `weights` *Float32Array* - 4 shares per vertex
+- **Sculpted**
+  - `layers` *SculptLayer[]* - shared between equal bakes: never write to their arrays
+  - `replaced` *Set\<string\>* - ids of the layout pieces the layers stand in for (do not draw them)
+  - `matrices` *Float32Array* - the bone matrices the layers were made in (the bind pose), 16 per bone
+  - `clearance` *{leads: Int16Array, turns: Float32Array}* - see `limbClearance`
+  - `signature` *string* - what the layers depend on (see `sculptSignature`)
+- **Garment** - The regions of one worn part with one paint and one raise (its waist, chest and sleeves are separate regions, one per bone): one layer.
+  - `key` *string* - '<part>|<ramp>|<raise>'
+  - `part` *?string*
+  - `ramp` *number*
+  - `raise` *number* - metres; 0 is paint
+  - `order` *number* - its place in the paint order (the highest of its regions')
+  - `tests` *Map\<number, Function[]\>* - per bone, the predicates of its regions there
+
 ## figure.js
 
 > Kit figure: a body bake plus a pose, drawn in 3D through Kit.look. It is the renderer between the body
@@ -8268,9 +8649,11 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `measured` *Object* - the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
   - `rest` *function(): void* - copies the bake's rest pose into `local`
   - `pose` *function(): void* - forward kinematics over `local` and a matrix write per mesh; no allocation
-  - `setBake` *function(Object, Object=): Object* - draws another bake with the fewest changes; returns the plan carried out
+  - `setBake` *function(Object, Object=, {settle?: boolean}=): Object* - draws another bake with the fewest changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is still moving (a dial being dragged): the sculpted surfaces are bent to the new proportions by the skeleton at once, and sculpted again by `settle()`
+  - `settle` *function(): boolean* - sculpts the surfaces for the bake shown if they were only bent to it; true when it did
+  - `isSettled` *function(): boolean* - false while the surfaces wait for `settle()`
   - `frame` *function(number): Object* - a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
-  - `counters` *function(): {meshes: number, materialsCreated: number, geometriesCreated: number}*
+  - `counters` *function(): {meshes: number, skinned: number, materialsCreated: number, geometriesCreated: number}* - `meshes`: draw objects in all, of which `skinned` are sculpted surfaces
   - `dispose` *function(): void*
 - **Crowd**
   - `root` *THREE.Group* - a direct child of `view.scene`
