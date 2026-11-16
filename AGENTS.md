@@ -172,6 +172,10 @@ started later; the dispatcher forwards each new amendment to every agent as it a
 22. Every feature is functionally composed from, or broken down into, smaller subsystems that are
     each reusable on their own; a platform is a thin composition of them, never a monolith.
 
+23. The body system is validated by a detailed character-creation screen for fully 3D characters,
+    far richer than familiar avatar makers, rendered with palette, toon and pixel-art shaders. Original
+    design; techniques may be adapted from the spriteforge repository (POC3).
+
 ## Measures we have gamed before
 
 Each of these was once treated as the goal. None of them is.
