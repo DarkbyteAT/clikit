@@ -64,6 +64,15 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `reach.js` | `Kit.reach`: inverse kinematics over a rig (exact two-bone, FABRIK chain, aim, joint limits) |
 | `dynamics.js` | `Kit.dynamics`: a damped spring and a point chain on a fixed clock (the same at 20 and 60 fps) |
 
+### Movement (pure): stages that compose, over the body system
+
+| File | Owns |
+|---|---|
+| `motion.js` | `Kit.motion`: a stage is `step` (fixed 120 Hz clock) + `pose` (once a frame), both `(motion, plan, dt)`; combinators `sequence`, `blend`, `layer`, `when`, `byDetail`; `refusal` (what a plan lacks); the per-instance motion `state` that owns the pose buffers; `advance` / `advanceStore`; shared stages `lean` and `trail`; `course` / `drive` |
+| `gait.js` | `Kit.gait`: walking, trotting and running for any leg count: stride from the Froude number, the `GAITS` table, feet planted in the world and solved by `Kit.reach`, `plant` (full), `swing` (detail 1), `arms`, the ready `walk`; `feet` / `support` to read the result |
+| `swim.js` | `Kit.swim`: a travelling wave down a spine-and-tail chain, beat and swing from speed (`STYLES`: carangiform, serpentine), `fins`, the ready `swim` |
+| `gait-gallery.js` | the `gaits` screen: four bodies on courses moved by one controller, with footprint and centre-of-mass marks |
+
 ### `Kit.body` (pure): a thing is a graph of typed sockets filled by parts, described by a small recipe
 
 | File | Owns |

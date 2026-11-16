@@ -7,6 +7,8 @@
  * Owns:  (1) recipes generated from one species table: nanoseconds per recipe for each stage (roll, resolve,
  *        encode) and bytes per recipe; (2) instances posed per frame: milliseconds per frame for a crowd drawn
  *        from a few recipes, with the number of bakes that crowd cost (it must equal the number of recipes).
+ *        (3) instances moved per frame by Kit.motion: milliseconds per frame for the same crowd walking (and
+ *        the fish swimming) at each level of detail, and the heap growth per frame when run with --expose-gc.
  * Does not own: regression tracking against a baseline (tools/bench.js has rows for the same hot paths), or
  *        the code being measured (kit/*.js, loaded into a node sandbox exactly as the unit tests do).
  *
@@ -38,6 +40,9 @@ const KIT_FILES = [
   'body-edit',
   'body-store',
   'body-samples',
+  'motion',
+  'gait',
+  'swim',
 ];
 /** Sizes of the two measurements, as the brief states them. */
 const SIZES = { recipes: 10000, instances: 500, distinctRecipes: 20, frames: 120, rounds: 7, tableSeed: 7 };
@@ -173,6 +178,55 @@ const measureCrowd = (Kit, catalog, { withFeetIk }) => {
   return { perFrame, stats: bakery.stats(), bones };
 };
 
+/** Metres per second each walker of measurement 3 travels at; a brisk walk for a person. */
+const WALK_SPEED = 1.3;
+const DETAIL_NOTES = [
+  'full: planted feet, two-bone IK per leg, lean, arms, tails by simulation',
+  'no IK: joints swung by the gait clock, one forward pass',
+  'not evaluated: the position is tracked, nothing is posed',
+];
+
+/** Measurement 3: the crowd of measurement 2 moved by Kit.motion, every instance with its own motion state, at one level of detail. */
+const measureMotion = (Kit, catalog, detail) => {
+  const table = catalog.table(SPECIES_TABLE);
+  const bakery = catalog.bakery();
+  const crowd = Kit.body.store(SIZES.instances);
+  const bakes = Array.from({ length: SIZES.distinctRecipes }, (_unused, index) => bakery.bakeRecipe(table.roll(SIZES.tableSeed, index)));
+  // One controller for every body: legs walk, the rest swim. Capability gating picks per plan.
+  const controller = Kit.motion.when({ atLeast: { legs: 2 } }, Kit.gait.walk(), Kit.swim.swim());
+  const states = [];
+  for (let instance = 0; instance < SIZES.instances; instance++) {
+    const slot = crowd.spawn(instance % SIZES.distinctRecipes, (instance % 25) * 2, 0, Math.floor(instance / 25) * 2, instance * 0.1);
+    crowd.detail[slot] = detail;
+    states[slot] = Kit.motion.state(bakes[crowd.recipe[slot]], controller, { x: crowd.positionX[slot], z: crowd.positionZ[slot], heading: crowd.heading[slot] });
+    states[slot].phase = (instance * 0.37) % 1;
+  }
+  const frame = () => {
+    const liveEnd = crowd.liveEnd();
+    for (let slot = 0; slot < liveEnd; slot++) {
+      crowd.positionX[slot] += Math.sin(crowd.heading[slot]) * WALK_SPEED * FRAME_SECONDS;
+      crowd.positionZ[slot] += Math.cos(crowd.heading[slot]) * WALK_SPEED * FRAME_SECONDS;
+    }
+    Kit.motion.advanceStore(crowd, states, FRAME_SECONDS);
+  };
+  // Long enough that every instance is up to speed and has made every buffer it will ever make.
+  for (let warmUp = 0; warmUp < SIZES.frames * 3; warmUp++) frame();
+  let heapPerFrame = null;
+  if (typeof global.gc === 'function') {
+    global.gc();
+    const before = process.memoryUsage().heapUsed;
+    for (let count = 0; count < SIZES.frames; count++) frame();
+    heapPerFrame = Math.round((process.memoryUsage().heapUsed - before) / SIZES.frames);
+  }
+  const perFrame =
+    fastest(SIZES.rounds, () => {
+      for (let count = 0; count < SIZES.frames; count++) frame();
+    }) / SIZES.frames;
+  const walkers = states.filter((state) => state.memory.gait).length;
+  if (!states.every((state) => Number.isFinite(state.world.translation[state.world.translation.length - 2]))) throw new Error('bench-body: the moving crowd produced a non-finite position.');
+  return { perFrame, heapPerFrame, walkers, swimmers: states.filter((state) => state.memory.swim).length };
+};
+
 function main() {
   const Kit = loadKit();
   const catalog = Kit.body.catalog(Kit.body.samples.CATALOG);
@@ -203,6 +257,14 @@ function main() {
       console.error(`bench-body: ${crowd.stats.bakes} bakes for ${SIZES.distinctRecipes} recipes: instances are not sharing bakes.`);
       process.exit(1);
     }
+  });
+  console.log(`\n3. ${SIZES.instances} instances moved by Kit.motion (one motion state each, ${WALK_SPEED} m/s, 60 fps so two fixed steps a frame)`);
+  DETAIL_NOTES.forEach((note, detail) => {
+    const moved = measureMotion(Kit, catalog, detail);
+    // The code makes no objects per frame; what grows is numbers the engine boxes when they cross a call (DECISIONS.md, "Kit.motion: allocation").
+    const heap = moved.heapPerFrame === null ? 'heap not measured (run with node --expose-gc)' : `${moved.heapPerFrame} bytes of short-lived heap per frame`;
+    console.log(`   detail ${detail}  ${moved.perFrame.toFixed(3)} ms per frame (${((moved.perFrame / (FRAME_SECONDS * 1000)) * 100).toFixed(1)}% of a 60 fps frame), ${heap}`);
+    console.log(`             ${note}; ${moved.walkers} walking, ${moved.swimmers} swimming`);
   });
 }
 

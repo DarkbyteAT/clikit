@@ -62,7 +62,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [seeded.js](#seededjs) (7) - Kit seeded: values that depend only on (seed, field name), not on how many values were read before them.
 - [pack.js](#packjs) (4) - Kit pack: small records as bytes, and bytes as text.
 - [palette.js](#palettejs) (14) - Kit palette: colour ramps as data.
-- [rig.js](#rigjs) (9) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
+- [rig.js](#rigjs) (11) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
 - [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
 - [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
 - [body-plan.js](#body-planjs) (0) - Kit body plan: the skeleton of any kind of thing (a biped, a fish, a sword) compiled from data into flat typed arrays: a joint hierarchy, ty
@@ -83,6 +83,10 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
 - [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
 - [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
+- [motion.js](#motionjs) (25) - Kit motion: movement as small stages that compose.
+- [gait.js](#gaitjs) (17) - Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages.
+- [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
+- [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -6392,7 +6396,8 @@ _Undocumented: add a JSDoc block in the source._
 >
 > Owns:  `Kit.rig.create` / `copy` (transform sets), `worldTransforms` (the forward pass, whole or a range),
 >        `turn` (set one joint's rotation from a base and an angle), `carryPoint` (a joint-space point into
->        the world) and the small quaternion helpers the solvers share (`shortestArc`, `turnWorld`).
+>        the world), `mix` (blend two transform sets) and the small quaternion helpers the solvers share
+>        (`shortestArc`, `turnWorld`, `faceWorld`).
 > Does not own: what the joints are (kit/body-plan.js compiles body plans into this shape; a crane, a rope, a
 >        solar system or a UI tree of nested panels fit it too), inverse kinematics (kit/reach.js), or motion
 >        over time (kit/dynamics.js).
@@ -6543,6 +6548,49 @@ joints that hang from it.
 
 ```js
 Kit.rig.turnWorld(parents, local, world, elbow, Kit.rig.shortestArc(0, -1, 0, 0, 0, 1, quaternion));
+```
+
+### `Kit.rig.faceWorld(parents, local, world, joint, x, y, z, w)`
+
+Sets a joint's rotation in WORLD space, writing the LOCAL rotation that produces it under the joint's
+current parent (so the change survives the next forward pass) and the joint's world rotation. This is how
+something is held level whatever the limb it hangs from is doing: a foot flat on the ground, a head that
+keeps looking ahead, a carried tray. Children are not refreshed: run `worldTransforms` over what hangs from it.
+
+- `parents` *Int16Array\|number[]*
+- `local` *JointTransforms*
+- `world` *JointTransforms* - current world transforms of the joint's parent
+- `joint` *number* - joint index
+- `x` *number* - the wanted world rotation, a unit quaternion
+- `y` *number*
+- `z` *number*
+- `w` *number*
+
+**Returns** *void*
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.rig.faceWorld(parents, local, world, foot, 0, Math.sin(heading / 2), 0, Math.cos(heading / 2));   // flat, facing `heading`
+```
+
+### `Kit.rig.mix(from, to, amount, out)`
+
+Mixes two transform sets of the same size: translations, scales and sizes are interpolated straight, rotations
+along the shorter way round and renormalised (accurate to a fraction of a degree for poses less than a
+quarter turn apart, which is what blending two movements needs). `out` may be either input.
+
+- `from` *JointTransforms* - the set at amount 0
+- `to` *JointTransforms* - the set at amount 1
+- `amount` *number* - 0..1 (not clamped)
+- `out` *JointTransforms* - receives the mix
+
+**Returns** *JointTransforms* `out`
+
+**Complexity** O(joints) time (one square root a joint), no allocation
+
+```js
+Kit.rig.mix(standing, crouched, 0.5, pose);
 ```
 
 ### Types
@@ -6881,6 +6929,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >        tables, `requirement` / `fits` / `missing` / `requireFit` (can this plan do what a consumer needs?),
 >        `bonesWithRoles` / `chains` / `groupOf` (find and group bones by role), `createPose` / `copyRest` /
 >        `worldTransforms` / `socketPosition` / `tailPosition` / `lowestY` (a plan's view of `Kit.rig`),
+>        `bendDirection` / `bendAgrees` (which way a knee or an elbow folds, from its limits),
 >        `boneLength` / `boneMasses` / `centerOfMass` (physical quantities that follow the proportions),
 >        `dials` / `applyDials` (proportions) and `socketType` (type ids).
 > Does not own: the transform pass itself (kit/rig.js: `plan.parent` and a pose are all it needs), inverse
@@ -7194,6 +7243,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `groundY` *number* - canvas y of world height 0, pixels
   - `scale` *number* - pixels per metre
   - `[turn=0]` *number* - radians the camera is turned about +Y: 0 looks at the body's front, a quarter turn looks at its side
+  - `[tilt=0]` *number* - radians the camera looks down by: 0 is level (the ground is a line), a little tilt opens the ground plane up so footprints and what stands over them can be told apart
 
 ## body-gallery.js
 
@@ -7764,6 +7814,852 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
 >
 > Registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and play
 > tools reach it like any other. It draws its own frame (see `render` in kit/shell.js).
+
+## motion.js
+
+> Kit motion: movement as small stages that compose. A stage is a pair of functions of the same shape,
+> `(motion, plan, dt)`: `step` advances what must be simulated on the fixed clock (phases, footfalls), `pose`
+> writes this frame's pose from that state. Combinators turn stages into bigger stages, so a new body or a new
+> behaviour is a new composition of the same parts, not new code. A motion state is one instance's movement:
+> where it is, how fast it is going, and the pose buffers it owns.
+>
+> Owns:  `Kit.motion.stage` and the combinators `sequence`, `blend`, `layer`, `when`, `byDetail`; `refusal` /
+>        `requireFit` (can this plan run this stage, and if not, what is missing); `state` (a per-instance
+>        motion state), `advance` (one frame: fixed steps, then the pose, then the world transforms), `place`
+>        (teleport), `advanceStore` (every instance of a `Kit.body.store`); the two stages every kind of
+>        movement shares, `lean` (tilt into acceleration and turns) and `trail` (tails and other loose chains
+>        follow by simulation); and `course` / `drive` (a body steered along a table of speeds and turns).
+> Does not own: how legs walk (kit/gait.js) or bodies swim (kit/swim.js), the fixed clock (`Kit.dynamics.stepsDue`),
+>        kinematics (kit/rig.js, kit/reach.js), plans (kit/body-plan.js), where an instance should go (the
+>        caller moves it; this reads the movement), or drawing.
+>
+> Conventions (kit/body-plan.js): metres, seconds, radians; +Y up; heading 0 faces +Z and grows towards +X, the
+> body's left. "Body frame" means left, up, forward.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-gait.js.
+
+### `Kit.motion.GRAVITY`
+
+Metres per second squared. Leans, strides and tails are sized against it.
+
+### `Kit.motion.SMOOTHING`
+
+How quickly the measured facts of a movement settle, per second. The caller moves the body once a frame, so
+the raw speed is a staircase; these rates turn it into something a stride and a lean can follow.
+
+### `Kit.motion.LEAN_DEFAULTS`
+
+Tunables of `lean`. Angles in radians.
+
+### `Kit.motion.TRAIL_DEFAULTS`
+
+Tunables of `trail`.
+
+### `Kit.motion.COURSE_DEFAULTS`
+
+Tunables of `course`.
+
+### `Kit.motion.stage(parts)`
+
+Makes a stage from its parts, or passes one through. Every combinator calls this on what it is given, so
+a plain `(motion, plan, dt) => {}` function can be used anywhere a stage can.
+
+- `parts` *Stage\|Function\|Object* - a stage, a function (motion, plan, dt), or { name?, step?, pose?, needs?, detailLevels? }
+
+**Returns** *Stage* frozen
+
+**Complexity** O(1)
+
+```js
+const nod = Kit.motion.stage({ name: 'nod', pose: (motion, plan) => Kit.rig.turn(motion.pose.rotation, motion.pose.rotation, head, 0, 0.2) });
+```
+
+### `Kit.motion.sequence(...parts)`
+
+Stages run one after another: every `step` in order on the fixed clock, every `pose` in order each frame.
+Later stages see what earlier ones wrote, so order is meaning: lean before the legs are solved, tails last.
+
+- `parts` *...(Stage\|Function)*
+
+**Returns** *Stage* needs everything its parts need
+
+**Complexity** O(parts) per call on top of the parts' own cost; no allocation
+
+```js
+const walk = Kit.motion.sequence(Kit.motion.lean(), Kit.gait.arms(), Kit.gait.plant(), Kit.motion.trail());
+```
+
+### `Kit.motion.blend(weight, part)`
+
+A stage whose pose is mixed over what was there before it by a weight: 0 leaves the pose alone, 1 is the
+stage outright. Its `step` always runs, so the stage is warm when its weight comes up. Mixing happens on
+joint rotations, so a mixed walk no longer holds its feet exactly on their plants: blend to change
+movement, not as a movement.
+
+- `weight` *number\|function(MotionState, Object): number* - 0..1, or a function giving it each frame
+- `part` *Stage\|Function*
+
+**Returns** *Stage*
+
+**Complexity** O(joints) per frame when the weight is strictly between 0 and 1 (one copy, one mix); the first such frame of an instance allocates one pose buffer, none after
+
+```js
+const wade = Kit.motion.sequence(walk, Kit.motion.blend((motion) => motion.memory.water.depth, swim));
+```
+
+### `Kit.motion.layer(roles, part)`
+
+A stage confined to part of the body: it runs in full, then every bone that carries none of the given
+roles is put back as it was. This is how an upper-body movement is laid over a walk.
+
+- `roles` *string[]* - role names (`Kit.body.ROLES`); a bone carrying ANY of them keeps the stage's changes
+- `part` *Stage\|Function*
+
+**Returns** *Stage*
+
+**Complexity** O(joints) per frame (one copy, one pass); the first frame of an instance allocates one pose buffer
+
+```js
+const wave = Kit.motion.layer(['arm', 'hand'], greeting);   // legs keep walking
+```
+
+### `Kit.motion.when(condition, part, otherwise)`
+
+A stage that runs only where it can, or only while something holds. Given a requirement (from
+`Kit.body.requirement`, or a spec for one), the question is asked of the plan once and remembered: this is
+capability gating, and it is how one controller serves bodies of different shapes. Given a function, it is
+asked every time. A gated stage's needs are no longer needs of the whole.
+
+- `condition` *Object\|function(MotionState, Object): boolean* - a requirement, a requirement spec ({ needs, atLeast }), or a predicate (motion, plan)
+- `part` *Stage\|Function* - runs when the condition holds
+- `[otherwise]` *Stage\|Function* - runs when it does not
+
+**Returns** *Stage*
+
+**Complexity** O(1) per call beyond the chosen stage (a requirement costs one map lookup per plan)
+
+```js
+const move = Kit.motion.when({ atLeast: { legs: 2 } }, Kit.gait.walk(), Kit.swim.swim());   // legs walk, the rest swim
+```
+
+### `Kit.motion.byDetail(levels)`
+
+One stage per level of detail: `levels[motion.detail]` runs, and a detail beyond the list runs nothing at
+all (`advance` then skips the pose and the world transforms too, so a far instance costs a few additions).
+
+- `levels` *Array\<Stage\|Function\>* - the full stage first, cheaper ones after
+
+**Returns** *Stage* needs what its first level needs
+
+**Complexity** O(1) per call beyond the chosen stage
+
+```js
+const walk = Kit.motion.byDetail([fullWalk, swingOnly]);   // detail 2 and up: not evaluated
+```
+
+### `Kit.motion.refusal(part, plan, rest)`
+
+Why a plan cannot run a stage, in words, or null when it can: the capability gate with a named refusal.
+
+- `part` *Stage\|Function*
+- `plan` *Object* - a `BodyPlan`
+- `[rest]` *Object* - its proportioned rest pose, for needs that measure the body (default: the plan's own)
+
+**Returns** *?string* e.g. 'the walk gait cannot move the plan "fish": it lacks legs. This plan has: tail, spine, ...'
+
+**Complexity** O(needs x capabilities); call it at setup, not per frame
+
+```js
+Kit.motion.refusal(Kit.gait.walk(), fishPlan) // 'the walk gait cannot move the plan "fish": it lacks legs. ...'
+```
+
+### `Kit.motion.requireFit(part, plan, rest)`
+
+Throws unless the plan can run the stage.
+
+- `part` *Stage\|Function*
+- `plan` *Object* - a `BodyPlan`
+- `[rest]` *Object* - its proportioned rest pose
+
+**Returns** *Object* the plan
+
+**Complexity** as `refusal`
+
+```js
+Kit.motion.requireFit(Kit.gait.walk(), bake.plan, bake.rest);
+```
+
+### `Kit.motion.state(body, controller, { x = 0, y = 0, z = 0, heading = 0, detail = 0 } = {})`
+
+Makes one instance's motion state. It owns the instance's pose and world buffers (a bake is shared between
+instances; a pose cannot be), so a renderer reads `motion.world` and nothing else needs allocating.
+
+- `body` *{plan: Object, rest?: Object}* - a bake of kit/body-recipe.js, or any plan with an optional proportioned rest pose (default: the plan's own rest pose)
+- `controller` *Stage\|Function* - the stage to run, usually a composition
+- `[placement]` *{x?: number, y?: number, z?: number, heading?: number, detail?: number}* - where it starts (default the origin, facing +Z, full detail)
+
+**Returns** *MotionState*
+
+**Complexity** O(bones) time and space, once per instance: two transform sets (88 bytes a bone) and a mass per bone
+
+```js
+const motion = Kit.motion.state(bake, Kit.gait.walk(), { x: 2, z: 5 });
+Kit.motion.advance(motion, dt, x, 0, z, heading);     // every frame, with where the game moved it to
+Kit.body.debug.draw(context, motion.plan, motion.world, view);
+```
+
+### `Kit.motion.memory(motion, key, create)`
+
+A stage's own record on a motion state, made the first time it is asked for. Stages keep their per-instance
+state here (springs, planted feet, chains), so a state carries exactly what its controller uses.
+
+- `motion` *MotionState*
+- `key` *string* - the stage's name for its record
+- `create` *function(MotionState): Object* - makes the record; called once per state
+
+**Returns** *Object*
+
+**Complexity** O(1) after the first call; the first call allocates whatever `create` allocates
+
+```js
+const springs = Kit.motion.memory(motion, 'lean', () => ({ pitch: Kit.dynamics.spring(), roll: Kit.dynamics.spring() }));
+```
+
+### `Kit.motion.refreshWorld(motion)`
+
+Brings `motion.world` up to date with `motion.pose` if a stage has changed the pose since. Stages that read
+world positions call this first; `advance` calls it last.
+
+- `motion` *MotionState*
+
+**Returns** *Object* `motion.world`
+
+**Complexity** O(bones) when the world was stale, O(1) otherwise; no allocation
+
+```js
+const hipHeight = Kit.motion.refreshWorld(motion).translation[hip * 3 + 1];
+```
+
+### `Kit.motion.place(motion, x, y, z, heading = motion.heading)`
+
+Puts a body somewhere without it having travelled there: speeds are cleared and `epoch` moves on, so stages
+that hold world positions (planted feet, trailing chains) start again from the new place.
+
+- `motion` *MotionState*
+- `x` *number* - world metres
+- `y` *number* - the ground height there
+- `z` *number*
+- `[heading=motion.heading]` *number* - radians
+
+**Returns** *MotionState* `motion`
+
+**Complexity** O(1)
+
+```js
+Kit.motion.place(motion, spawn.x, 0, spawn.z, spawn.heading);
+```
+
+### `Kit.motion.advance(motion, dt, x = motion.x, y = motion.y, z = motion.z, heading = motion.heading)`
+
+One frame of an instance. The caller says where the body is now; the movement between the last call and
+this one is replayed in fixed steps (`Kit.dynamics.stepsDue`), so the controller's `step` sees the same
+positions whether the game runs at 20 or 60 frames a second. Then the controller's `pose` writes the pose
+from the rest pose, and the world transforms are brought up to date.
+
+- `motion` *MotionState*
+- `dt` *number* - seconds since the last call, any frame rate
+- `[x=motion.x]` *number* - where the body stands now, world metres
+- `[y=motion.y]` *number* - the ground height under it
+- `[z=motion.z]` *number*
+- `[heading=motion.heading]` *number* - radians
+
+**Returns** *MotionState* `motion`; read `motion.world` (and `motion.pose`) after
+
+**Complexity** O(steps x step cost + pose cost + bones) time, at most 12 steps; no allocation after an instance's first frames
+
+```js
+Kit.motion.advance(motion, dt, player.x, groundHeight, player.z, player.heading);
+```
+
+### `Kit.motion.advanceStore(store, states, dt)`
+
+Advances every live instance of a body store: reads each slot's position, heading and detail columns,
+advances its motion state, and writes the phase column back.
+
+- `store` *Object* - a `Kit.body.store`
+- `states` *Array\<?MotionState\>* - slot -> its motion state (slots without one are skipped)
+- `dt` *number* - seconds since the last call
+
+**Returns** *void*
+
+**Complexity** O(live slots x the cost of `advance`); no allocation
+
+```js
+states[slot] = Kit.motion.state(bakes[crowd.recipe[slot]], controller, { x, z });
+Kit.motion.advanceStore(crowd, states, dt);      // after the game moved the columns
+```
+
+### `Kit.motion.carrier(plan)`
+
+The bone that carries the body: the child of the root bone with the most bones under it (a pelvis, a
+quadruped's hips, a fish's trunk). Movement shifts and tilts this one bone and everything rides on it.
+
+- `plan` *Object* - a `BodyPlan`
+
+**Returns** *number* bone index; the root itself when it has no children
+
+**Complexity** O(bones) the first time for a plan, O(1) after
+
+```js
+const pelvis = Kit.motion.carrier(bipedPlan);
+```
+
+### `Kit.motion.lean(options = {})`
+
+A stage that tilts the body's carrier bone into what it is doing: forwards when it speeds up, back when it
+brakes, and into a turn, by a share of the angle that would balance it exactly. Each angle rides a spring,
+so the tilt has weight. Walkers lean and swimmers bank with the same stage.
+
+- `[options]` *{pitchShare?: number, pitchPerSpeed?: number, rollShare?: number, mostPitch?: number, mostRoll?: number, stiffness?: number, pitchWeight?: function(MotionState, Object): number}* - see `Kit.motion.LEAN_DEFAULTS`; a share of 0 switches that tilt off. `pitchWeight` (motion, plan) scales the forward tilt per body: an upright body nods from its hips, a long level one must not
+
+**Returns** *Stage*
+
+**Complexity** O(1) per frame plus two springs' fixed steps; allocates two springs on an instance's first frame
+
+```js
+const bank = Kit.motion.lean({ pitchShare: 0, rollShare: 1.2 });   // a fish rolls into turns and does not nod
+```
+
+### `Kit.motion.trail(options = {})`
+
+A stage that lets loose limbs follow the body by simulation: each chain of bones carrying the given roles
+(a tail by default) is shadowed by a `Kit.dynamics` chain of points dragged from its base, and the bones
+are aimed along the points with `Kit.reach.follow`. Put it last, after whatever moves the body.
+
+- `[options]` *{roles?: string[], gravity?: number[], drag?: number, stiffnessScale?: number}* - which limbs (`roles`, default ['tail']; a chain is a run of bones carrying ALL of them), and how they behave: see `Kit.motion.TRAIL_DEFAULTS`. How strongly a chain keeps its rest direction follows the `stiffness` hint of its base bone in the plan.
+
+**Returns** *Stage* needs nothing: a body without such limbs is left alone
+
+**Complexity** O(chain points x iterations x fixed steps) per frame; allocates the chains on an instance's first frame
+
+```js
+const wings = Kit.motion.trail({ roles: ['wing'], gravity: [0, -2, 0] });
+```
+
+### `Kit.motion.course(legs, options = {})`
+
+Makes a course: a looping table of legs, each a speed and a turn rate held for some seconds, with the body's
+speed and turn easing from one to the next. It is the smallest thing that starts, stops and turns, for
+demos, benchmarks and tests of movement; a game steers its own bodies.
+
+- `legs` *CourseLeg[]*
+- `[options]` *{acceleration?: number, turnAcceleration?: number, x?: number, z?: number, heading?: number}* - see `Kit.motion.COURSE_DEFAULTS`
+
+**Returns** *Course*
+
+**Complexity** O(legs)
+
+```js
+const course = Kit.motion.course([{ seconds: 3, speed: 1.4 }, { seconds: 2, speed: 1.4, turn: 0.8 }, { seconds: 1.5, speed: 0 }]);
+Kit.motion.drive(course, dt);
+Kit.motion.advance(motion, dt, course.x, 0, course.z, course.heading);
+```
+
+### `Kit.motion.drive(route, dt)`
+
+Advances a course by `dt` seconds on the fixed clock, so it traces the same line at any frame rate.
+
+- `route` *Course*
+- `dt` *number* - seconds since the last call
+
+**Returns** *Course* `route`
+
+**Complexity** O(dt / FIXED_STEP) time, at most 12 steps; no allocation
+
+```js
+Kit.motion.drive(course, dt);
+```
+
+### `Kit.motion.shortestTurn(from, to)`
+
+The signed smallest turn from one heading to another, radians in (-pi, pi].
+
+### Types
+
+- **StageNeed** - One thing a stage needs from a plan before it can run on it.
+  - `consumer` *string* - who is asking, for the refusal ('the walk gait')
+  - `[requirement]` *Object* - capabilities, from `Kit.body.requirement`
+  - `[check]` *function(Object, Object): ?string* - (plan, rest pose) -> what is wrong, or null; for needs a capability mask cannot state ("every leg has three bones")
+- **Stage**
+  - `name` *string* - what it is, for refusals and debugging
+  - `step` *?function(MotionState, Object, number): void* - (motion, plan, dt) on the fixed clock: `dt` is always `Kit.dynamics.FIXED_STEP`. Null when the stage simulates nothing.
+  - `pose` *?function(MotionState, Object, number): void* - (motion, plan, dt) once per `advance`: writes `motion.pose`; `dt` is the frame's. Null when the stage only simulates.
+  - `needs` *ReadonlyArray\<StageNeed\>*
+  - `detailLevels` *number* - how many levels of detail it evaluates; at `motion.detail` equal or above, `advance` runs neither its pose nor the world transforms (Infinity unless made by `byDetail`)
+- **MotionState** - One instance's movement.
+  - `plan` *Object* - the `BodyPlan`
+  - `rest` *Object* - the proportioned rest pose every frame starts from (shared with the bake; never written)
+  - `pose` *Object* - the local pose this frame (`JointTransforms`), owned by this state
+  - `world` *Object* - the world transforms this frame, owned by this state
+  - `isWorldCurrent` *boolean* - false after a stage changed `pose` without refreshing `world`
+  - `controller` *Stage* - the stage `advance` runs
+  - `x` *number* - where the body stands, world metres
+  - `y` *number* - the height of the ground under it
+  - `z` *number*
+  - `heading` *number* - radians about +Y
+  - `velocityX` *number* - smoothed, metres per second
+  - `velocityZ` *number*
+  - `speed` *number* - metres per second, never negative
+  - `forwardSpeed` *number* - the part of the velocity along the heading (negative when backing up)
+  - `acceleration` *number* - change of `forwardSpeed`, smoothed, metres per second squared
+  - `turnRate` *number* - smoothed, radians per second, positive towards the body's left
+  - `time` *number* - seconds simulated
+  - `phase` *number* - 0..1, where the body is in its movement cycle; the stage that runs the cycle owns it
+  - `detail` *number* - level of detail, 0 = full (copy `store.detail[slot]` here, or use `advanceStore`)
+  - `epoch` *number* - counts teleports; a stage that keeps world positions starts again when it changes
+  - `masses` *Float32Array* - one per bone, kilograms
+  - `totalMass` *number* - kilograms
+  - `memory` *Object\<string, Object\>* - per-stage records, made on first use (`Kit.motion.memory`)
+  - `carry` *number* - seconds not yet simulated (owned by `advance`)
+  - `pending` *number* - seconds since the last fixed step ran (owned by `advance`)
+  - `spares` *Object[]* - pose buffers lent to `blend` and `layer` (owned by them)
+  - `sparesUsed` *number*
+- **CourseLeg**
+  - `seconds` *number* - how long the leg lasts
+  - `speed` *number* - metres per second to settle at (0 stands still)
+  - `[turn=0]` *number* - radians per second to settle at, positive towards the left
+- **Course** - Plain state; read `x`, `z`, `heading` after `drive`.
+  - `legs` *ReadonlyArray\<CourseLeg\>*
+  - `x` *number* - world metres
+  - `z` *number*
+  - `heading` *number* - radians
+  - `speed` *number* - metres per second now
+  - `turn` *number* - radians per second now
+  - `leg` *number* - index of the leg being travelled
+  - `legTime` *number* - seconds into that leg
+  - `acceleration` *number* - how fast speed changes, metres per second squared
+  - `turnAcceleration` *number* - how fast the turn rate changes, radians per second squared
+  - `carry` *number* - seconds not yet simulated (owned by `drive`)
+
+## gait.js
+
+> Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages. Nothing
+> here is an animation: a clock turns speed and leg length into a stride, a table says when each leg is on the
+> ground, feet are planted in the world and stay there until they lift, legs are solved by inverse kinematics,
+> and the body rides on the legs that carry it.
+>
+> Owns:  `Kit.gait.GAITS` (walk, trot, run: duty factor and per-leg phase offsets, with rows for two and four
+>        legs and a rule for any other count), `strideLength` and `froude` (the physics the clock runs on),
+>        `legs` (what a plan's legs are, measured from its data), the stages `plant` (full detail: planted
+>        feet, inverse kinematics, a pelvis held where the legs can reach, a sprung bob and a shift over the
+>        support), `swing` (level of detail 1: the same clock driving joint angles, no solving) and `arms`
+>        (arms swing against the legs), the ready composition `walk`, and `feet` / `support` (read where the
+>        feet are and whether the centre of mass is over them).
+> Does not own: the stage machinery, lean, trailing chains or the fixed clock (kit/motion.js, kit/dynamics.js),
+>        the solvers (kit/reach.js), plans and which way a knee bends (kit/body-plan.js), where the body goes
+>        (the caller moves it; a gait reads the movement), uneven ground (the ground is flat at `motion.y`),
+>        or swimming (kit/swim.js).
+>
+> Conventions (kit/motion.js): metres, seconds, radians; heading 0 faces +Z and grows towards +X, the body's
+> left; "body frame" is left, up, forward. A leg's phase runs 0..1: on the ground for the first `duty` of it.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-gait.js.
+
+### `Kit.gait.STRIDE`
+
+Stride length from speed, by dynamic similarity: animals of any size moving at the same Froude number
+(speed squared over gravity times leg length) move alike, and across walkers and runners the stride is
+about `factor` x leg length x Froude^`exponent` (R. McNeill Alexander's fit). So a longer leg takes a longer,
+slower stride at the same speed, with no table per body.
+
+### `Kit.gait.GAITS`
+
+The gaits, slowest first. A body uses the first gait whose `fastestFroude` its Froude number does not
+exceed (people break into a run near 0.5, horses into a gallop near 2.5). `duty` is the fraction of a
+stride each foot spends on the ground; `offsets` are where in the stride each leg starts its stance, in
+the order left legs hind to front, then right legs hind to front. `rows` are written out for two and four
+legs (the gallop cannot be made by a rule); any other body uses `generic`, whose `rule` is 'sequence'
+(legs take turns in that order, evenly spaced: a wave) or 'alternate' (neighbours in opposite halves of the
+stride: a trot, an insect's tripod). `clearance` is how high a swinging foot lifts, in leg lengths.
+
+### `Kit.gait.CLOCK`
+
+The clock. Rates are per second; Froude numbers are dimensionless.
+
+### `Kit.gait.SWING`
+
+A swing lasts between these fractions of the leg's pendulum period (2 pi sqrt(leg length / g)), whatever the stride asks.
+
+### `Kit.gait.STANCE`
+
+Standing and reaching, in leg lengths unless noted.
+
+### `Kit.gait.SWING_ONLY`
+
+Level of detail 1: joint angles from the clock. Radians unless noted.
+
+### `Kit.gait.ARMS`
+
+Arms. Radians unless noted.
+
+### `Kit.gait.froude(speed, legLength)`
+
+The Froude number of a body moving on legs: speed squared over gravity times leg length. Two bodies at the
+same number move alike whatever their size, which is what lets one gait table serve every body.
+
+- `speed` *number* - metres per second
+- `legLength` *number* - metres, hip to ankle
+
+**Returns** *number*
+
+**Complexity** O(1)
+
+```js
+Kit.gait.froude(1.4, 0.87) // 0.23: a person walking
+```
+
+### `Kit.gait.strideLength(speed, legLength)`
+
+How far a body travels in one full stride (until the same foot lands again) at a speed.
+
+- `speed` *number* - metres per second
+- `legLength` *number* - metres, hip to ankle
+
+**Returns** *number* metres; 0 at a standstill
+
+**Complexity** O(1)
+
+```js
+Kit.gait.strideLength(1.4, 0.87) // 1.29; with legs a fifth longer, 1.47
+```
+
+### `Kit.gait.footOffset(legPhase, duty)`
+
+Where a foot is, fore and aft of its hip, through a stride: +1 as it lands in front, falling evenly to -1
+as the body passes over it, then swung smoothly back to +1.
+
+- `legPhase` *number* - 0..1
+- `duty` *number* - the fraction of the stride spent on the ground
+
+**Returns** *number* -1..1
+
+**Complexity** O(1)
+
+```js
+Kit.gait.footOffset(0, 0.6) // 1: just landed, out in front
+```
+
+### `Kit.gait.legs(plan, rest)`
+
+Measures a plan's legs (and arms) for walking: which bones they are, how long, where the hips and feet sit,
+which way each knee bends (from its limits, by `Kit.body.bendDirection`; a joint with no preferred side
+bends forwards, or backwards when the leg is in front of the body's middle, as elbows do), and when each
+leg steps in each gait. Remembered per rest pose, so every instance of a bake shares one.
+
+- `plan` *Object* - a `BodyPlan`
+- `rest` *Object* - its proportioned rest pose (a bake's `rest`); dials change every length here
+
+**Returns** *LegRig* frozen
+
+**Complexity** O(bones x legs) time once per rest pose, O(1) after; O(legs) space
+
+```js
+Kit.gait.legs(bake.plan, bake.rest).legLength // 0.87 for the sample biped
+```
+
+### `Kit.gait.plant()`
+
+The stage that walks at full detail. On the fixed clock: the gait clock, and for each leg the lift, the
+swing towards where the hip will be half a stance after touchdown, and the plant. Each frame: the body is
+set a little below a straight-legged stand (riding a spring that every landing kicks, shifted towards the
+feet that are down), lowered as far as the most stretched leg needs, and every leg is solved to its foot
+by `Kit.reach.twoBone` (`Kit.reach.chain` for a leg of more than three bones). A planted foot does not
+move: at the end of a stance the foot pitches about its toe, so the ankle rises and the toe stays put.
+
+**Returns** *Object* a `Stage` of kit/motion.js; needs two or more legs of three or more bones
+
+**Complexity** per fixed step O(legs); per frame O(bones) for one forward pass plus O(legs) solves; no allocation after an instance's first frame
+
+```js
+const legsOnly = Kit.motion.sequence(Kit.motion.lean(), Kit.gait.plant());
+```
+
+### `Kit.gait.swing()`
+
+The stage that walks at level of detail 1: the same clock as `plant`, but each hip and knee is simply
+turned through the stride. No feet are planted and nothing is solved, so feet slide a little and the cost
+is a few turns and one forward pass. For bodies too far away for that to show.
+
+**Returns** *Object* a `Stage`; needs what `plant` needs
+
+**Complexity** per fixed step O(1); per frame O(legs); no allocation after an instance's first frame
+
+```js
+const cheapWalk = Kit.motion.sequence(Kit.gait.swing(), Kit.gait.arms());
+```
+
+### `Kit.gait.arms()`
+
+The stage that swings arms against the legs: each arm goes forward with the nearest leg on the other side,
+by an angle that grows with the stride, and its elbow folds more the faster the body goes. It reads the
+clock that `plant` or `swing` runs, so put it in a sequence with one of them; a body without arms is left alone.
+
+**Returns** *Object* a `Stage`; needs nothing
+
+**Complexity** O(arms) per frame, no allocation
+
+```js
+const walk = Kit.motion.sequence(Kit.gait.arms(), Kit.gait.plant());
+```
+
+### `Kit.gait.walk()`
+
+Walking, ready made: lean, arms, planted feet and trailing tails and wings at full detail; clock-driven
+swing at level of detail 1; nothing beyond. The same stage walks any plan with two or more legs.
+
+**Returns** *Object* a `Stage`
+
+**Complexity** see `plant` (detail 0) and `swing` (detail 1)
+
+```js
+const motion = Kit.motion.state(bake, Kit.gait.walk());
+Kit.motion.advance(motion, dt, x, 0, z, heading);
+```
+
+### `Kit.gait.feet(motion)`
+
+An instance's feet: which are planted and where. Null until the `plant` stage has run for it.
+
+- `motion` *Object* - a `MotionState`
+
+**Returns** *?FeetState*
+
+**Complexity** O(1)
+
+```js
+const feet = Kit.gait.feet(motion); if (feet && feet.planted[0]) markFootprint(feet.footX[0], feet.footZ[0]);
+```
+
+### `Kit.gait.support(motion, out)`
+
+Measures balance: the centre of mass of the posed body against the span of its planted feet, along and
+across the heading. A walker's centre of mass leaves the span while it vaults over one foot; how far is
+the honest measure of how dynamic the gait is.
+
+- `motion` *Object* - a `MotionState` that has been advanced
+- `out` *Support* - receives the measurement
+
+**Returns** *Support* `out`
+
+**Complexity** O(bones + legs) time, no allocation
+
+```js
+const balance = Kit.gait.support(motion, { planted: 0, centerX: 0, centerY: 0, centerZ: 0, forwardOutside: 0, sideOutside: 0 });
+```
+
+### Types
+
+- **LegRig** - A plan's legs and arms, measured once from the plan and a proportioned rest pose.
+  - `count` *number* - legs
+  - `upper` *Int16Array* - per leg: the bone at the body (hip)
+  - `middle` *Int16Array* - per leg: its child (knee)
+  - `end` *Int16Array* - per leg: the last bone of the leg, whose joint is the ankle
+  - `longChains` *Array\<?Int16Array\>* - per leg: every joint from hip to ankle when the leg has more than three bones (solved as a chain), else null (solved as two bones)
+  - `length` *Float32Array* - per leg: hip to ankle along the bones, metres
+  - `hipX` *Float32Array* - per leg: the hip in the body frame at rest (left, up, forward), metres
+  - `hipY` *Float32Array*
+  - `hipZ` *Float32Array*
+  - `homeX` *Float32Array* - per leg: where the ankle rests in the body frame (left, forward)
+  - `homeZ` *Float32Array*
+  - `sole` *Float32Array* - per leg: how high the ankle is above the lowest point of its foot
+  - `toe` *Float32Array* - 3 per leg: from the ankle to the end of the foot bone in the body frame at rest; zeros for a foot with no extent (it cannot roll onto its toe)
+  - `footRotation` *Float32Array* - 4 per leg: the foot bone's rotation in the body frame at rest
+  - `bendX` *Float32Array* - per leg: the way the knee points, in the body frame (left, forward), unit
+  - `bendZ` *Float32Array*
+  - `flexSign` *Int8Array* - per leg: the sign of the knee's own X turn that folds it
+  - `side` *Uint8Array* - per leg: 0 left, 1 on the centre line, 2 right
+  - `row` *Uint8Array* - per leg: 0 for the hindmost row of hips, counting forwards
+  - `legLength` *number* - the mean leg length, metres: what the clock scales by
+  - `pendulumPeriod` *number* - seconds: 2 pi sqrt(legLength / g)
+  - `standLift` *number* - how far the carrier bone is raised from the rest pose so the lowest sole rests on the ground (dials that lengthen legs push the rest pose's feet below the root)
+  - `upright` *number* - 1 for a body whose hips are all in one row (it can lean from them), falling to 0 as the rows of hips spread a leg length apart (a level trunk on legs at both ends must not nod)
+  - `carrier` *number* - the bone the body is carried by (`Kit.motion.carrier`)
+  - `stretchX` *number* - how much the carrier's parent stretches offsets, left and up (for writing a world shift into the local pose)
+  - `stretchY` *number*
+  - `gaits` *Array\<{duty: number, offsets: Float32Array, clearance: number, fastestFroude: number}\>* - one per `GAITS` row, in order: this body's duty factor and per-leg offsets
+  - `armCount` *number*
+  - `armUpper` *Int16Array* - per arm: the bone at the shoulder
+  - `armElbow` *Int16Array* - per arm: its child, or -1
+  - `elbowSign` *Int8Array* - per arm: the sign of the elbow's own X turn that folds it
+  - `armLeg` *Int16Array* - per arm: the leg it swings with (the nearest on the other side)
+  - `armShift` *Float32Array* - per arm: phase added to that leg's (0.5 when no leg is on the other side)
+- **FeetState** - Where an instance's feet are (full detail only).
+  - `planted` *Uint8Array* - 1 while the foot is on the ground
+  - `footX` *Float32Array* - where the ankle stands (planted) or last stood, world metres
+  - `footZ` *Float32Array*
+  - `footHeading` *Float32Array* - the way the planted foot points, radians
+  - `targetX` *Float32Array* - where the ankle is asked to be this frame (in the air while swinging, raised over the toe at the end of a stance), world metres
+  - `targetY` *Float32Array*
+  - `targetZ` *Float32Array*
+  - `pitch` *Float32Array* - how far the foot is pitched about its toe, radians
+  - `swing` *Float32Array* - 0..1 through the swing, for a foot in the air
+  - `plantCount` *Uint32Array* - how many times the foot has landed
+  - `bob` *Object* - the spring the body's height rides on (`Kit.dynamics` spring)
+  - `shift` *Object* - the spring the body's sideways shift rides on
+- **GaitClock** - An instance's gait, kept in `motion.memory.gait`.
+  - `rig` *LegRig*
+  - `gait` *number* - index into `Kit.gait.GAIT_NAMES`
+  - `froude` *number*
+  - `duty` *number* - the fraction of a stride each foot is down (eased between gaits)
+  - `stride` *number* - metres per stride at this speed
+  - `cadence` *number* - strides per second
+  - `halfStance` *number* - metres a planted foot travels each side of its hip
+  - `isMoving` *boolean* - false while standing
+  - `offsets` *Float32Array* - per leg: where in the stride it starts its stance
+  - `feet` *?FeetState* - made by the `plant` stage; null at lower detail
+- **Support**
+  - `planted` *number* - how many feet are down
+  - `centerX` *number* - the body's centre of mass, world metres
+  - `centerY` *number*
+  - `centerZ` *number*
+  - `forwardOutside` *number* - how far the centre of mass lies ahead of the foremost planted foot or behind the hindmost, along the heading, metres; 0 when it is between them
+  - `sideOutside` *number* - the same across the heading
+
+## swim.js
+
+> Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
+> A wave of bending travels down the chain from front to back; how fast it beats and how wide it swings
+> follow the body's speed by the two relations real swimmers keep to, so nothing is keyed by hand.
+>
+> Owns:  `Kit.swim.STYLES` (carangiform: a fish, the bend growing towards the tail; serpentine: a limbless
+>        body on the ground, the same bend all along), `axis` (which bones are the chain, measured from the
+>        plan), the stages `wave` (the travelling wave, bent into turns) and `fins` (paired fins paddle), and
+>        the ready composition `swim` (bank into turns, wave, fins).
+> Does not own: the stage machinery, banking (`Kit.motion.lean`) or the fixed clock (kit/motion.js), legs
+>        (kit/gait.js), plans (kit/body-plan.js), water (there is none: buoyancy, drag and thrust are the
+>        caller's; a swimmer here is moved, and its body answers), or flight.
+>
+> Conventions (kit/motion.js): metres, seconds, radians; a chain's joints bend about their own up axis (+Y), so
+> the chain's bones must not be rolled at rest.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-gait.js.
+
+### `Kit.swim.STYLES`
+
+Swimming styles, name -> row. Lengths are in body lengths (the chain's), speeds in body lengths per second.
+  restFrequency, frequencyPerSpeed: beats per second = restFrequency + frequencyPerSpeed x speed. For fish
+    this is Bainbridge's line (speed = (3 x frequency - 4) / 4 body lengths a second). A snake's wave must
+    travel back along its body as fast as the body goes forward, so its line starts at 0 with a slope of
+    one over its wavelength.
+  strouhal: beat frequency x tail swing (peak to peak) / speed. Efficient swimmers of every size cruise
+    near 0.3, which is what sets how wide the tail swings at a speed.
+  idleAmplitude, mostAmplitude: the tail tip's swing each side of the middle is held between these.
+  waves: how many wavelengths lie along the body at once.
+  envelope: how the bend is shared out: a joint's share is (its distance along the body)^envelope, so 0 bends
+    every joint alike and higher values keep the front still and whip the tail.
+  recoil: the front of the body counter-swings by this share of the tail's angle.
+  turnBend: radians the whole chain curls into a turn, per radian per second of turning; mostBend caps it.
+  amplitudeRate: per second, how fast the swing follows a change of speed.
+
+### `Kit.swim.FINS`
+
+Paired fins paddle: radians of sweep, beats per body beat, and the share of the sweep kept when the body is still.
+
+### `Kit.swim.FEWEST_JOINTS`
+
+The fewest joints a chain needs to carry a wave, per style.
+
+### `Kit.swim.axis(plan, rest)`
+
+Finds and measures a plan's swimming chain: the longest run of spine and tail bones, front to back, and
+its paired fins. Remembered per rest pose, so every instance of a bake shares one.
+
+- `plan` *Object* - a `BodyPlan`
+- `rest` *Object* - its proportioned rest pose (a bake's `rest`)
+
+**Returns** *AxisRig* frozen; `joints` is empty for a plan with no spine or tail
+
+**Complexity** O(bones) time once per rest pose, O(1) after
+
+```js
+Kit.swim.axis(carp.plan, carp.rest).joints.length // 5: trunk, rear and three tail bones
+```
+
+### `Kit.swim.wave(styleName = 'carangiform')`
+
+The stage that swims: a wave of bending travels down the body's chain. On the fixed clock, the beat
+frequency follows the speed and the tail's swing follows from the Strouhal number (see `STYLES`), eased so
+a change of speed does not snap. Each frame, every joint of the chain is turned about its up axis by its
+share of the wave, the front counter-swings, and the whole chain curls into a turn.
+
+- `[styleName='carangiform']` *string* - a `STYLES` name
+
+**Returns** *Object* a `Stage` of kit/motion.js; a carangiform wave needs a tail of two or more bones and a chain of three or more joints, a serpentine wave a chain of four or more
+
+**Complexity** per fixed step O(1); per frame O(chain joints); no allocation after an instance's first frame
+
+```js
+const slither = Kit.motion.sequence(Kit.swim.wave('serpentine'));
+```
+
+### `Kit.swim.fins()`
+
+The stage that paddles paired fins (bones carrying `fin` and `left` or `right`): each sweeps about the
+body's long axis, the two sides in mirror image, in time with the body's wave. It reads the clock `wave`
+runs, so put it after one; a body without paired fins is left alone.
+
+**Returns** *Object* a `Stage`; needs nothing
+
+**Complexity** O(fins) per frame, no allocation
+
+```js
+const swim = Kit.motion.sequence(Kit.swim.wave(), Kit.swim.fins());
+```
+
+### `Kit.swim.swim(styleName = 'carangiform')`
+
+Swimming, ready made: bank into turns, the travelling wave and paddling fins at full detail; the wave alone
+at level of detail 1; nothing beyond.
+
+- `[styleName='carangiform']` *string* - a `STYLES` name
+
+**Returns** *Object* a `Stage`
+
+**Complexity** see `wave`
+
+```js
+const motion = Kit.motion.state(carpBake, Kit.swim.swim());
+```
+
+### Types
+
+- **AxisRig** - A plan's swimming chain, measured once from the plan and a proportioned rest pose.
+  - `joints` *Int16Array* - the chain from front to back, each the parent of the next
+  - `along` *Float32Array* - per joint: distance from the first joint along the chain, metres
+  - `length` *number* - the whole chain, including the last bone's own extent, metres
+  - `fins` *Int16Array* - the paired fin bones
+  - `finSide` *Int8Array* - per fin: +1 on the left, -1 on the right
+- **SwimState** - An instance's swimming, kept in `motion.memory.swim`.
+  - `rig` *AxisRig*
+  - `frequency` *number* - beats per second now
+  - `amplitude` *number* - the tail tip's swing each side of the middle now, metres
+
+## gait-gallery.js
+
+> Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`). Four bodies made by the body system - a biped, a
+> winged biped, a quadruped and a fish - each steered along its own course of starting, speeding up, turning
+> and stopping, all moved by ONE controller (`when` the plan has legs, walk; otherwise swim). The camera
+> follows and turns with each body, so a foot that stays on its footprint is a foot that does not slide.
+>
+> Owns:  the screen: its layout, the courses, the camera, and the marks (footprints, a ring under each planted
+>        foot, the centre of mass and where it falls on the ground), with one button to show or hide the marks
+>        and one to look at a single body.
+> Does not own: anything it shows. Bodies are kit/body-samples.js; movement is kit/motion.js, kit/gait.js and
+>        kit/swim.js; drawing is `Kit.body.debug`. It is a debug view, not a renderer.
+>
+> It is registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and
+> play tools reach it like any other. Its `debugState` reports the furthest any planted foot has slid, measured
+> in the page.
 
 ## ui/gallery.js
 

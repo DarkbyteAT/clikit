@@ -5,7 +5,8 @@
  *
  * Owns:  `Kit.rig.create` / `copy` (transform sets), `worldTransforms` (the forward pass, whole or a range),
  *        `turn` (set one joint's rotation from a base and an angle), `carryPoint` (a joint-space point into
- *        the world) and the small quaternion helpers the solvers share (`shortestArc`, `turnWorld`).
+ *        the world), `mix` (blend two transform sets) and the small quaternion helpers the solvers share
+ *        (`shortestArc`, `turnWorld`, `faceWorld`).
  * Does not own: what the joints are (kit/body-plan.js compiles body plans into this shape; a crane, a rope, a
  *        solar system or a UI tree of nested panels fit it too), inverse kinematics (kit/reach.js), or motion
  *        over time (kit/dynamics.js).
@@ -308,5 +309,84 @@
     local.rotation[at + QUATERNION_W] = frameW * newW - frameX * newX - frameY * newY - frameZ * newZ;
   };
 
-  Kit.rig = { VECTOR_STRIDE, QUATERNION_STRIDE, QUATERNION_W, AXES, create, copy, turn, worldTransforms, carryPoint, shortestArc, turnWorld };
+  /**
+   * Sets a joint's rotation in WORLD space, writing the LOCAL rotation that produces it under the joint's
+   * current parent (so the change survives the next forward pass) and the joint's world rotation. This is how
+   * something is held level whatever the limb it hangs from is doing: a foot flat on the ground, a head that
+   * keeps looking ahead, a carried tray. Children are not refreshed: run `worldTransforms` over what hangs from it.
+   * @param {Int16Array|number[]} parents
+   * @param {JointTransforms} local
+   * @param {JointTransforms} world current world transforms of the joint's parent
+   * @param {number} joint joint index
+   * @param {number} x the wanted world rotation, a unit quaternion
+   * @param {number} y
+   * @param {number} z
+   * @param {number} w
+   * @returns {void}
+   * @complexity O(1), no allocation
+   * @example Kit.rig.faceWorld(parents, local, world, foot, 0, Math.sin(heading / 2), 0, Math.cos(heading / 2));   // flat, facing `heading`
+   */
+  const faceWorld = (parents, local, world, joint, x, y, z, w) => {
+    const at = joint * QUATERNION_STRIDE;
+    world.rotation[at] = x;
+    world.rotation[at + 1] = y;
+    world.rotation[at + 2] = z;
+    world.rotation[at + QUATERNION_W] = w;
+    // Local rotation = inverse(parent world rotation) * wanted world rotation; a unit quaternion's inverse is its conjugate.
+    const parentJoint = parents[joint];
+    const parentAt = parentJoint * QUATERNION_STRIDE;
+    const frameX = parentJoint >= 0 ? -world.rotation[parentAt] : 0;
+    const frameY = parentJoint >= 0 ? -world.rotation[parentAt + 1] : 0;
+    const frameZ = parentJoint >= 0 ? -world.rotation[parentAt + 2] : 0;
+    const frameW = parentJoint >= 0 ? world.rotation[parentAt + QUATERNION_W] : 1;
+    local.rotation[at] = frameW * x + frameX * w + frameY * z - frameZ * y;
+    local.rotation[at + 1] = frameW * y - frameX * z + frameY * w + frameZ * x;
+    local.rotation[at + 2] = frameW * z + frameX * y - frameY * x + frameZ * w;
+    local.rotation[at + QUATERNION_W] = frameW * w - frameX * x - frameY * y - frameZ * z;
+  };
+
+  /**
+   * Mixes two transform sets of the same size: translations, scales and sizes are interpolated straight, rotations
+   * along the shorter way round and renormalised (accurate to a fraction of a degree for poses less than a
+   * quarter turn apart, which is what blending two movements needs). `out` may be either input.
+   * @param {JointTransforms} from the set at amount 0
+   * @param {JointTransforms} to the set at amount 1
+   * @param {number} amount 0..1 (not clamped)
+   * @param {JointTransforms} out receives the mix
+   * @returns {JointTransforms} `out`
+   * @complexity O(joints) time (one square root a joint), no allocation
+   * @example Kit.rig.mix(standing, crouched, 0.5, pose);
+   */
+  const mix = (from, to, amount, out) => {
+    const keep = 1 - amount;
+    const jointCount = from.uniform.length;
+    // Hot path: index loops on purpose (a blended movement runs this per instance per frame).
+    for (let index = 0; index < jointCount * VECTOR_STRIDE; index++) {
+      out.translation[index] = from.translation[index] * keep + to.translation[index] * amount;
+      out.scale[index] = from.scale[index] * keep + to.scale[index] * amount;
+    }
+    for (let joint = 0; joint < jointCount; joint++) {
+      const at = joint * QUATERNION_STRIDE;
+      out.uniform[joint] = from.uniform[joint] * keep + to.uniform[joint] * amount;
+      // q and -q are the same rotation: flip one when they point apart, so the mix goes the shorter way round.
+      const dot =
+        from.rotation[at] * to.rotation[at] +
+        from.rotation[at + 1] * to.rotation[at + 1] +
+        from.rotation[at + 2] * to.rotation[at + 2] +
+        from.rotation[at + QUATERNION_W] * to.rotation[at + QUATERNION_W];
+      const toward = dot < 0 ? -amount : amount;
+      const mixedX = from.rotation[at] * keep + to.rotation[at] * toward;
+      const mixedY = from.rotation[at + 1] * keep + to.rotation[at + 1] * toward;
+      const mixedZ = from.rotation[at + 2] * keep + to.rotation[at + 2] * toward;
+      const mixedW = from.rotation[at + QUATERNION_W] * keep + to.rotation[at + QUATERNION_W] * toward;
+      const length = Math.hypot(mixedX, mixedY, mixedZ, mixedW) || 1;
+      out.rotation[at] = mixedX / length;
+      out.rotation[at + 1] = mixedY / length;
+      out.rotation[at + 2] = mixedZ / length;
+      out.rotation[at + QUATERNION_W] = mixedW / length;
+    }
+    return out;
+  };
+
+  Kit.rig = { VECTOR_STRIDE, QUATERNION_STRIDE, QUATERNION_W, AXES, create, copy, turn, worldTransforms, carryPoint, shortestArc, turnWorld, faceWorld, mix };
 })();

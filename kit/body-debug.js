@@ -43,6 +43,8 @@
    * @property {number} scale pixels per metre
    * @property {number} [turn=0] radians the camera is turned about +Y: 0 looks at the body's front, a quarter
    *   turn looks at its side
+   * @property {number} [tilt=0] radians the camera looks down by: 0 is level (the ground is a line), a little
+   *   tilt opens the ground plane up so footprints and what stands over them can be told apart
    */
 
   /**
@@ -59,8 +61,12 @@
    */
   const project = (x, y, z, view, out) => {
     const turn = view.turn || 0;
+    const tilt = view.tilt || 0;
     out[0] = view.centerX + (x * Math.cos(turn) - z * Math.sin(turn)) * view.scale;
-    out[1] = view.groundY - y * view.scale;
+    // How far the point is beyond the origin along the camera's line of sight (the camera looks along -Z at turn 0);
+    // a camera tilted down sees farther ground higher up the canvas.
+    const away = -(x * Math.sin(turn) + z * Math.cos(turn));
+    out[1] = view.groundY - (y * Math.cos(tilt) + away * Math.sin(tilt)) * view.scale;
     return out;
   };
 

@@ -551,3 +551,90 @@ machine at load 20 to 40, so only the ratios mean anything.
   below the ankle joint, so `Kit.body.lowestY` (joints and tails) would sink the feet; a sword or a hat neither
   lifts the body nor rescales the view (tested). The figure turns about the middle of its footprint, not the
   plan's origin (a hound's hips are 35 cm behind it).
+## Kit.motion: a stage is a fixed-clock step plus a per-frame pose
+
+- **Options.** (a) One function `(state, plan, dt)` run on every fixed 120 Hz step, doing everything. Simplest
+  to compose, but inverse kinematics would run twice a frame at 60 fps and six times at 20. (b) One function per
+  rendered frame: cheapest, but where a foot lands then depends on the frame rate. (c) A stage as a pair of
+  functions of that same shape: `step` on the fixed clock for what must be simulated (phase, lift, swing,
+  plant: a few scalars per leg) and `pose` once a frame for what is a pure function of that state (the pelvis,
+  the solves, the tails).
+- **Chosen.** (c). Combinators (`sequence`, `blend`, `layer`, `when`, `byDetail`) compose both halves, and a
+  plain function is accepted anywhere as a pose-only stage. Measured: the same course at 60 and 20 frames a
+  second plants a biped's feet within 0.6 mm and a quadruped's within 11 mm. Cost: a stage author has to know
+  which half a line belongs in; springs and chains keep their own fixed clock inside `Kit.dynamics`, so they
+  are called from `pose` with the frame's dt.
+- **Who moves the body.** The caller does (a game, a path, a physics body); `advance` is told where the body is
+  now and replays the move in fixed steps. Rejected: the gait integrating its own position (root motion), which
+  would make every game hand its steering to the gait. Cost: speed and turn rate are measured, so they are
+  smoothed (14, 6 and 10 per second), and a lean or a gait change trails the input by about a tenth of a second.
+- **The state owns the pose.** A bake is shared; a pose cannot be. `Kit.motion.state` holds the instance's pose
+  and world buffers (88 bytes a bone) and each stage's record under `motion.memory`, made on first use. The
+  store stays columns only; `advanceStore` joins the two by slot.
+- **Revisit if.** A crowd needs thousands at detail 1: those poses are a function of phase alone and could
+  share one buffer per bake.
+
+## Kit.gait: stride from the Froude number, gaits from a table plus a rule
+
+- **Stride.** Options: a stride length per species (a table to maintain, and dials would not change the walk);
+  a fixed cadence; dynamic similarity. Chosen: stride = 2.3 x leg length x Froude^0.3 (Alexander), gait by
+  Froude number (walk to 0.5, trot to 2.5, run beyond, with 12% hysteresis). Leg length is measured from the
+  proportioned rest pose, so the leg-length dial changes stride, cadence and gait with no code. Tested: legs
+  1.41 times longer stride 1.29 times longer at the same speed.
+- **Which leg when.** Written rows for two and four legs in matched pairs (a gallop cannot be made by a rule);
+  any other body uses a rule over legs ordered left hind-to-front then right: `sequence` (evenly spaced, a
+  wave) for the walk, `alternate` (by row and side, a tripod for six legs) for the faster gaits. Tested on a
+  three-legged and a six-legged plan built in the test.
+- **Duty factor.** From the table, but capped so the body never travels more than 0.95 leg lengths over a
+  planted foot. Without the cap a trotting quadruped's hips were pulled 16 cm down to keep its feet reachable.
+- **Planting.** Options: foot curves locked to the phase (cheap, but feet slide whenever speed or heading
+  changes within a stride); per-leg lift, swing and plant with the plant fixed in the world. Chosen the
+  second: a leg lifts when its turn comes, swings to where its hip will be 0.4 of a stance after touchdown,
+  and stays where it lands. Standing, the clock runs only while some foot is more than 6% of a leg length from
+  home, so stopping ends with the feet stepping back under the body. Measured slide during stance: under a
+  micrometre (float rounding), in node and in the page.
+- **The pelvis.** Options: a spring alone (floats: nothing ties it to the legs); a full centre-of-mass solver
+  (heavy, and a walker is not statically balanced anyway). Chosen: a nominal height just under a straight
+  stand, lowered every frame by exactly what the most stretched leg needs (swinging legs included, so
+  touchdown is continuous), released at a limited rate, plus a spring that each landing kicks and a sideways
+  shift of 35% towards the middle of the planted feet. The foot rolls onto its toe at the end of a stance,
+  which is what lets the rear leg reach without pulling the body down. Cost: the body is lowest at touchdown
+  at every speed, which is right for a walk and wrong for a run (a runner is lowest in mid-stance).
+- **Knees.** The bend hint comes from `Kit.body.bendDirection` (the joint's own limits), so a knee cannot be
+  hinted backwards. Limits are NOT passed to `twoBone`: its clamp splits a rotation into turns about x, y, z
+  and a hinge allows only x, so a leg stepping sideways would be clamped off its target and the foot would
+  slide. Cost: a knee may carry a degree or so of twist the plan's limits do not allow.
+- **Level of detail.** 0: all of the above. 1: the same clock, hips and knees turned through the stride, one
+  forward pass, no plants (feet slide by centimetres). 2 and beyond: nothing is posed and the world transforms
+  are not refreshed. In node, 500 instances: 3.2 to 3.6 ms, 0.9 to 1.3 ms and 0.55 ms a frame (load 0.8 to 3).
+
+## Kit.swim: a wave of bending, sized by two measured relations
+
+- **Options.** Wag the tail root with a sine and let a `Kit.dynamics` chain follow (looks like a dog, not a
+  fish: the wave does not travel). Prescribe sideways displacement along the body (needs solving back to
+  joint angles). Prescribe joint angles as a travelling wave of bending, which is how the muscles fire.
+- **Chosen.** The third: each joint of the spine-and-tail chain turns by its share of a wave that travels back
+  along the body. Beat frequency follows speed by Bainbridge's line, the tail's swing by a Strouhal number of
+  0.3, both in body lengths so one row serves any size. The same stage with another row (`serpentine`) moves
+  a limbless body on the ground. Cost: the amplitude scale assumes all joints peak together, so the real tail
+  swing is somewhat under the Strouhal value; there is no water, so thrust and drift are not simulated.
+
+## Kit.motion: allocation
+
+- **By construction** nothing on the per-frame path makes an object, an array or a closure: per-instance
+  records are made on an instance's first frames and reused.
+- **Measured** in node, the heap still grows by about 60 to 180 bytes per instance per frame and is scavenged
+  (1285 minor collections in 3000 frames of 500 instances at detail 0, 339 at detail 2). The collections remain
+  with a bare `Kit.rig.worldTransforms` call in a loop (186 in the same count), and vanish for a loop that only
+  writes object fields: V8 boxes a floating-point number each time one crosses a call that is not inlined
+  (origin, heading, targets and hints are all passed as numbers). The core has the same property.
+- **Not done.** Passing placements and targets through typed arrays instead of arguments would remove it, at
+  the price of every signature in `Kit.rig` and `Kit.reach`. Revisit if a profile on a phone shows the
+  scavenges: at 500 full-detail bodies they are inside the 3.2 ms measured.
+
+## tools/motion-strip.js: looking at motion without a browser
+
+- **Options.** Judge motion from numbers alone (how the knee-snap and the stilt-walk were missed in theory);
+  a browser run per look (minutes each on the shared machine, and limited); a software canvas in node.
+- **Chosen.** A 60-line software canvas with the seven context methods `Kit.body.debug.draw` uses and a PNG
+  encoder over `zlib`: a strip of a stride in about a second. Twelve looks went into the tuning of the walk.

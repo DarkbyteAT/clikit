@@ -2770,4 +2770,5 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-settings
 }
 // ---- Kit.figure: shapes, layout, update planning, grounding and framing (pure half) ----
 require('./test-figure.js')({ Kit, sandbox, test, assert });
+require('./test-gait.js')({ Kit, sandbox, test, assert });
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

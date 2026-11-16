@@ -8,6 +8,7 @@
  *        tables, `requirement` / `fits` / `missing` / `requireFit` (can this plan do what a consumer needs?),
  *        `bonesWithRoles` / `chains` / `groupOf` (find and group bones by role), `createPose` / `copyRest` /
  *        `worldTransforms` / `socketPosition` / `tailPosition` / `lowestY` (a plan's view of `Kit.rig`),
+ *        `bendDirection` / `bendAgrees` (which way a knee or an elbow folds, from its limits),
  *        `boneLength` / `boneMasses` / `centerOfMass` (physical quantities that follow the proportions),
  *        `dials` / `applyDials` (proportions) and `socketType` (type ids).
  * Does not own: the transform pass itself (kit/rig.js: `plan.parent` and a pose are all it needs), inverse
@@ -105,7 +106,6 @@
   const SHAPES = Object.freeze({ capsule: [], sphere: ['radius'], box: ['size'], lathe: ['profile'], extrude: ['outline', 'depth'], none: [] });
 
   /**
-   * Joint types, name -> row  /**
    * Joint types, name -> row: how a bone may turn relative to its rest rotation. `limits` are the default range
    * of each of the bone's own axes in degrees, [x, y, z] as [min, max] pairs; a bone may narrow or replace them
    * with its own `limits`. Inverse kinematics clamps to them and a ragdoll builds its constraints from them.
@@ -753,6 +753,83 @@
     return lowest;
   };
 
+  /** A joint whose limits sit less than this (radians) off centre has no preferred way to bend. */
+  const LEAST_BEND_BIAS = 1e-3;
+  const scratchQuaternion = new Float32Array(QUATERNION_STRIDE);
+
+  /**
+   * Which way a limb's middle joint (a knee, an elbow) pokes out when it bends inside its limits: the direction a
+   * two-bone solve should be hinted towards. Hinge sign conventions are per plan (a knee here turns 0 to 150
+   * degrees about X, an elbow -150 to 0), so nothing but this knows that one folds forwards and the other back.
+   * It is worked out by turning the joint to the middle of its limits and seeing where its child goes: the
+   * joint itself pokes out the opposite way.
+   * @param {BodyPlan} bodyPlan
+   * @param {number} middle index of the middle bone (the shin, the forearm); its first child is the limb's end
+   * @param {Float32Array|number[]} out receives a unit direction x, y, z in the plan's own space at rest (+Z is
+   *   the way the body faces), or zeros when the joint has no child or its limits are centred (a ball joint
+   *   that may bend either way)
+   * @returns {Float32Array|number[]} `out`
+   * @complexity O(bones) time (one forward pass over the rest pose) and space; call it at setup, not per frame
+   * @example Kit.body.bendDirection(biped, biped.boneIndex('shinLeft'), direction) // [0, 0, 1]: knees point forward
+   */
+  const bendDirection = (bodyPlan, middle, out) => {
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = 0;
+    const end = middle + 1 < bodyPlan.subtreeEnd[middle] ? middle + 1 : NO_PARENT;
+    if (end === NO_PARENT) return out;
+    const limitAt = middle * VECTOR_STRIDE;
+    const middleTurn = [0, 1, 2].map((axis) => (bodyPlan.limitMin[limitAt + axis] + bodyPlan.limitMax[limitAt + axis]) / 2);
+    if (Math.hypot(...middleTurn) < LEAST_BEND_BIAS) return out;
+    const rest = createPose(bodyPlan);
+    const world = worldTransforms(bodyPlan, rest, Kit.rig.create(bodyPlan.boneCount));
+    const endAt = end * VECTOR_STRIDE;
+    const middleAt = middle * VECTOR_STRIDE;
+    const straight = [0, 1, 2].map((axis) => world.translation[endAt + axis] - world.translation[middleAt + axis]);
+    // The same child with the joint turned to the middle of its limits.
+    scratchQuaternion.set(quaternionFromTurn(middleTurn.map((radians) => radians / DEGREES_TO_RADIANS)));
+    const bent = Kit.rig.create(bodyPlan.boneCount);
+    Kit.rig.copy(rest, bent);
+    const at = middle * QUATERNION_STRIDE;
+    const [baseX, baseY, baseZ, baseW] = [rest.rotation[at], rest.rotation[at + 1], rest.rotation[at + 2], rest.rotation[at + 3]];
+    const [turnX, turnY, turnZ, turnW] = scratchQuaternion;
+    // local = rest * turn: the limits are measured in the bone's own frame, after its rest rotation.
+    bent.rotation[at] = baseW * turnX + baseX * turnW + baseY * turnZ - baseZ * turnY;
+    bent.rotation[at + 1] = baseW * turnY - baseX * turnZ + baseY * turnW + baseZ * turnX;
+    bent.rotation[at + 2] = baseW * turnZ + baseX * turnY - baseY * turnX + baseZ * turnW;
+    bent.rotation[at + 3] = baseW * turnW - baseX * turnX - baseY * turnY - baseZ * turnZ;
+    worldTransforms(bodyPlan, bent, world);
+    const moved = [0, 1, 2].map((axis) => world.translation[endAt + axis] - world.translation[middleAt + axis] - straight[axis]);
+    // Only the part across the limb counts; the joint goes the opposite way to its child's end.
+    const straightLength = Math.hypot(...straight) || 1;
+    const along = moved.reduce((sum, value, axis) => sum + (value * straight[axis]) / straightLength, 0);
+    const across = moved.map((value, axis) => value - (along * straight[axis]) / straightLength);
+    const acrossLength = Math.hypot(...across);
+    if (acrossLength < LEAST_BEND_BIAS * straightLength) return out;
+    across.forEach((value, axis) => {
+      out[axis] = -value / acrossLength;
+    });
+    return out;
+  };
+
+  /**
+   * Does a bend hint agree with the way a middle joint's limits let it bend? A solve hinted the wrong way asks
+   * a knee to fold backwards, which the limits then refuse, leaving the foot short of its target.
+   * @param {BodyPlan} bodyPlan
+   * @param {number} middle index of the middle bone
+   * @param {number} hintX the direction the solve will be hinted towards, in the plan's own space at rest
+   * @param {number} hintY
+   * @param {number} hintZ
+   * @returns {boolean} true when the hint is on the joint's bending side, or the joint has no preferred side
+   * @complexity O(bones); call it at setup, not per frame
+   * @example
+   * if (!Kit.body.bendAgrees(plan, shin, 0, 0, -1)) throw new Error('this knee cannot bend backwards');
+   */
+  const bendAgrees = (bodyPlan, middle, hintX, hintY, hintZ) => {
+    const direction = bendDirection(bodyPlan, middle, [0, 0, 0]);
+    return direction[0] * hintX + direction[1] * hintY + direction[2] * hintZ >= 0;
+  };
+
   // ---- physical quantities that follow the proportions --------------------------------------------------------------
 
   /**
@@ -971,6 +1048,8 @@
     socketPosition,
     tailPosition,
     lowestY,
+    bendDirection,
+    bendAgrees,
     boneLength,
     boneMasses,
     centerOfMass,
