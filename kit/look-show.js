@@ -5,7 +5,7 @@
  * Owns:  the `look` screen; the stand-in figures as data (`PARTS`, `FIGURES`); the control panel generated from
  *        `Kit.look.KNOBS`; and the measurements a tool can ask for (`Kit.currentGame.measure()`): exact-colour
  *        readback, cost per look, shimmer under rotation and motion, skinned and instanced meshes.
- * Does not own: the look itself (look-palette.js, look-toon.js, look-ink.js, look-view.js) or real characters
+ * Does not own: the look itself (kit/palette.js, look-settings.js, look-toon.js, look-ink.js, look-view.js) or real characters
  *        (the body system builds those; this screen only needs something with a head, limbs and a held prop).
  *
  * It is registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and
@@ -137,7 +137,7 @@
     const root = new THREE.Group();
     root.position.x = figure.at;
     const anchor = view.add(root);
-    const block = view.atlas.load(look.PALETTES[figure.palette]);
+    const block = view.atlas.load(Kit.palette.SETS[figure.palette]);
     const dressed = figure.parts
       .flatMap((name) => PARTS[name])
       .map((row) => {
@@ -279,11 +279,11 @@
     const choosePalette = (index, name) => {
       palettes[index].value = name;
       // The figure's rows are rewritten in place: no material changes, and the other figure's rows are untouched.
-      view.atlas.write(figures[index].block, look.PALETTES[name]);
+      view.atlas.write(figures[index].block, Kit.palette.SETS[name]);
     };
     const stopSettingsEffect = effect(() => void view.use(preset.value, knobValues()));
 
-    const paletteOptions = Object.keys(look.PALETTES).map((name) => ({ value: name, label: name[0].toUpperCase() + name.slice(1) }));
+    const paletteOptions = Object.keys(Kit.palette.SETS).map((name) => ({ value: name, label: name[0].toUpperCase() + name.slice(1) }));
     const presetOptions = Object.keys(look.PRESETS).map((id) => ({ value: id, label: look.PRESETS[id].label }));
     const panel = html`<div class=${computed(() => (isPanelShown.value ? 'look-panel' : 'look-panel look-hidden'))}>
         <${ScrollPane} fill id="look-scroll" label="Look controls">
@@ -350,7 +350,7 @@
       return withProbeMesh(swatch, { ramp: row, emissive: true }, () => {
         const seen = readScreenAt(swatch.position);
         const wanted = view.atlas.colorAt(row, view.settings().toneCount - 1);
-        return { seen: look.hexOf(seen), wanted: look.hexOf(wanted), gap: largestGap(seen, wanted) };
+        return { seen: Kit.palette.hexOf(seen), wanted: Kit.palette.hexOf(wanted), gap: largestGap(seen, wanted) };
       });
     };
 

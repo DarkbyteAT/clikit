@@ -6,7 +6,7 @@
  *        choice between the direct path (colour straight to the screen, hull outlines, anti-aliased) and the
  *        indexed path (look-ink.js), texel snapping and dither anchoring of figures, the depth range fitted
  *        round them, and the cheaper fallback for slow devices (`degrade`).
- * Does not own: the pieces it composes (look-palette.js, look-toon.js, look-ink.js), the camera, animation
+ * Does not own: the pieces it composes (kit/palette.js, look-settings.js, look-toon.js, look-ink.js), the camera, animation
  *        (a caller rounds a turn with Kit.look.stepYaw), or the background behind the figures.
  *
  * Colour: the view writes palette bytes straight to the screen, so it must be drawn outside the kit's HDR
@@ -20,7 +20,7 @@
   /**
    * @typedef {Object} LookView
    * @property {THREE.Scene} scene add figures here (through `add`); only dressed meshes belong in it
-   * @property {ReturnType<typeof Kit.look.atlas>} atlas the palette table; `atlas.load(palette)` gives a figure its rows
+   * @property {ReturnType<typeof Kit.palette.atlas>} atlas the palette table; `atlas.load(palette)` gives a figure its rows
    * @property {Object} shading from Kit.look.shading: `shading.dress(mesh, part)`
    * @property {function(THREE.Object3D): Object} add put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
    * @property {function(string, Object=): Object} use switch to a preset, with optional knob overrides; returns the settings
@@ -42,7 +42,7 @@
    *   direct path, or one scene draw and two full-target passes on the indexed path
    * @example
    * const view = Kit.look.view({ renderer: ctx.renderer, preset: 'pixel' });
-   * const rows = view.atlas.load(Kit.look.PALETTES.ember).rows;
+   * const rows = view.atlas.load(Kit.palette.SETS.ember).rows;
    * const anchor = view.add(figureRoot);
    * view.shading.dress(headMesh, { ramp: rows.skin, anchor });
    * return { render: () => view.render(camera, { clearColor: 0x2a3050 }) };   // from a game's create()
@@ -50,7 +50,7 @@
   const view = ({ renderer, preset = 'toon', atlasRows }) => {
     let chosen = Kit.look.settings(preset);
     let isReduced = false;
-    const atlas = Kit.look.atlas({ rows: atlasRows, toneCount: chosen.toneCount });
+    const atlas = Kit.palette.atlas({ rows: atlasRows, toneCount: chosen.toneCount });
     const shading = Kit.look.shading({ atlas });
     const ink = Kit.look.inkPass(shading);
     const scene = new THREE.Scene();
@@ -89,7 +89,7 @@
      * Only an orthographic camera has one texel size for the whole scene, so snapping is skipped otherwise.
      */
     const placeFigures = (camera, settings, target) => {
-      const texelWorld = camera.isOrthographicCamera ? (camera.top - camera.bottom) / camera.zoom / target.height : 0;
+      const texelWorld = camera.isOrthographicCamera ? ((camera.top - camera.bottom) / camera.zoom) * (target.scale / target.bufferHeight) : 0;
       const shouldSnap = settings.snap && settings.isIndexed && texelWorld > 0;
       right.setFromMatrixColumn(camera.matrixWorld, 0);
       up.setFromMatrixColumn(camera.matrixWorld, 1);
@@ -135,11 +135,11 @@
         renderer.getDrawingBufferSize(bufferSize);
         const pixelRatio = renderer.getPixelRatio();
         const scale = settings.isIndexed ? Kit.look.texelScale(bufferSize.y, settings.pixelRows) : 1;
-        const target = { width: Math.ceil(bufferSize.x / scale), height: Math.ceil(bufferSize.y / scale) };
+        const target = { width: Math.ceil(bufferSize.x / scale), height: Math.ceil(bufferSize.y / scale), scale, bufferHeight: bufferSize.y };
         camera.updateMatrixWorld();
         // Below native resolution a hull line is one texel; at native resolution it is the knob's width in device pixels.
         const lineWidth = scale > 1 ? 1 : settings.inkWidth * pixelRatio;
-        shading.apply(settings, { ...target, lineWidth, depthRange: fitDepthRange(camera) });
+        shading.apply(settings, { width: target.width, height: target.height, lineWidth, depthRange: fitDepthRange(camera) });
         const restoreFigures = placeFigures(camera, settings, target);
         scene.updateMatrixWorld();
 
@@ -152,7 +152,13 @@
         }
         if (settings.isIndexed) {
           ink.resize(bufferSize.x, bufferSize.y, scale);
+          // The small target is rounded up to whole texels, so it covers a little more than the screen (to the
+          // right and above). The camera must see exactly that area, or texels would be a hair wider than tall
+          // and a snapped figure would still drift against the grid.
+          const isViewFree = !camera.view || !camera.view.enabled;
+          if (isViewFree) camera.setViewOffset(bufferSize.x, bufferSize.y, 0, bufferSize.y - target.height * scale, target.width * scale, target.height * scale);
           ink.draw(renderer, scene, camera, settings);
+          if (isViewFree) camera.clearViewOffset();
           lastStats = { path: 'indexed', scale, targets: [`index ${target.width}x${target.height} RGBA8 + depth`, `colour ${target.width}x${target.height} RGBA8`] };
         } else {
           // Figures are drawn over whatever is already on the target, with a fresh depth buffer of their own.

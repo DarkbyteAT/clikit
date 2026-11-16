@@ -1,20 +1,76 @@
 /**
- * Kit look palette: the colour model behind the stylised look. Shading never invents RGB: a pixel is
- * (ramp, tone), and colour appears only when that pair is looked up in a small table.
+ * Kit palette: colour ramps as data. A ramp is a short ordered list of shades of one colour, dark to light, with
+ * the hue drifting a little along the way (shadows cooler, highlights warmer), which is what makes flat-shaded,
+ * toon and pixel art read as lit instead of as one colour with grey mixed in. A renderer picks a shade by how
+ * lit a surface is; a character stores only which ramp it uses.
  *
- * Owns:  OKLCH conversion; building a ramp of 2-6 tones from one base colour with hue-shifted shadows and
- *        highlights (`Kit.look.ramp`); named palettes of ramps (`Kit.look.palette`, `Kit.look.PALETTES`); the
- *        packed tone x ramp table that becomes the palette texture (`Kit.look.atlas`); the band lookup and
- *        ordered-dither tables the shaders mirror (`bandOf`, `edgesFor`, `bayerAt`); the grid helpers of pixel
- *        mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`); and the presets
- *        and knobs as data (`PRESETS`, `KNOBS`, `settings`).
- * Does not own: textures, materials or passes (look-toon.js, look-ink.js), the frame (look-view.js), or what a
- *        ramp is used for (the caller names its ramps: skin, cloth, blade).
+ * Owns:  `Kit.palette.ramp` (build a ramp from a hue), `Kit.palette.shade` (the shade of a ramp for a light
+ *        level) and `Kit.palette.toCss`; OKLCH conversion and `Kit.palette.tones` (2-6 perceptually even tones
+ *        plus an ink colour, from one base colour or from an existing ramp); named sets of ramps
+ *        (`Kit.palette.set`, `Kit.palette.SETS`); and `Kit.palette.atlas`, the packed tone x ramp table that
+ *        becomes the palette texture of the look shaders (kit/look-toon.js). Shading never invents RGB: a pixel
+ *        is (ramp row, tone column) and colour appears only when that pair is looked up in the table.
+ * Does not own: blending two colours or rows (`Kit.blend`, whose `hsl` this is built on), a game's interface
+ *        colours (`Kit.theme`), or which ramps exist (a catalogue's `palettes` table, kit/body-recipe.js).
  *
  * Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
  */
 (() => {
-  // ---- tunables --------------------------------------------------------------------------------------------------------
+  /** Defaults of a generated ramp: five shades from deep shadow to highlight, the hue drifting 4% of the wheel. */
+  const RAMP_DEFAULTS = Object.freeze({ saturation: 0.55, shades: 5, hueShift: 0.04, darkest: 0.2, lightest: 0.82 });
+  const HEX_DIGITS = 6;
+  const HEX_BASE = 16;
+
+  /**
+   * A colour number as CSS text.
+   * @param {number} color 0xRRGGBB
+   * @returns {string} '#rrggbb'
+   * @example Kit.palette.toCss(0xff8800) // '#ff8800'
+   */
+  const toCss = (color) => `#${color.toString(HEX_BASE).padStart(HEX_DIGITS, '0')}`;
+
+  /**
+   * @typedef {Object} Ramp
+   * @property {string} id name of the ramp ('umber', 'teal')
+   * @property {string[]} shades CSS colours, darkest first
+   */
+
+  /**
+   * Builds a ramp from a hue: evenly spaced lightness from `darkest` to `lightest`, the hue moving by `hueShift`
+   * across the ramp (negative at the dark end, positive at the light end) and the saturation easing off towards
+   * the highlights.
+   * @param {string} id name for the ramp
+   * @param {number} hue 0..1 around the colour wheel
+   * @param {{saturation?: number, shades?: number, hueShift?: number, darkest?: number, lightest?: number}} [options]
+   *   defaults: saturation 0.55, 5 shades, hue shift 0.04, lightness from 0.2 to 0.82
+   * @returns {Ramp}
+   * @throws {Error} for fewer than 2 shades
+   * @complexity O(shades) time and space
+   * @example Kit.palette.ramp('moss', 0.3).shades // five greens, dark to light
+   */
+  const ramp = (id, hue, options = {}) => {
+    const { saturation, shades, hueShift, darkest, lightest } = { ...RAMP_DEFAULTS, ...options };
+    if (!Number.isInteger(shades) || shades < 2) throw new Error(`Kit.palette.ramp: "${id}" needs 2 or more shades, got ${shades}.`);
+    return {
+      id,
+      shades: Array.from({ length: shades }, (_unused, index) => {
+        const along = index / (shades - 1);
+        return toCss(Kit.blend.hsl(hue + (along - 0.5) * hueShift, saturation * (1 - along / 2), Kit.math.lerp(darkest, lightest, along)));
+      }),
+    };
+  };
+
+  /**
+   * The shade of a ramp for a light level: the banding step of a toon or pixel shader, as data.
+   * @param {Ramp} colorRamp
+   * @param {number} light 0 (unlit) to 1 (fully lit); values outside are clamped
+   * @returns {string} one of the ramp's shades
+   * @complexity O(1)
+   * @example Kit.palette.shade(skinRamp, 0.5) // the middle shade
+   */
+  const shade = (colorRamp, light) => colorRamp.shades[Math.min(colorRamp.shades.length - 1, Math.floor(Kit.math.clamp(light, 0, 1) * colorRamp.shades.length))];
+
+  // ==== perceptual tones and the packed table (what the look shaders read) ==============================================
 
   /** Width of the packed table in texels: six tone columns, one spare, and the ink column last. A power of two. */
   const TONE_SLOTS = 8;
@@ -54,7 +110,7 @@
    * equal lightness steps in OKLCH read as equal steps, where equal RGB steps crush the darks.
    * @type {RampShape}
    */
-  const RAMP_SHAPE = {
+  const TONE_SHAPE = {
     shadowDepth: 0.5,
     shadowCurve: 0.9,
     highlightLift: 0.42,
@@ -103,33 +159,6 @@
   // The sRGB transfer curve (IEC 61966-2-1): a linear toe below the knee, a 2.4 power above it.
   const SRGB = { knee: 0.04045, linearKnee: 0.0031308, slope: 12.92, offset: 0.055, gamma: 2.4 };
 
-  /**
-   * Band edges on the light value n.L (-1 facing away .. 1 facing the light), by tone count. A pixel's tone is
-   * the number of edges at or below its light. The top edge is high so the highlight stays a small accent, and
-   * the shadow edges sit below zero so a face turned a little from the light is not half dark.
-   * @type {Record<number, number[]>}
-   */
-  const BAND_EDGES = {
-    2: [0],
-    3: [-0.05, 0.62],
-    4: [-0.3, 0.05, 0.62],
-    5: [-0.4, -0.1, 0.25, 0.66],
-    6: [-0.45, -0.2, 0.05, 0.3, 0.68],
-  };
-  /** An edge no light value reaches: pads the shader's fixed-length edge array. */
-  const UNUSED_EDGE = 9;
-  const MAX_EDGES = MAX_TONES - 1;
-
-  /** The 4 x 4 ordered-dither matrix (thresholds 0..15), row by row. */
-  const BAYER_4 = [
-    [0, 8, 2, 10],
-    [12, 4, 14, 6],
-    [3, 11, 1, 9],
-    [15, 7, 13, 5],
-  ];
-  const BAYER_SIZE = 4;
-  const BAYER_LEVELS = 16;
-
   // ---- colour space ----------------------------------------------------------------------------------------------------
 
   const clamp01 = (value) => Math.min(1, Math.max(0, value));
@@ -142,12 +171,12 @@
    * Reads a colour as three sRGB bytes.
    * @param {string|number|number[]} color '#rrggbb', 0xRRGGBB, or [red, green, blue] bytes
    * @returns {number[]} [red, green, blue], 0..255
-   * @example Kit.look.rgbOf('#ff8000') // [255, 128, 0]
+   * @example Kit.palette.rgbOf('#ff8000') // [255, 128, 0]
    */
   const rgbOf = (color) => {
     if (Array.isArray(color)) return color.slice(0, 3);
     const packed = typeof color === 'string' ? Number.parseInt(color.replace('#', ''), 16) : color;
-    if (!Number.isFinite(packed)) throw new Error(`Kit.look.rgbOf: "${color}" is not a colour. Use '#rrggbb', 0xRRGGBB or [red, green, blue].`);
+    if (!Number.isFinite(packed)) throw new Error(`Kit.palette.rgbOf: "${color}" is not a colour. Use '#rrggbb', 0xRRGGBB or [red, green, blue].`);
     return [(packed >> 16) & BYTE_MAX, (packed >> 8) & BYTE_MAX, packed & BYTE_MAX];
   };
 
@@ -217,11 +246,11 @@
    * @property {string|number} [base] the colour of an ordinarily lit surface; the ramp is built around it
    * @property {Array<string|number>} [tones] authored tones, darkest first (2 or more); resampled to the tone count asked for
    * @property {string|number} [ink] outline colour; derived from the darkest tone when left out
-   * @property {Partial<RampShape>} [shape] overrides of RAMP_SHAPE for this ramp
+   * @property {Partial<RampShape>} [shape] overrides of TONE_SHAPE for this ramp
    */
 
   /**
-   * @typedef {Object} Ramp
+   * @typedef {Object} ToneRamp
    * @property {number[][]} tones [red, green, blue] bytes, darkest first
    * @property {number[]} ink [red, green, blue] bytes of the outline colour
    */
@@ -257,23 +286,29 @@
     });
   };
 
+  /** Reads any accepted ramp form as a RampSpec: a base colour, a spec, or a `Ramp` of CSS shades (used as authored tones). */
+  const toRampSpec = (spec) => {
+    if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) return { base: spec };
+    return spec.shades ? { tones: spec.shades } : spec;
+  };
+
   /**
    * Builds a ramp of tones, darkest first, plus its ink colour. From a base colour the shadows darken in
    * equal perceptual steps while turning toward a cool hue and gaining a little chroma, and the highlight
    * lightens, warms and pales; the base itself is kept byte-exact. Authored tones are used as given and
    * resampled (nearest) when a different count is asked for.
-   * @param {RampSpec|string|number} spec a ramp spec, or just the base colour
+   * @param {RampSpec|Ramp|string|number} spec a ramp spec, just the base colour, or a `Ramp` from `Kit.palette.ramp`
+   *   (its shades are used as authored tones)
    * @param {number} [toneCount=4] 2..6
-   * @returns {Ramp}
+   * @returns {ToneRamp}
    * @complexity O(toneCount) time and space
-   * @example Kit.look.ramp('#c8453a', 4).tones.map(Kit.look.hexOf) // four reds, from wine shadow to a warm highlight
+   * @example Kit.palette.tones('#c8453a', 4).tones.map(Kit.palette.hexOf) // four reds, from wine shadow to a warm highlight
    */
-  const ramp = (spec, toneCount = 4) => {
+  const tones = (spec, toneCount = 4) => {
     if (!Number.isInteger(toneCount) || toneCount < MIN_TONES || toneCount > MAX_TONES)
-      throw new Error(`Kit.look.ramp: toneCount must be a whole number from ${MIN_TONES} to ${MAX_TONES}, got ${toneCount}.`);
-    /** @type {RampSpec} */
-    const rampSpec = spec !== null && typeof spec === 'object' && !Array.isArray(spec) ? /** @type {RampSpec} */ (spec) : { base: /** @type {string|number} */ (spec) };
-    const shape = { ...RAMP_SHAPE, ...rampSpec.shape };
+      throw new Error(`Kit.palette.tones: toneCount must be a whole number from ${MIN_TONES} to ${MAX_TONES}, got ${toneCount}.`);
+    const rampSpec = toRampSpec(spec);
+    const shape = { ...TONE_SHAPE, ...rampSpec.shape };
     const tones = rampSpec.tones ? resampleTones(rampSpec.tones, toneCount) : generateTones(rampSpec.base, shape, toneCount);
     if (rampSpec.ink !== undefined) return { tones, ink: rgbOf(rampSpec.ink) };
     // Ink comes from the full-depth shadow, so the line colour is the same whatever the tone count.
@@ -281,12 +316,12 @@
   };
 
   const resampleTones = (authored, toneCount) => {
-    if (!Array.isArray(authored) || authored.length < MIN_TONES) throw new Error(`Kit.look.ramp: "tones" needs at least ${MIN_TONES} colours, darkest first.`);
+    if (!Array.isArray(authored) || authored.length < MIN_TONES) throw new Error(`Kit.palette.tones: "tones" needs at least ${MIN_TONES} colours, darkest first.`);
     return Array.from({ length: toneCount }, (_, index) => rgbOf(authored[Math.round((index * (authored.length - 1)) / (toneCount - 1))]));
   };
 
   const generateTones = (baseColor, shape, toneCount) => {
-    if (baseColor === undefined) throw new Error("Kit.look.ramp: a ramp needs a base colour or a list of tones, e.g. Kit.look.ramp('#c8453a') or { tones: ['#222', '#888'] }.");
+    if (baseColor === undefined) throw new Error("Kit.palette.tones: a ramp needs a base colour or a list of tones, e.g. Kit.palette.tones('#c8453a') or { tones: ['#222', '#888'] }.");
     const baseRgb = rgbOf(baseColor);
     const base = toOklch(baseRgb);
     const baseIndex = baseToneIndex(toneCount);
@@ -300,7 +335,7 @@
   // ---- palettes and the packed table -----------------------------------------------------------------------------------
 
   /**
-   * @typedef {Object} Palette
+   * @typedef {Object} PaletteSet
    * A named set of ramps. Palettes with the same ramp names in the same order are interchangeable.
    * @property {string} name
    * @property {string[]} rampIds ramp names, in row order
@@ -311,12 +346,12 @@
    * Makes a palette from named ramps.
    * @param {string} name
    * @param {Record<string, RampSpec|string|number>} ramps ramp name -> spec or base colour; the key order is the row order
-   * @returns {Palette}
-   * @example const ember = Kit.look.palette('ember', { skin: '#e9b48c', cloth: '#c8453a', eye: { tones: ['#1b1626', '#f4f0ff'] } });
+   * @returns {PaletteSet}
+   * @example const ember = Kit.palette.set('ember', { skin: '#e9b48c', cloth: '#c8453a', eye: { tones: ['#1b1626', '#f4f0ff'] } });
    */
-  const palette = (name, ramps) => {
+  const set = (name, ramps) => {
     const rampIds = Object.keys(ramps || {});
-    if (!rampIds.length) throw new Error(`Kit.look.palette("${name}"): a palette needs at least one ramp, e.g. { skin: '#e9b48c' }.`);
+    if (!rampIds.length) throw new Error(`Kit.palette.set("${name}"): a palette needs at least one ramp, e.g. { skin: '#e9b48c' }.`);
     return { name, rampIds, ramps: { ...ramps } };
   };
 
@@ -336,8 +371,8 @@
    * @property {Uint8Array} data RGBA bytes, row by row
    * @property {number} toneCount tones currently written per ramp
    * @property {number} version rises with every write, so a texture knows when to upload again
-   * @property {function(Palette): PaletteBlock} load reserve rows for a palette and write them
-   * @property {function(PaletteBlock, Palette): void} write replace a block's colours with another palette of the same ramps
+   * @property {function(PaletteSet|Ramp[]): PaletteBlock} load reserve rows for a palette and write them
+   * @property {function(PaletteBlock, PaletteSet|Ramp[]): void} write replace a block's colours with another palette of the same ramps
    * @property {function(PaletteBlock, string, RampSpec|string|number): void} writeRamp replace one ramp of a block
    * @property {function(number): void} retone rebuild every loaded block at a new tone count
    * @property {function(number, number): number[]} colorAt (row, column) -> [red, green, blue]
@@ -351,9 +386,10 @@
    * @returns {PaletteAtlas}
    * @complexity load / write: O(ramps in the palette); writeRamp: O(1); retone: O(rows in use); space O(rows)
    * @example
-   * const atlas = Kit.look.atlas();
-   * const hero = atlas.load(Kit.look.PALETTES.ember);   // hero.rows.skin is the row a skin material stores
-   * atlas.write(hero, Kit.look.PALETTES.tide);          // the hero is recoloured; nothing else changes
+   * const atlas = Kit.palette.atlas();
+   * const hero = atlas.load(Kit.palette.SETS.ember);   // hero.rows.skin is the row a skin material stores
+   * atlas.write(hero, Kit.palette.SETS.tide);          // the hero is recoloured; nothing else changes
+   * const worn = atlas.load(bake.ramps);                // a body bake: bone i is drawn with row worn.rows[bake.boneRamp[i]]
    */
   const atlas = (options = {}) => {
     const height = options.rows || DEFAULT_ATLAS_ROWS;
@@ -363,7 +399,7 @@
 
     const writeTexel = (row, column, rgb) => data.set([rgb[0], rgb[1], rgb[2], BYTE_MAX], (row * TONE_SLOTS + column) * CHANNELS);
     const writeRow = (row, spec) => {
-      const built = ramp(spec, table.toneCount);
+      const built = tones(spec, table.toneCount);
       // Columns past the tone count repeat the lightest tone, so a stale tone index can never read garbage.
       for (let column = 0; column < INK_COLUMN; column++) writeTexel(row, column, built.tones[Math.min(column, built.tones.length - 1)]);
       writeTexel(row, INK_COLUMN, built.ink);
@@ -371,9 +407,12 @@
     const requireSameRamps = (block, source) => {
       if (source.rampIds.join() !== block.rampIds.join())
         throw new Error(
-          `Kit.look.atlas.write: palette "${source.name}" has ramps [${source.rampIds}], but the block was loaded with [${block.rampIds}]. Interchangeable palettes list the same ramps in the same order.`
+          `Kit.palette.atlas.write: palette "${source.name}" has ramps [${source.rampIds}], but the block was loaded with [${block.rampIds}]. Interchangeable palettes list the same ramps in the same order.`
         );
     };
+
+    /** A list of ramps (a body bake's `ramps`) is a set whose ramp names are the list indices. */
+    const toSet = (given) => (Array.isArray(given) ? set('ramps', Object.fromEntries(given.map((entry, index) => [index, entry]))) : given);
 
     const table = {
       width: TONE_SLOTS,
@@ -381,23 +420,25 @@
       data,
       toneCount: options.toneCount || 4,
       version: 0,
-      load(source) {
+      load(given) {
+        const source = toSet(given);
         if (rowsInUse + source.rampIds.length > height)
-          throw new Error(`Kit.look.atlas.load: no room for "${source.name}" (${rowsInUse} of ${height} rows used). Create the atlas with more rows: Kit.look.atlas({ rows: ${height * 2} }).`);
+          throw new Error(`Kit.palette.atlas.load: no room for "${source.name}" (${rowsInUse} of ${height} rows used). Create the atlas with more rows: Kit.palette.atlas({ rows: ${height * 2} }).`);
         const block = { offset: rowsInUse, rampIds: source.rampIds.slice(), rows: Object.fromEntries(source.rampIds.map((id, index) => [id, rowsInUse + index])) };
         rowsInUse += source.rampIds.length;
         loaded.push({ block, source });
         table.write(block, source);
         return block;
       },
-      write(block, source) {
+      write(block, given) {
+        const source = toSet(given);
         requireSameRamps(block, source);
         source.rampIds.forEach((id) => writeRow(block.rows[id], source.ramps[id]));
         loaded.find((entry) => entry.block === block).source = source;
         table.version += 1;
       },
       writeRamp(block, rampId, spec) {
-        if (!(rampId in block.rows)) throw new Error(`Kit.look.atlas.writeRamp: the block has no ramp "${rampId}" (it has ${block.rampIds}).`);
+        if (!(rampId in block.rows)) throw new Error(`Kit.palette.atlas.writeRamp: the block has no ramp "${rampId}" (it has ${block.rampIds}).`);
         const entry = loaded.find((candidate) => candidate.block === block);
         // The source is copied before it changes, so a shared named palette is never edited in place.
         entry.source = { ...entry.source, ramps: { ...entry.source.ramps, [rampId]: spec } };
@@ -417,7 +458,7 @@
   /** The contact shadow under a figure: one flat colour whatever the tone. */
   const GROUND = { tones: ['#3f4870', '#3f4870'] };
   /** @type {Array<[string, Record<string, RampSpec|string>]>} */
-  const PALETTE_ROWS = [
+  const SET_ROWS = [
     [
       'ember',
       { skin: '#e9b48c', hair: '#8a3b2a', cloth: '#c8453a', trim: '#f0c05a', leather: '#6b4630', metal: '#a9b4c2', eye: { tones: ['#1b1626', '#3a2f4a', '#f6f1ff'] }, glow: '#ffd76a', ground: GROUND },
@@ -439,241 +480,9 @@
    * Named palettes for a humanoid: the same nine ramps in the same order, so any of them recolours any character.
    * `eye` is authored (a dark pupil tone and a light glint); `ground` is the contact shadow under a figure, one
    * flat colour whatever the tone.
-   * @type {Record<string, Palette>}
+   * @type {Record<string, PaletteSet>}
    */
-  const PALETTES = Object.fromEntries(PALETTE_ROWS.map(([name, ramps]) => [name, palette(name, ramps)]));
+  const SETS = Object.fromEntries(SET_ROWS.map(([name, ramps]) => [name, set(name, ramps)]));
 
-  // ---- bands and dither (the shaders in look-toon.js compute exactly these) ---------------------------------------------
-
-  /**
-   * The tone of a light value: how many band edges lie at or below it.
-   * @param {number} light n.L, -1..1 (plus any dither offset)
-   * @param {number[]} edges ascending band edges
-   * @returns {number} tone index, 0 (darkest) .. edges.length
-   * @complexity O(edges)
-   * @example Kit.look.bandOf(-0.05, [-0.05, 0.62]) // 1: a value on an edge belongs to the lighter band
-   */
-  const bandOf = (light, edges) => edges.reduce((tone, edge) => tone + (light >= edge ? 1 : 0), 0);
-
-  /**
-   * The default band edges for a tone count, padded to the shader's fixed length with an unreachable edge.
-   * @param {number} toneCount 2..6
-   * @returns {number[]} five numbers: `toneCount - 1` real edges, then padding
-   */
-  const edgesFor = (toneCount) => {
-    if (!BAND_EDGES[toneCount]) throw new Error(`Kit.look.edgesFor: no band edges for ${toneCount} tones; use ${MIN_TONES}..${MAX_TONES}.`);
-    return Array.from({ length: MAX_EDGES }, (_, index) => (index < toneCount - 1 ? BAND_EDGES[toneCount][index] : UNUSED_EDGE));
-  };
-
-  /**
-   * The ordered-dither threshold of a pixel, 0..1, repeating every 4 pixels both ways.
-   * @param {number} column pixel x (any integer)
-   * @param {number} row pixel y (any integer)
-   * @returns {number} one of 0, 1/16 .. 15/16
-   * @example const adjusted = light + (Kit.look.bayerAt(x, y) - 0.5) * 0.12;
-   */
-  const bayerAt = (column, row) => BAYER_4[((row % BAYER_SIZE) + BAYER_SIZE) % BAYER_SIZE][((column % BAYER_SIZE) + BAYER_SIZE) % BAYER_SIZE] / BAYER_LEVELS;
-
-  // ---- pixel-grid helpers ----------------------------------------------------------------------------------------------
-
-  /**
-   * Rounds a coordinate to the texel grid, so a sprite moves by whole texels and keeps one shape while it moves.
-   * @param {number} value a coordinate along a screen axis, world units
-   * @param {number} texelSize world units one texel covers
-   * @returns {number} the nearest multiple of texelSize
-   */
-  const snapToTexel = (value, texelSize) => (texelSize > 0 ? Math.round(value / texelSize) * texelSize : value);
-
-  /**
-   * Rounds a turn to one of `steps` facings, like the 8 or 16 drawn directions of a sprite sheet.
-   * @param {number} angle radians
-   * @param {number} steps facings per full turn; 0 leaves the angle alone
-   * @returns {number} radians
-   */
-  const stepYaw = (angle, steps) => (steps > 0 ? Math.round((angle * steps) / (Math.PI * 2)) * ((Math.PI * 2) / steps) : angle);
-
-  /**
-   * How many screen pixels one texel covers when a view is drawn at about `rows` texels tall: always a whole
-   * number, because a fractional upscale makes texels of uneven size.
-   * @param {number} bufferHeight height of the screen buffer, device pixels
-   * @param {number} rows wanted internal height in texels; 0 means native resolution
-   * @returns {number} whole pixels per texel, 1 or more
-   */
-  const texelScale = (bufferHeight, rows) => (rows > 0 ? Math.max(1, Math.round(bufferHeight / rows)) : 1);
-
-  /**
-   * Averages the normals of vertices that share a position. An inverted-hull outline pushes vertices along
-   * their normals; where a mesh has hard edges (a box, a cylinder's cap) the copies of a corner would part
-   * and open a gap in the line, so the hull uses these welded normals instead.
-   * @param {ArrayLike<number>} positions x, y, z per vertex
-   * @param {ArrayLike<number>} normals x, y, z per vertex
-   * @param {number} [tolerance=1e-4] positions closer than this (per axis) count as the same point
-   * @returns {Float32Array} x, y, z per vertex, unit length
-   * @complexity O(vertices) time and space (one hash lookup per vertex)
-   */
-  const weldNormals = (positions, normals, tolerance = 1e-4) => {
-    const vertexCount = positions.length / 3;
-    const keyOf = (vertex) => [0, 1, 2].map((axis) => Math.round(positions[vertex * 3 + axis] / tolerance)).join(',');
-    const sums = new Map();
-    for (let vertex = 0; vertex < vertexCount; vertex++) {
-      const key = keyOf(vertex);
-      const sum = sums.get(key) || sums.set(key, [0, 0, 0]).get(key);
-      for (let axis = 0; axis < 3; axis++) sum[axis] += normals[vertex * 3 + axis];
-    }
-    const welded = new Float32Array(positions.length);
-    for (let vertex = 0; vertex < vertexCount; vertex++) {
-      const sum = sums.get(keyOf(vertex));
-      // Opposite normals cancel to nothing (a paper-thin shape): keep the vertex's own normal there.
-      const length = Math.hypot(sum[0], sum[1], sum[2]);
-      for (let axis = 0; axis < 3; axis++) welded[vertex * 3 + axis] = length > tolerance ? sum[axis] / length : normals[vertex * 3 + axis];
-    }
-    return welded;
-  };
-
-  // ---- presets and knobs -----------------------------------------------------------------------------------------------
-
-  /**
-   * @typedef {Object} LookSettings
-   * Everything that decides how a view draws. Plain data: store it, diff it, send it.
-   * @property {number} toneCount tones per ramp, 2..6 (the band count)
-   * @property {number} dither strength of the ordered dither on the light value, 0 (off) .. 0.3
-   * @property {'screen'|'anchored'|'object'} ditherSpace what the dither pattern is fixed to: the screen, the
-   *   figure's snapped screen position, or the surface itself
-   * @property {number} softness half-width of the blend across a band edge, in light units; 0 is a hard edge.
-   *   Only drawn at native resolution without screen-space ink (tone indices cannot be blended)
-   * @property {'none'|'hull'|'ink'} outline no lines, an inverted hull per mesh, or screen-space ink over an index target
-   * @property {number} inkWidth hull line width, CSS pixels (screen-space ink is always one texel)
-   * @property {number} pixelRows internal height in texels; 0 is native resolution
-   * @property {boolean} snap move figures by whole texels when drawn below native resolution
-   * @property {number} yawSteps facings per turn a caller should round a figure's turn to (see stepYaw); 0 is continuous
-   * @property {boolean} rim lift grazing, lit edges one tone
-   */
-
-  /**
-   * The three looks, as data. `label` and `about` are for an editor; the rest are LookSettings.
-   * @type {Record<string, LookSettings & {label: string, about: string}>}
-   */
-  const PRESETS = {
-    toon: {
-      label: 'Toon',
-      about: 'Three flat tones and a bold hull line: classic cel shading.',
-      toneCount: 3,
-      dither: 0,
-      ditherSpace: 'screen',
-      softness: 0,
-      outline: 'hull',
-      inkWidth: 2.5,
-      pixelRows: 0,
-      snap: false,
-      yawSteps: 0,
-      rim: false,
-    },
-    pixel: {
-      label: 'Pixel',
-      about: 'Four tones at low resolution, dithered edges and one-texel ink.',
-      toneCount: 4,
-      dither: 0.12,
-      ditherSpace: 'anchored',
-      softness: 0,
-      outline: 'ink',
-      inkWidth: 1,
-      pixelRows: 195,
-      snap: true,
-      yawSteps: 24,
-      rim: true,
-    },
-    soft: {
-      label: 'Soft toon',
-      about: 'Five tones with softened edges, a thin line and a rim.',
-      toneCount: 5,
-      dither: 0,
-      ditherSpace: 'screen',
-      softness: 0.045,
-      outline: 'hull',
-      inkWidth: 1.5,
-      pixelRows: 0,
-      snap: false,
-      yawSteps: 0,
-      rim: true,
-    },
-  };
-
-  /**
-   * @typedef {Object} LookKnob
-   * @property {string} id the LookSettings field it edits
-   * @property {string} label
-   * @property {'choice'|'range'|'toggle'} type
-   * @property {Array<{value: *, label: string}>} [options] for a choice
-   * @property {number} [min] for a range
-   * @property {number} [max] for a range
-   * @property {number} [step] for a range
-   */
-
-  /** @type {function(Array<*>, function(*): string=): Array<{value: *, label: string}>} */
-  const optionsOf = (values, labelOf = String) => values.map((value) => ({ value, label: labelOf(value) }));
-  /**
-   * The settings an editor can offer, in display order. Adding a knob is adding a row.
-   * @type {LookKnob[]}
-   */
-  const KNOBS = [
-    { id: 'toneCount', label: 'Bands', type: 'choice', options: optionsOf([2, 3, 4, 5, 6]) },
-    { id: 'outline', label: 'Outline', type: 'choice', options: optionsOf(['none', 'hull', 'ink'], (mode) => ({ none: 'None', hull: 'Hull', ink: 'Ink' })[mode]) },
-    { id: 'pixelRows', label: 'Resolution', type: 'choice', options: optionsOf([0, 260, 195, 130, 98], (rows) => (rows ? `${rows} rows` : 'Native')) },
-    { id: 'dither', label: 'Dither', type: 'range', min: 0, max: 0.3, step: 0.02 },
-    {
-      id: 'ditherSpace',
-      label: 'Dither fixed to',
-      type: 'choice',
-      options: optionsOf(['screen', 'anchored', 'object'], (space) => ({ screen: 'Screen', anchored: 'Figure', object: 'Surface' })[space]),
-    },
-    { id: 'softness', label: 'Edge softness', type: 'range', min: 0, max: 0.12, step: 0.005 },
-    { id: 'inkWidth', label: 'Line width', type: 'range', min: 0.5, max: 5, step: 0.5 },
-    { id: 'yawSteps', label: 'Facings', type: 'choice', options: optionsOf([0, 8, 16, 24], (steps) => (steps ? String(steps) : 'Smooth')) },
-    { id: 'snap', label: 'Snap to texels', type: 'toggle' },
-    { id: 'rim', label: 'Rim light', type: 'toggle' },
-  ];
-
-  /**
-   * Resolves a preset plus overrides into complete settings.
-   * @param {string} presetId a key of PRESETS
-   * @param {Partial<LookSettings>} [overrides] knob values that differ from the preset
-   * @returns {LookSettings & {preset: string, isIndexed: boolean}} `isIndexed`: the view draws tone indices into
-   *   a target and resolves colour afterwards (needed for screen-space ink and for any resolution below native)
-   * @example Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
-   */
-  const settings = (presetId, overrides = {}) => {
-    const preset = PRESETS[presetId];
-    if (!preset) throw new Error(`Kit.look.settings: no preset "${presetId}". Presets: ${Object.keys(PRESETS).join(', ')}.`);
-    const { label, about, ...defaults } = preset;
-    const merged = { ...defaults, ...overrides };
-    if (!BAND_EDGES[merged.toneCount]) throw new Error(`Kit.look.settings: toneCount must be ${MIN_TONES}..${MAX_TONES}, got ${merged.toneCount}.`);
-    return { ...merged, preset: presetId, isIndexed: merged.outline === 'ink' || merged.pixelRows > 0 };
-  };
-
-  Kit.look = {
-    TONE_SLOTS,
-    INK_COLUMN,
-    MAX_EDGES,
-    RAMP_SHAPE,
-    BAND_EDGES,
-    BAYER_4,
-    PALETTES,
-    PRESETS,
-    KNOBS,
-    rgbOf,
-    hexOf,
-    toOklch,
-    fromOklch,
-    ramp,
-    palette,
-    atlas,
-    bandOf,
-    edgesFor,
-    bayerAt,
-    snapToTexel,
-    stepYaw,
-    texelScale,
-    weldNormals,
-    settings,
-  };
+  Kit.palette = { RAMP_DEFAULTS, toCss, ramp, shade, TONE_SLOTS, INK_COLUMN, MIN_TONES, MAX_TONES, TONE_SHAPE, SETS, rgbOf, hexOf, toOklch, fromOklch, tones, set, atlas };
 })();

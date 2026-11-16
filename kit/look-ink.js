@@ -6,7 +6,7 @@
  * Owns:  `Kit.look.inkPass`: the two render targets and their sizes, the resolve shader (palette lookup plus
  *        silhouette and inner ink) and the upscale shader.
  * Does not own: what writes the index target (the materials in look-toon.js, with LOOK_INDEX_OUTPUT), the
- *        settings (look-palette.js), or the frame around it: clearing, cameras, snapping (look-view.js).
+ *        settings (look-settings.js), or the frame around it: clearing, cameras, snapping (look-view.js).
  *
  * Why one RGBA8 target and no depth texture or MRT: ramp, tone and ink group are a byte each, and the view
  * depth fits the fourth byte because its range is fitted round the figures. So the pipeline needs nothing
@@ -21,7 +21,7 @@
   const INK_DEPTH_STEP = { betweenGroups: 0.035, withinGroup: 0.22 };
   /** A valid size for the targets before the first resize, texels. */
   const PLACEHOLDER_SIZE = 4;
-  const { TONE_SLOTS, INK_COLUMN } = Kit.look;
+  const { TONE_SLOTS, INK_COLUMN } = Kit.palette;
 
   const QUAD_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
 

@@ -2,11 +2,11 @@
  * Kit look toon: the materials of the stylised look. A toon material turns n.L into a tone band and looks the
  * colour up in the palette texture; a hull material draws the mesh's outline in its ramp's ink colour.
  *
- * Owns:  the palette texture over a `Kit.look.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
+ * Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
  *        lookup, hull extrusion) as named strings; `Kit.look.shading`: the uniforms every material of one look
  *        shares, `dress(mesh, part)` to put a mesh in the look, and `apply(settings, frame)` to change the look
  *        of every dressed mesh at once.
- * Does not own: colours (look-palette.js), screen-space ink and low-resolution targets (look-ink.js), or
+ * Does not own: colours (kit/palette.js), screen-space ink and low-resolution targets (look-ink.js), or
  *        when anything is drawn (look-view.js).
  *
  * Why a ShaderMaterial and not a patched MeshToonMaterial: the palette contract needs the fragment's last
@@ -31,7 +31,8 @@
   const DITHER_CELLS_PER_UNIT = 48;
   /** Gamma used when a look is drawn into the kit's linear HDR chain; it mirrors the 1 / 2.2 in kit/post.js. */
   const DISPLAY_GAMMA = 2.2;
-  const { TONE_SLOTS, INK_COLUMN, MAX_EDGES } = Kit.look;
+  const { TONE_SLOTS, INK_COLUMN } = Kit.palette;
+  const { MAX_EDGES } = Kit.look;
 
   // ---- GLSL chunks -----------------------------------------------------------------------------------------------------
 
@@ -54,7 +55,7 @@
   /**
    * 4 x 4 ordered dither without a texture or bit operations. bayer2 is the 2 x 2 matrix [[0, 2], [3, 1]] / 4
    * written as a closed form; the 4 x 4 matrix is the 2 x 2 one of the half-resolution cell (worth a quarter)
-   * plus the 2 x 2 one of the cell itself. Kit.look.bayerAt is the same table in JavaScript.
+   * plus the 2 x 2 one of the cell itself. Kit.look.bayerAt (look-settings.js) is the same table in JavaScript.
    */
   const GLSL_BAYER = `
     float bayer2(vec2 cell) { cell = floor(cell); return fract(cell.x / 2.0 + cell.y * cell.y * 0.75); }
@@ -237,7 +238,7 @@
   /**
    * Wraps a palette atlas in a texture. Nearest filtering and no colour conversion, so a lookup returns the
    * authored bytes; `sync` uploads again only when the atlas has been written since the last upload.
-   * @param {ReturnType<typeof Kit.look.atlas>} atlas
+   * @param {ReturnType<typeof Kit.palette.atlas>} atlas
    * @returns {{texture: THREE.Texture, sync: function(): void}}
    * @complexity sync: O(1) when nothing changed, otherwise one upload of the whole table (8 x rows texels)
    */
@@ -291,7 +292,7 @@
    * Creates the shared state of one look: the palette texture and the uniforms every dressed material reads.
    * Changing a knob writes a uniform once, whatever the number of meshes; only a change of output kind (index
    * or colour, soft or hard, dither space) recompiles, and all materials of a kind share one program.
-   * @param {{atlas: ReturnType<typeof Kit.look.atlas>, output?: 'display'|'linear'}} options `output: 'linear'`
+   * @param {{atlas: ReturnType<typeof Kit.palette.atlas>, output?: 'display'|'linear'}} options `output: 'linear'`
    *   is for meshes drawn inside the kit's HDR chain (kit/post.js), where colours are tone mapped afterwards
    *   and so only approximate the palette; 'display' (default) writes the palette's own bytes
    * @returns {Object} `{ uniforms, palette, dress, undress, follow, anchors, apply, setLight, dressed, dispose }`
@@ -337,7 +338,8 @@
     const prepareGeometry = (mesh) => {
       const { geometry } = mesh;
       if (geometry.userData.lookReady) return;
-      if (Array.isArray(mesh.material)) throw new Error('Kit.look.shading.dress: the mesh has several materials. Dress single-material meshes; split a multi-material mesh into one mesh per material first.');
+      if (Array.isArray(mesh.material))
+        throw new Error('Kit.look.shading.dress: the mesh has several materials. Dress single-material meshes; split a multi-material mesh into one mesh per material first.');
       // Boxes and cylinders come with a group per face; under one material those mean nothing, so they give way.
       geometry.clearGroups();
       geometry.addGroup(0, Infinity, 0);
