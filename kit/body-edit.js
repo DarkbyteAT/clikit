@@ -46,7 +46,9 @@
    * @property {number} step the smallest change that makes a difference
    * @property {number} default
    * @property {number} value the individual's current value
-   * @property {Array<{channel: string, bones: string[]}>} affects what it scales: per channel, the bones of the bare plan
+   * @property {Array<{channel: string, bones: string[], param?: string, feature?: string}>} affects what it changes:
+   *   per bone channel, per shape path (`channel: 'shape'`, `param`) or per feature parameter (`channel: 'feature'`,
+   *   `feature`, `param`), with the bones of the bare plan it touches
    * @property {?string} mirror the key of the dial that does the same on the other side, when there is one
    */
 
@@ -97,12 +99,18 @@
       const dialSet = Kit.body.dials(kind.plan, kind.dialRows);
       const affects = kind.dialIds.map(() => []);
       const firstBone = kind.dialIds.map(() => -1);
-      dialSet.opDial.forEach((dial, operation) => {
-        const channel = channelNames[dialSet.opChannel[operation]];
-        const entry = affects[dial].find((row) => row.channel === channel) || affects[dial][affects[dial].push({ channel, bones: [] }) - 1];
-        entry.bones.push(kind.plan.boneNames[dialSet.opBone[operation]]);
-        if (firstBone[dial] < 0) firstBone[dial] = dialSet.opBone[operation];
-      });
+      /** One affects row per channel (or per shape path, or per feature parameter), listing the bones it touches. */
+      const addAffect = (dial, channel, bone, detail = {}) => {
+        const entry =
+          affects[dial].find((row) => row.channel === channel && row.param === detail.param && row.feature === detail.feature) ||
+          affects[dial][affects[dial].push({ channel, ...detail, bones: [] }) - 1];
+        if (bone < 0) return;
+        entry.bones.push(kind.plan.boneNames[bone]);
+        if (firstBone[dial] < 0) firstBone[dial] = bone;
+      };
+      dialSet.opDial.forEach((dial, operation) => addAffect(dial, channelNames[dialSet.opChannel[operation]], dialSet.opBone[operation]));
+      dialSet.shapeOps.forEach((operation) => addAffect(operation.dial, 'shape', operation.bone, { param: operation.path.join('.') }));
+      dialSet.featureOps.forEach((operation) => addAffect(operation.dial, 'feature', -1, { feature: operation.feature, param: operation.path.join('.') }));
       // A dial is sided when every effect names a side role; its mirror is the dial with the same effects on the other side.
       const signature = (row, swap) => JSON.stringify((row.affects || []).map((effect) => ({ ...effect, roles: (effect.roles || []).map((role) => (swap && OPPOSITE_SIDE[role]) || role).sort() })));
       const sides = kind.dialRows.map((row) => Object.keys(OPPOSITE_SIDE).find((side) => (row.affects || []).length > 0 && row.affects.every((effect) => (effect.roles || []).includes(side))) || null);
@@ -309,10 +317,11 @@
      * `colors`, re-pose for `bones`, rebuild the skeleton and meshes only when `rebuild` is true.
      * @param {Object} previous a `Bake`
      * @param {Object} next a `Bake`
-     * @returns {{rebuild: boolean, species: boolean, dials: string[], colors: string[], sockets: string[], bones: number[]}}
+     * @returns {{rebuild: boolean, species: boolean, dials: string[], colors: string[], sockets: string[], bones: number[], shapes: number[]}}
      *   `rebuild`: the assembled plan differs (another species or outfit), so bone indices do not carry over;
      *   `dials` / `colors`: ids whose value differs; `sockets`: paths whose part differs; `bones`: indices in
-     *   `next.plan` whose rest transform differs (every bone when `rebuild` is true)
+     *   `next.plan` whose rest transform differs (every bone when `rebuild` is true); `shapes`: indices whose
+     *   shape row differs, so their mesh is rebuilt but the skeleton is not
      * @complexity O(bones + fields) time; allocates the report
      * @example const { rebuild, bones } = editor.changes(shown, bakery.bakeRecipe(recipe));
      */
@@ -330,6 +339,11 @@
           [0, 1, 2].some((axis) => previous.rest.scale[vector + axis] !== next.rest.scale[vector + axis] || previous.rest.translation[vector + axis] !== next.rest.translation[vector + axis]);
         if (isMoved) bones.push(bone);
       }
+      // Shape rows are shared until a dial copies them: the identity compare is free and the text compare runs
+      // only on dialled bones, whose copies differ in identity even when a value is unchanged.
+      const shapes = rebuild
+        ? bones
+        : [...next.plan.boneNames.keys()].filter((bone) => previous.shapes[bone] !== next.shapes[bone] && JSON.stringify(previous.shapes[bone]) !== JSON.stringify(next.shapes[bone]));
       return {
         rebuild,
         species: !isSameSpecies,
@@ -337,6 +351,7 @@
         colors: kind.colorIds.filter((_channel, index) => !isSameSpecies || previous.individual.colors[index] !== next.individual.colors[index]),
         sockets: paths.filter((path) => previous.individual.fills[path] !== next.individual.fills[path]),
         bones,
+        shapes,
       };
     };
 

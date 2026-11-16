@@ -133,4 +133,83 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     throwsWith(() => Kit.region.compile({ band: {}, all: true }), /one \{ predicate: argument \} object/);
     throwsWith(() => Kit.region.compile({ union: [] }), /"union" needs a non-empty list/);
   });
+
+  // ---- a test catalogue: the samples with a lathe head, shape dials, a posture dial and a dial on the hat ----
+  const body = Kit.body;
+  /** A fresh, writable copy of the sample catalogue, changed by `edit`. */
+  const sampleVariant = (edit, base = body.samples.CATALOG) => {
+    const copy = JSON.parse(JSON.stringify(base));
+    edit(copy);
+    return copy;
+  };
+  const HEAD_PROFILE = [
+    [0.05, 0],
+    [0.09, 0.05],
+    [0.1, 0.13],
+    [0.07, 0.21],
+    [0, 0.24],
+  ];
+  const SHAPED = sampleVariant((spec) => {
+    spec.plans.biped.bones.find((bone) => bone.name === 'head').shape = { kind: 'lathe', profile: HEAD_PROFILE, scale: [1, 1, 0.9] };
+    spec.nodes.humanoid.set.dials.jawWidth = { min: 0.8, max: 1.25, affects: [{ roles: ['head'], shape: 'profile.1.0' }] };
+    spec.nodes.humanoid.set.dials.headDepth = { min: 0.85, max: 1.2, affects: [{ bones: ['head'], shape: 'scale.2' }] };
+    spec.nodes.humanoid.set.dials.posture = { min: -1, max: 1, default: 0, affects: [{ roles: ['spine'], channel: 'pitch', amount: 10 }] };
+    spec.nodes.humanoid.set.dials.brimWidth = { min: 0.8, max: 1.5, affects: [{ part: 'hat', bones: ['brim'], shape: 'profile.0.0' }] };
+    spec.nodes.humanoid.limits['dials.jawWidth'] = { min: 0.7, max: 1.3 };
+  });
+
+  test('shape dials: a dial drives a number in a bone shape without moving any bone (control: a length dial moves them)', () => {
+    const shaped = body.catalog(SHAPED);
+    const bakery = shaped.bakery();
+    const base = { species: 'human', seed: 3, overrides: { 'dial:jawWidth': 1, 'dial:headDepth': 1, 'dial:posture': 0, 'fill:headTop': null } };
+    const plain = bakery.bakeRecipe(base);
+    const wide = bakery.bakeRecipe({ ...base, overrides: { ...base.overrides, 'dial:jawWidth': 1.25, 'dial:headDepth': 1.2 } });
+    const head = plain.plan.boneIndex('head');
+    close(plain.shapes[head].profile[1][0], 0.09, 2e-4, 'default value (snapped to a step): the profile as drawn');
+    close(wide.shapes[head].profile[1][0], 0.09 * 1.25, 1e-3, 'the jaw point widened');
+    close(wide.shapes[head].scale[2], 0.9 * 1.2, 1e-3, 'the head deepened');
+    same([...wide.rest.scale], [...plain.rest.scale], 'no bone scale changed');
+    same([...wide.rest.translation], [...plain.rest.translation], 'no bone moved');
+    close(shaped.plans.biped.shapes[head].profile[1][0], 0.09, 1e-9, 'the plan itself is never written');
+    assert.strictEqual(wide.shapes[0], plain.shapes[0], 'untouched bones share the plan row');
+    const editor = body.editor(shaped);
+    const report = editor.changes(plain, wide);
+    same([report.rebuild, report.bones, report.shapes.map((bone) => plain.plan.boneNames[bone])], [false, [], ['head']], 'changes: reshape the head mesh only');
+    const longLegs = bakery.bakeRecipe({ ...base, overrides: { ...base.overrides, 'dial:legLength': 1.2 } });
+    assert.notDeepStrictEqual([...longLegs.rest.scale], [...plain.rest.scale], 'control: a length dial does change bone scale');
+    same(editor.schema(base).dials.find((dial) => dial.id === 'jawWidth').affects, [{ channel: 'shape', param: 'profile.1.0', bones: ['head'] }]);
+  });
+  test('shape dials: a part dial reshapes the part wherever it sits; posture pitches the spine; limits are the species own', () => {
+    const shaped = body.catalog(SHAPED);
+    const bakery = shaped.bakery();
+    const hatted = bakery.bakeRecipe({ species: 'human', seed: 3, overrides: { 'fill:headTop': 'hat', 'dial:brimWidth': 1.5 } });
+    const brim = hatted.plan.boneIndex('headTop/brim');
+    close(hatted.shapes[brim].profile[0][0], 0.17 * 1.5, 1e-3, 'the brim of the worn hat widened');
+    close(shaped.parts.hat.spec.bones[0].shape.profile[0][0], 0.17, 1e-9, 'the part itself is untouched');
+    const bare = bakery.bakeRecipe({ species: 'human', seed: 3, overrides: { 'fill:headTop': null, 'dial:brimWidth': 1.5 } });
+    assert.strictEqual(bare.plan.boneNames.includes('headTop/brim'), false, 'control: no hat, nothing to widen, no error');
+    const upright = bakery.bakeRecipe({ species: 'human', seed: 3, overrides: { 'dial:posture': 0 } });
+    const slouched = bakery.bakeRecipe({ species: 'human', seed: 3, overrides: { 'dial:posture': 1 } });
+    const waist = upright.plan.boneIndex('waist');
+    close(upright.rest.rotation[waist * 4], 0, 1e-3, 'the default posture (snapped to a step) is about the rest rotation');
+    close(2 * Math.asin(slouched.rest.rotation[waist * 4]), (10 * Math.PI) / 180, 1e-5, 'posture 1 leans each spine bone 10 degrees about x');
+    throwsWith(
+      () => body.catalog(sampleVariant((spec) => (spec.nodes.human.set.dials = { jawWidth: { max: 1.4 } }), SHAPED)),
+      /"human" has dials.jawWidth.max = 1.4, outside the limit \[0.7, 1.3\] owned by "humanoid"/
+    );
+    body.catalog(sampleVariant((spec) => (spec.nodes.human.set.dials = { jawWidth: { max: 1.3 } }), SHAPED)); // control: inside the limit
+  });
+  test('shape dials: mistakes are named (no such number in the shape, a default capsule, a bad mode, a feature without param)', () => {
+    const plan = body.samples.PLANS.biped;
+    const biped = body.plan({ ...plan, id: 'biped' });
+    throwsWith(
+      () => body.dials(biped, [{ id: 'jaw', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'profile.1.0' }] }]),
+      /shape.profile.1.0 of bone "head", whose shape \(sphere\) has no number there/
+    );
+    throwsWith(() => body.dials(biped, [{ id: 'fat', min: 0.5, max: 2, affects: [{ bones: ['waist'], shape: 'radius' }] }]), /is the default capsule; give the bone a `shape`/);
+    throwsWith(() => body.dials(biped, [{ id: 'jaw', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'radius', mode: 'twist' }] }]), /has the mode "twist"/);
+    throwsWith(() => body.dials(biped, [{ id: 'eyes', min: 0.5, max: 2, affects: [{ feature: 'eye' }] }]), /needs a `param`/);
+    const fine = body.dials(biped, [{ id: 'headRound', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'radius' }] }]);
+    same([fine.shapeOps.length, fine.unused], [1, []], 'control: a sphere radius is a number');
+  });
 };

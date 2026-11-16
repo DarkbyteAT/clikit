@@ -121,6 +121,8 @@
    * @property {string} species
    * @property {Object} plan the assembled `BodyPlan`: bare plan plus the parts worn
    * @property {Object} rest the proportioned rest pose (a `JointTransforms`); copy it, never write it
+   * @property {ReadonlyArray<?Object>} shapes 1 per bone of `plan`: its shape row with the shape dials applied
+   *   (null for the default capsule), from `Kit.body.shapesWithDials`
    * @property {Readonly<Object<string, Object>>} colors channel -> the `Ramp` the individual uses for it
    * @property {Int16Array} boneRamp 1 per bone of `plan`: the index in `ramps` of the ramp the bone is painted
    *   with, or -1 when the bone names no paint channel or the species has no such channel
@@ -729,6 +731,7 @@
           species: kind.id,
           plan,
           rest: Kit.body.applyDials(plan, dialSet, individual.dials, Kit.body.createPose(plan)),
+          shapes: Kit.body.shapesWithDials(plan, dialSet, individual.dials),
           colors: Object.freeze(Object.fromEntries(kind.colorIds.map((channel, index) => [channel, kind.palettes[index][individual.colors[index]]]))),
           ramps: Object.freeze(kind.colorIds.map((_channel, index) => kind.palettes[index][individual.colors[index]])),
           // Per bone: which of the individual's ramps paints it. Indices, not colours: the shaders are palette-indexed.

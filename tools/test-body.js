@@ -662,7 +662,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     same([recoloured.rebuild, recoloured.colors, recoloured.bones], [false, ['cloth'], []], 'a colour change touches no bone');
     const hatted = editor.changes(shown, bakery.bakeRecipe(editor.setSocket(start, 'headTop', before.fills.headTop ? null : 'hat')));
     same([hatted.rebuild, hatted.sockets], [true, ['headTop']], 'a part change rebuilds the skeleton');
-    same(editor.changes(shown, shown), { rebuild: false, species: false, dials: [], colors: [], sockets: [], bones: [] }, 'control: nothing changed');
+    same(editor.changes(shown, shown), { rebuild: false, species: false, dials: [], colors: [], sockets: [], bones: [], shapes: [] }, 'control: nothing changed');
   });
 
   // ---- instances and the debug renderer ----
