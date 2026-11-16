@@ -796,7 +796,7 @@ machine at load 20 to 40, so only the ratios mean anything.
   shape becomes a solid (kit/sculpt.js), the solids of one paint are blended and meshed over a grid
   (surface nets), and the mesh is bound to the skeleton with up to four owners per vertex. A garment (a
   region with a raise) is the same field pushed out by its raise and cut by the region's predicate; hair is
-  one such layer. `options.sculpt === false` keeps the rigid path, and `Kit.figure.crowd` is still rigid
+  one such layer. `options.sculpt === false` keeps the rigid path (`Kit.figure.crowd` was rigid until round 2, below)
   (instanced pieces per bone: a crowd of skinned bodies needs a bone texture per instance, not built).
   Rejected: more rigid pieces with overlap tricks (the seams at shoulders, hips and necks are the defect, and
   every garment was a second copy of the piece under it); a field per bone meshed apart and stitched (the
@@ -846,3 +846,34 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Revisit if** crowds must match close-up figures (skin the crowd from a bone texture); a skirt must
   follow legs (make it a garment layer on the thighs with its own cut, or give it dynamics); cold sculpt time
   matters on phones (worker, or sculpt at low first and refine).
+
+- **Round 2 (same branch).** Four small layers, each written in the one below, so a part is data, not code:
+  1. *Shape vocabulary* (kit/sculpt.js solids; `lathe`, `drawn`, flattened spheres, `shape.inflate`): a hat brim is
+     a lathe profile of six numbers; a muzzle is a profile on the head lathe.
+  2. *Thin shells* (kit/figure-sculpt.js `fittedSolid`): a solid thinner than the grid is thickened to
+     `thickenedCells` cells instead of being left rigid or given its own fine grid (which cost 7 to 14 thousand
+     vertices a hat). Thinner than `leastThinShare` of that, it stays a rigid piece. A wing with 34 mm of depth
+     is now part of the surface.
+  3. *Worn layers* (bone row `wear: 'solid' | 'drape'`, `hangs: [roles]`, defaults by part kind in
+     kit/body-wardrobe.js `WEAR_BY_FIT`): hair, beards, hats, horns and tails are sculpted solids of their own
+     layer; bottoms and outerwear are drapes. A new garment says `wear: 'drape', hangs: ['leg']` and a knee
+     pushes it.
+  4. *Skinned cloth* (`carry`): a drape is sculpted where it hangs at rest, weighted to the body solids it hangs
+     beside (`drapeSpread`, `drapeSharpness`), then carried into the sculpting pose by a fixed-point correction so
+     that skinning back returns the authored hang exactly. Rejected: weighting to its own bone (a board), a
+     cloth simulation (cost, and not deterministic per frame).
+  Also: light response is per vertex on the one skin (`responseShare`), so a face is lit as a face and the body
+  form-shaded without a seam mesh; grid faces whose corners are in and out in a chequer are parted before
+  meshing, so every edge of a skin or worn layer is shared by exactly two triangles (the test asserts it; it
+  only asserted closed before); sculpting is resumable (`Kit.sculpt.sampleSteps`, `Kit.figure.sculptTask`,
+  `build(..., { sculpt: 'steps' })`, `figure.settle(ms)`) and the creator gives it a share of each frame, the
+  rigid pieces or the bent old surface showing meanwhile; `Kit.figure.crowd` bends one instanced surface per
+  layer with a bone texture row per member (WebGL2; rigid pieces otherwise or with `sculpt: false`); detail
+  follows on-screen height (`Kit.figure.levelFor`: up to 150 px low, up to 330 medium, else high).
+  Rejected: a Worker for the first sculpt (time slices met the 100 ms limit without loading the pure modules
+  twice); splitting vertices in ambiguous cells (parting the chequer is three lines and moves the surface by
+  less than a cell).
+  Not done, and why: faces (nose, ears, brow, lips as blended shapes) are still the catalogue's stamps and
+  spheres; the warm targets of 150 / 60 / 20 ms are missed for the eight-layer person (about 245 / 95 / 38);
+  low-detail drapes thinner than the least share fall back to a rigid board; the look view does not yet pick
+  the level itself (the caller passes `levelFor(pixels)`).
