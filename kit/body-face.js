@@ -6,7 +6,7 @@
  * them on a plan (a ridge, cheeks, a chin: every individual has them) or on a part (a nose to choose).
  *
  * Owns:  `Kit.body.face`: the style tables `NOSES` and `EARS`, the builders `nose`, `ears`, `browRidge`,
- *        `cheeks`, `chin`, `lips`, `eyeSockets` and `dotEyes`, `anchors` (where a head of a given shape keeps
+ *        `cheeks`, `chin`, `lips`, `eyeSockets`, `dotEyes` and `lineMouth`, `anchors` (where a head of a given shape keeps
  *        its features) and `ANCHOR_NAMES`.
  * Does not own: placing features or dials (kit/body-surface.js), the modelling (kit/sculpt-relief.js), eye and
  *        mouth stamps of a full creator (kit/body-wardrobe.js), or any species (the catalogues).
@@ -77,12 +77,13 @@
 
   /** Nose styles. Adding a style means adding a row. @type {Object<string, NoseRow>} */
   const NOSES = Object.freeze({
-    button: { length: 0.014, out: 0.0075, bridge: 0.0045, tip: [0.0105, 0.0085, 0.0085], wings: null },
-    straight: { length: 0.034, out: 0.0125, bridge: 0.0048, tip: [0.0078, 0.007, 0.0075], wings: [0.0052, 0.0045, 0.0045], flare: 13 },
-    pointed: { length: 0.032, out: 0.017, drop: -0.002, bridge: 0.0042, tip: [0.0056, 0.0055, 0.0085], wings: [0.0042, 0.004, 0.004], flare: 11 },
-    broad: { length: 0.024, out: 0.0095, bridge: 0.0068, tip: [0.0125, 0.008, 0.008], wings: [0.0075, 0.0058, 0.0055], flare: 20 },
-    hooked: { length: 0.036, out: 0.0135, drop: 0.005, bridge: 0.005, tip: [0.0072, 0.0075, 0.0075], wings: [0.005, 0.0045, 0.0042], flare: 13, hump: 0.0055 },
+    button: { length: 0.016, out: 0.0115, bridge: 0.005, tip: [0.0125, 0.0105, 0.0105], wings: null },
+    straight: { length: 0.04, out: 0.018, bridge: 0.0056, tip: [0.0095, 0.0085, 0.0095], wings: [0.0064, 0.0055, 0.0055], flare: 15 },
+    pointed: { length: 0.038, out: 0.025, drop: -0.003, bridge: 0.005, tip: [0.0068, 0.0066, 0.011], wings: [0.005, 0.0048, 0.0048], flare: 12 },
+    broad: { length: 0.028, out: 0.014, bridge: 0.008, tip: [0.0155, 0.0098, 0.0105], wings: [0.0092, 0.007, 0.0068], flare: 23 },
+    hooked: { length: 0.042, out: 0.02, drop: 0.007, bridge: 0.006, tip: [0.0088, 0.0092, 0.0095], wings: [0.006, 0.0055, 0.005], flare: 15, hump: 0.0075 },
   });
+
 
   /**
    * A nose's features: every one has the id 'nose' and sits on the 'nose' anchor, so one dial on 'nose' (its
@@ -99,7 +100,7 @@
     const row = rowOf(NOSES, style, 'nose');
     const drop = row.drop || 0;
     const tipRadius = Math.min(...row.tip);
-    const common = { id: 'nose', anchor: 'nose', size: scaled(size, scale), paint, outlined: false, blend: 0.007 * scale };
+    const common = { id: 'nose', anchor: 'nose', size: scaled(size, scale), paint, outlined: false, blend: 0.0055 * scale };
     // The bridge starts sunk in the face above the anchor and ends inside the tip.
     const start = [0, row.length, -row.bridge * SUNK];
     const tipAt = [0, -drop, row.out - tipRadius * SUNK];
@@ -250,5 +251,20 @@
     return [{ id: 'eye', anchor: 'eye', size: scaled([width, width * 1.15], scale), frames, rest: 'open', glow: true }];
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { face: Object.freeze({ REFERENCE, ANCHOR_NAMES, NOSES, EARS, anchors, nose, ears, browRidge, cheeks, chin, lips, eyeSockets, dotEyes }) });
+  /**
+   * The plainest mouth: one dark line on the 'mouth' anchor, a little turned up at its ends, painted with the
+   * darkest shade of a colour channel. Id 'mouth'.
+   * @param {number[]} size [width, height] metres at the reference head
+   * @param {{scale?: number, channel?: string}} [options] `channel`: default 'skin'
+   * @returns {Object[]} `FeatureSpec`s
+   * @complexity O(1)
+   * @example plan.features = [...Kit.body.face.lineMouth([0.036, 0.012]), ...Kit.body.face.lips([0.036, 0.012])];
+   */
+  const lineMouth = (size, { scale = 1, channel = 'skin' } = {}) => {
+    const { ellipse } = Kit.surface;
+    const smile = [...ellipse(0, 0.6, 1, 1.1, 8, { from: 200, to: 340 }), ...ellipse(0, 0.6, 0.94, 0.8, 8, { from: 200, to: 340 }).reverse()];
+    return [{ id: 'mouth', anchor: 'mouth', size: scaled(size, scale), frames: { rest: [{ outline: smile, paint: { channel, shade: 0 }, least: 1 }] }, rest: 'rest' }];
+  };
+
+  Kit.body = Object.assign(Kit.body || {}, { face: Object.freeze({ REFERENCE, ANCHOR_NAMES, NOSES, EARS, anchors, nose, ears, browRidge, cheeks, chin, lips, eyeSockets, dotEyes, lineMouth }) });
 })();

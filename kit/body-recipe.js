@@ -334,6 +334,25 @@
   // ---- the catalogue --------------------------------------------------------------------------------------------------
 
   /**
+   * A plan row with what it `extends` worked in: a plan may name another plan of the catalogue and state only
+   * what it adds or replaces (its `anchors` and `features`: the same skeleton with a face), so the skeleton has
+   * one source and a change to it reaches every plan built on it.
+   * @param {Object<string, Object>} plans the catalogue's plan rows
+   * @param {string} id
+   * @returns {Object} the row, without `extends`
+   * @throws {Error} when the plan it extends is unknown, or itself extends a plan
+   * @complexity O(fields)
+   * @example extendedPlan({ biped: { bones }, bipedFaced: { extends: 'biped', features } }, 'bipedFaced') // { bones, features }
+   */
+  const extendedPlan = (plans, id) => {
+    const { extends: base, ...own } = plans[id];
+    if (base === undefined) return own;
+    if (!plans[base]) fail('catalog', `the plan "${id}" extends "${base}", which is not a plan of this catalogue. Plans: ${Object.keys(plans).join(', ')}.`);
+    if (plans[base].extends !== undefined) fail('catalog', `the plan "${id}" extends "${base}", which itself extends "${plans[base].extends}"; extend "${plans[base].extends}" directly.`);
+    return { ...plans[base], ...own };
+  };
+
+  /**
    * Builds a catalogue: compiles every plan and part, folds every node, and compiles each species, so a mistake
    * anywhere in the tables is reported at load with the node, the field and the fix.
    * @param {CatalogSpec} spec
@@ -352,7 +371,7 @@
   const catalog = ({ plans, parts = {}, nodes, traits = {}, palettes: paletteTable = {} }) => {
     if (!isPlainObject(plans)) fail('catalog', '`plans` must be an object of plan id -> { bones, sockets }.');
     const lineage = Kit.lineage({ nodes, traits, exclusive: ['fills'] });
-    const compiledPlans = Object.fromEntries(Object.keys(plans).map((id) => [id, Kit.body.plan({ ...plans[id], id })]));
+    const compiledPlans = Object.fromEntries(Object.keys(plans).map((id) => [id, Kit.body.plan({ ...extendedPlan(plans, id), id })]));
     const compiledParts = Object.fromEntries(Object.keys(parts).map((id) => [id, Kit.body.part({ ...parts[id], id })]));
     // Features and regions are data too: check them now, not at the first bake that wears them.
     [...Object.values(compiledPlans), ...Object.values(compiledParts)].forEach((compiled) => Kit.body.checkSurface(compiled.spec, `catalog: ${compiled.spec.fits ? 'part' : 'plan'} "${compiled.id}"`));

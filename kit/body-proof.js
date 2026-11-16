@@ -210,12 +210,12 @@
   /**
    * Room round a figure in its cell. A body cell holds everything the figure sweeps when it turns (wings, a hat,
    * a staff), plus `sideMargin` and `topMargin` as shares of that; `floor` is the share of the cell left under
-   * its feet. A head cell is a square `headMargin` times the ball that holds the head bone's own surfaces
-   * (ears and nose included), so every species' head fills its cell, with room for hair, horns and a hat.
+   * its feet. A head cell is a square `headMargin` times the ball that holds the head bone's own surface, so
+   * every species' head is drawn the same size, with room for ears, hair, horns and a hat.
    * `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail);
    * `mostAspect`: the widest a long body is drawn, in body heights.
    */
-  const CELL = Object.freeze({ sideMargin: 1.06, topMargin: 1.12, floor: 0.04, headMargin: 1.3, leastWidth: 0.5, figureShare: 1.3, mostAspect: 1.3 });
+  const CELL = Object.freeze({ sideMargin: 1.06, topMargin: 1.12, floor: 0.04, headMargin: 1.25, leastWidth: 0.5, figureShare: 1.3, mostAspect: 1.3 });
 
   Kit.register({
     id: 'proof',
@@ -300,8 +300,8 @@
       };
 
       const headMask = Kit.body.roleMask(['head']);
-      /** Is a piece the head's own surface (its skull, nose and ears; not what is worn on it)? */
-      const isOfHead = (plan) => (piece) => !piece.isProp && (plan.roles[piece.bone] & headMask) !== 0;
+      /** Is a piece the head's own surface (its skull; not its ears or nose, nor what is worn on it)? */
+      const isOfHead = (plan) => (piece) => !piece.isProp && !piece.isFeature && (plan.roles[piece.bone] & headMask) !== 0;
 
       /**
        * Body framing: every cell is as wide and as tall as the largest figure sweeps when it turns, so wings, a

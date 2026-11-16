@@ -431,7 +431,12 @@
    * pupil shows over an iris over a white, and each later feature a hair more so overlapping features (freckles
    * across a nose shadow) never share a depth. A feature's own `lift` is for its solid; its stamp stays on the skin.
    */
-  const STAMP = Object.freeze({ lift: 0.004, liftPerLayer: 0.0008, liftPerFeature: 0.0001, settleSteps: 3 });
+  /**
+   * A stamp follows the relief modelled out of its bone (it lies in an eye's socket and on a lip), but only
+   * `mostRelief` metres either way from the bone's own surface: a corner of an eye that reaches under the bridge
+   * of the nose stays on the face, buried by the bridge, instead of being carried out onto it.
+   */
+  const STAMP = Object.freeze({ lift: 0.004, liftPerLayer: 0.0008, liftPerFeature: 0.0001, settleSteps: 3, mostRelief: 0.012 });
   const LAST_SHADE = 4;
   /** Region maps kept, by what they were baked from: an outfit's maps are shared by everyone who wears it. */
   const MOST_REGION_MAPS = 256;
@@ -506,7 +511,7 @@
    * is then walked back onto the bone's surface along the feature's normal (a few steps of the signed distance),
    * so a wide stamp (blush, freckles) hugs the curve of whatever head the dials have made.
    */
-  const stampLayers = (feature, frame, ramps, surfaceDistance, featureOrder) => {
+  const stampLayers = (feature, frame, ramps, surfaceDistance, reliefDistance, featureOrder) => {
     const { across, up, normal, mirror } = frame;
     return (feature.frames[feature.rest] || [])
       .slice(0, MOST_STAMP_LAYERS)
@@ -517,7 +522,10 @@
         const points = layer.outline.flatMap(([u, v]) => {
           let vertex = combine(feature.point, [[across, (u * (layer.fixed ? 1 : mirror) * feature.size[0]) / 2], [up, (v * feature.size[1]) / 2], [normal, -feature.lift]]);
           for (let step = 0; step < STAMP.settleSteps; step++) vertex = combine(vertex, [[normal, -surfaceDistance(vertex)]]);
-          return combine(vertex, [[normal, lift]]);
+          // From the bone's own surface, in or out to the relief, no further than `mostRelief`.
+          let relief = 0;
+          for (let step = 0; step < STAMP.settleSteps; step++) relief = Math.max(-STAMP.mostRelief, Math.min(STAMP.mostRelief, relief - reliefDistance(combine(vertex, [[normal, relief]]))));
+          return combine(vertex, [[normal, relief + lift]]);
         });
         return { points, normal: normal.slice(), slot: layer.ramp, tone: shades > 0 ? layer.shade / shades : 0, least: layer.least || 0, drop: layer.drop || 0 };
       });
@@ -571,8 +579,9 @@
     drawOrder.forEach((feature, featureOrder) => {
       const sofar = layers.get(feature.bone) || [];
       const measure = distanceOn(feature.bone);
-      const surfaceDistance = (vertex) => measure(vertex[0], vertex[1], vertex[2]);
-      layers.set(feature.bone, [...sofar, ...stampLayers(feature, frameOf(feature), bake.ramps, surfaceDistance, featureOrder)]);
+      const surfaceDistance = (vertex) => Kit.surface.distance(bake.shapes[feature.bone], frames[feature.bone], vertex[0], vertex[1], vertex[2]);
+      const reliefDistance = (vertex) => measure(vertex[0], vertex[1], vertex[2]);
+      layers.set(feature.bone, [...sofar, ...stampLayers(feature, frameOf(feature), bake.ramps, surfaceDistance, reliefDistance, featureOrder)]);
     });
     const byBone = new Map();
     new Set([...solids.keys(), ...layers.keys()]).forEach((bone) => {
