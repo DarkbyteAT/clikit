@@ -490,7 +490,7 @@
   };
 
   Kit.games.sort((gameA, gameB) => (gameA.order || 0) - (gameB.order || 0));
-  cards.append(...Kit.games.map(menuCard));
+  cards.append(...Kit.listed().map(menuCard));
   if (!Kit.games.length) cards.textContent = 'No games registered.';
 
   /** Wires a top-bar button: the standard click sound, then its action. */

@@ -86,6 +86,7 @@
 
   Kit.register({
     id: 'portrait',
+    kind: 'workbench',
     name: 'Portrait sheet',
     tagline: 'The default person and twelve rolls, full body and close up',
     hook: 'Judge wardrobe characters by eye in every preset',

@@ -2178,6 +2178,17 @@ test('register: checkGame names the cause and the fix; register throws on errors
   assert.strictEqual(Kit.register({ id: 'checked-game', name: 'Checked', theme: {}, create }), countBefore + 1);
   assert.throws(() => Kit.register({ id: 'checked-game', name: 'Again', theme: {}, create }), /already registered by "Checked"/);
 });
+test('register: a workbench screen is registered and reachable by id but never listed for players', () => {
+  const create = () => ({ update() {} });
+  assert.match(Kit.checkGame({ id: 'odd', name: 'Odd', theme: {}, kind: 'demo', create }, { games: [], skins: null }).errors.join(' '), /kind "demo" is not a kind of screen. Use one of: game, maker, workbench/);
+  Kit.register({ id: 'kind-bench', name: 'Bench', theme: {}, kind: 'workbench', order: 5, create });
+  Kit.register({ id: 'kind-maker', name: 'Maker', theme: {}, kind: 'maker', order: 4, create });
+  Kit.register({ id: 'kind-game', name: 'Game', theme: {}, order: 3, create });
+  const idsOf = (screens) => screens.map((screen) => screen.id).filter((id) => id.startsWith('kind-'));
+  assert.deepStrictEqual(idsOf(Kit.listed({ workbench: false })), ['kind-game', 'kind-maker'], 'games and makers, in menu order');
+  assert.deepStrictEqual(idsOf(Kit.listed({ workbench: true })), ['kind-game', 'kind-maker', 'kind-bench'], 'asked for, workbenches are listed too');
+  assert.ok(Kit.games.some((screen) => screen.id === 'kind-bench'), 'control: the workbench is still registered, so tools can open it by id');
+});
 test('development aids: warnings only in development, once each; expectType names the call and an example', () => {
   const printed = [];
   const realConsole = sandbox.console;

@@ -100,6 +100,7 @@
 
   Kit.register({
     id: 'gaits',
+    kind: 'workbench',
     name: 'Gaits',
     tagline: 'One controller, four bodies',
     hook: 'Walking, trotting and swimming from physics',

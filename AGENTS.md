@@ -176,6 +176,16 @@ started later; the dispatcher forwards each new amendment to every agent as it a
     far richer than familiar avatar makers, rendered with palette, toon and pixel-art shaders. Original
     design; techniques may be adapted from the spriteforge repository (POC3).
 
+24. Fix systems, never the example. When a character, screen or run looks wrong, the cause is in a
+    module (a shape vocabulary, a shader, a roll rule, a motion stage) and the fix goes there, so every
+    body, option and look improves. Tuning the default character until its screenshot looks right is
+    Goodharting on an example. The lead reviews, refactors and visually verifies every landing; nothing
+    is published on an agent's own report.
+
+25. Only what the owner asked for is offered to players. A development view of a module (a gallery, a
+    test sheet) registers with `kind: 'workbench'`: tools open it by id, the menu never lists it
+    (`Kit.listed`, or `?workbench` on the address to see them).
+
 ## Measures we have gamed before
 
 Each of these was once treated as the goal. None of them is.
@@ -293,6 +303,9 @@ the integration branch and is always releasable.
 - [ ] `node tools/smoke.js menu` and your game's smoke run print OK; any game your kit change could affect still does too.
 - [ ] You looked at screenshots of the states you changed, including one landscape view (`node tools/dev.js play <id>
       --script scratch/<id>/play.json [--landscape]` takes them at scripted moments; no hand-written Playwright).
+- [ ] Appearance changes are judged on coverage, not on one view of one character: turnarounds (8 directions),
+      every option of what you touched, every look, dial extremes, several random rolls, and every body topology
+      the module claims to serve, at rest and in motion (8 phases). One polished figure is not evidence.
 - [ ] The game has its own `theme` and does not look like its neighbours.
 - [ ] The game's header states its depth at seconds, minutes and hours, and each is real in play; if it has a long
       arc, `make sim GAME=<id>` shows it without dead-stretch or runaway warnings (or your report says why not).

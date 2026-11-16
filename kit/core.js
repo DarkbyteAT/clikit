@@ -649,6 +649,7 @@
    * @property {string} hook the progression hook, shown on the menu card
    * @property {number} color accent colour as a hex number
    * @property {number} order menu position, ascending
+   * @property {'game'|'maker'|'workbench'} [kind='game'] what the screen is (Kit.SCREEN_KINDS); a workbench is never listed for players
    * @property {function(Object): GameInstance} create builds the game from the shell's `ctx`
    * @property {Object} [theme] the game's HUD theme (kit/theme.js); a game without one gets a development warning
    * @property {Object} [headless] the game's pure rules and data, usable without THREE or the DOM (tests, tools). Add
@@ -659,6 +660,26 @@
 
   /** A game id is a lowercase word: it becomes a save namespace, an element id (`card-<id>`) and a command-line argument. */
   const GAME_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+  /**
+   * What a registered screen is. A `game` is something to play and a `maker` is a finished creative tool: both are
+   * listed on the menu. A `workbench` is a development view of one kit module (a gallery, a test sheet): it is
+   * registered so tools and tests can open it by id, and is never listed for players.
+   */
+  const SCREEN_KINDS = Object.freeze(['game', 'maker', 'workbench']);
+
+  /**
+   * The screens the menu shows a player, in menu order: everything except workbenches. Open the page with
+   * `?workbench` to list those too.
+   * @param {Object} [options]
+   * @param {boolean} [options.workbench] also list workbench screens; defaults to whether the address asks for them
+   * @returns {GameDefinition[]} a new array, sorted by `order`
+   * @complexity O(n log n) time, O(n) space, n registered screens
+   * @example Kit.listed().map((screen) => screen.id) // ['miner', 'runner', ..., 'creator']
+   */
+  const listed = ({ workbench = typeof location !== 'undefined' && /[?&]workbench\b/.test(location.search) } = {}) =>
+    Kit.games.filter((screen) => workbench || screen.kind !== 'workbench').sort((screenA, screenB) => (screenA.order || 0) - (screenB.order || 0));
+  Object.assign(Kit, { SCREEN_KINDS, listed });
 
   /**
    * Checks a game definition before it is registered. Pure: it reports problems and changes nothing.
@@ -676,7 +697,7 @@
     if (!definition || typeof definition !== 'object') {
       return { errors: [`expected a definition object like { id: 'orbit', name: 'Orbit', create(ctx) { ... } } but got ${describeType(definition)}.`], warnings: [] };
     }
-    const { id, name, create, theme } = definition;
+    const { id, name, create, theme, kind } = definition;
     const hasId = typeof id === 'string' && id !== '';
     const sameId = hasId && games.find((game) => game.id === id);
     const skin = theme && theme.skin;
@@ -685,6 +706,7 @@
       [hasId && !GAME_ID_PATTERN.test(id), `id "${id}" must be lowercase letters, digits and dashes, starting with a letter (e.g. 'sky-stack').`],
       [sameId, `id "${id}" is already registered${sameId && sameId.name ? ` by "${sameId.name}"` : ''}. Pick another id, or remove the duplicate script tag if the file is loaded twice.`],
       [typeof create !== 'function', `\`create\` must be a function (ctx) => ({ update(dt, t) { ... } }) but got ${describeType(create)}.`],
+      [kind !== undefined && !SCREEN_KINDS.includes(kind), `kind "${kind}" is not a kind of screen. Use one of: ${SCREEN_KINDS.join(', ')}, or leave it out for a game.`],
       [skin !== undefined && skins && !skins.includes(skin), `theme.skin "${skin}" is not a skin. Use one of: ${(skins || []).join(', ')} (kit/theme.js), or leave skin out.`],
     ];
     const label = hasId ? `game "${id}"` : 'this game';

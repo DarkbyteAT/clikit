@@ -352,6 +352,7 @@
 
   Kit.register({
     id: 'creator',
+    kind: 'maker',
     name: 'Character Maker',
     tagline: 'Build a 3D character from head to hem, then share its code',
     hook: 'Sliders, swatches and parts generated from the catalogue; randomise, lock, save and share',

@@ -514,6 +514,7 @@
 
   Kit.register({
     id: 'look',
+    kind: 'workbench',
     name: 'Look',
     tagline: 'Palette, toon and pixel-art shading for 3D characters',
     hook: 'Switch preset and palette; watch it turn',
