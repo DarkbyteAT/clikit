@@ -53,6 +53,16 @@
      */
     thickenedCells: 1.9,
     leastThinShare: 0.4,
+    /** Cloth too thin for the grid is meshed as a shell of its built shape, with no edge longer than this many cells (kit/drape.js). */
+    shellEdgeCells: 3.5,
+    /** A drape stands off what is under it by this share of a grid cell, and never less than `Kit.drape.DRAPE.gap`. */
+    gapCells: 0.35,
+    /** A draped piece shorter than this from its joint to its middle has no way to hang, and is not swung. */
+    leastHang: 0.03,
+    /** Limbs that hang beside a cloth, not under it: a drape is not laid over them unless its row's `covers` says so. */
+    beside: Object.freeze(['arm', 'hand']),
+    /** A draped bone's `clings` when its row states none, metres (see `WEARS`). */
+    clings: 0.1,
     /** A draped object's vertex is shared between the body solids within this many metres of being its nearest. */
     drapeSpread: 0.16,
     /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
@@ -217,15 +227,22 @@
   /**
    * How a worn part's bone is drawn, from its bone row's `wear` (catalogue data; kit/body-wardrobe.js gives every
    * part a default by what it fits):
-   *  - 'solid': sculpted on its own grid and moved by its own bone (a hat, a horn, a bun);
-   *  - 'drape': sculpted, and moved by the body's bones it hangs beside, so a knee pushes a skirt (`hangs`: the
-   *    roles of the body bones that may carry it, default any);
+   *  - 'solid': sculpted on its own grid and moved by its own bone (a hat, a horn, a bun). A row that states a
+   *    `rank` is worn over the drapes of a lower rank: it is set out on them (a pack on a cloak), not left
+   *    where it was authored against the bare back;
+   *  - 'drape': cloth. It is made where it hangs at rest, laid over whatever is under it there (the body, the
+   *    garments on it and the drapes of a lower `rank`), and moved by the body's bones beneath it and by its own
+   *    bone (kit/drape.js). Its row may state `hangs` (the roles of the body bones that may carry it, default
+   *    any), `rank` (drapes are laid on in rising rank, each over those before it: a cloak over a skirt; default
+   *    1), `clings` (metres off the body within which the body carries it; further out it rides its own bone,
+   *    which a movement may simulate; default `SCULPT.clings`) and `covers` (the roles of the body bones it is
+   *    laid over; default every bone but those of `SCULPT.beside`: an arm hangs beside a skirt, not under it);
    *  - anything else: the rigid piece it always was (a sword, glasses).
    * @type {Readonly<string[]>}
    */
   const WEARS = Object.freeze(['solid', 'drape']);
 
-  /** Per bone: its `wear` when it is one the sculpt takes, else ''. Per bone too: the role mask of `hangs` (0: any). */
+  /** Per bone: its `wear` when it is one the sculpt takes, else ''. Per bone too: the role mask of `hangs` (0: any), its `rank` and its `clings`. */
   const wearOf = (plan) => {
     const rows = (plan.spec && plan.spec.bones) || [];
     const byName = new Map(rows.map((row) => [row.name, row]));
@@ -237,7 +254,11 @@
       const row = byName.get(name);
       return row && row.hangs ? Kit.body.roleMask(row.hangs) : 0;
     });
-    return { wears, hangs };
+    // A drape is laid on at rank 1 unless its row says otherwise; a solid has no rank (0) unless its row gives it one.
+    const ranks = plan.boneNames.map((name, bone) => (byName.get(name) && Number.isFinite(byName.get(name).rank) ? byName.get(name).rank : wears[bone] === 'drape' ? 1 : 0));
+    const clings = plan.boneNames.map((name) => (byName.get(name) && Number.isFinite(byName.get(name).clings) ? byName.get(name).clings : SCULPT.clings));
+    const covers = plan.boneNames.map((name) => (byName.get(name) && byName.get(name).covers ? Kit.body.roleMask(byName.get(name).covers) : 0));
+    return { wears, hangs, ranks, clings, covers };
   };
 
   /** Can this piece be a solid at all: shaded normally, of a kind that has a distance? */
@@ -349,6 +370,9 @@
    * @property {string} signature what the layers depend on (see `sculptSignature`)
    */
 
+  /** Where a bone's joint is: the move of its matrix (the fourth column of a column-major 4 x 4), as [x, y, z]. */
+  const originOf = (matrices, bone) => Array.from(matrices.subarray(bone * MATRIX + ROW_AFFINE, bone * MATRIX + ROW_AFFINE + VECTOR));
+
   /** The solid of a layout piece in the sculpting pose, with the fillets its thickness earns. */
   const solidOf = (piece, matrices, limbLead) => {
     const matrix = matrices.subarray(piece.bone * MATRIX, piece.bone * MATRIX + MATRIX);
@@ -359,7 +383,7 @@
     placed.group = piece.inkGroup;
     placed.join = Math.min(placed.blend, SCULPT.mostJoin);
     const lead = limbLead.get(piece.inkGroup);
-    placed.anchor = [matrices[lead * MATRIX + 12], matrices[lead * MATRIX + 13], matrices[lead * MATRIX + 14]];
+    placed.anchor = originOf(matrices, lead);
     return placed;
   };
 
@@ -469,6 +493,217 @@
     };
   };
 
+  const HALF = 0.5;
+  /** Where a column-major 4 x 4 keeps its translation. */
+  const MOVE = 12;
+  /** Paint lies on the seen side of a raised garment: on what is within this many cells of its outer surface (its hem's wall, not its underside). */
+  const PAINT_DEPTH_CELLS = 1;
+  /** Steps of bisection when a pattern's edge is found along a triangle's edge (2^-7 of the edge). */
+  const PAINT_STEPS = 7;
+
+  /**
+   * A mesh of only the vertices its triangles use, in order of first use, with their normals and skin.
+   * @param {{positions: ArrayLike<number>, normals: ArrayLike<number>, owners: ArrayLike<number>, weights: ArrayLike<number>}} source
+   * @param {ArrayLike<number>} triangles three vertex numbers of `source` each
+   * @returns {?{positions: Float32Array, normals: Float32Array, indices: Uint16Array|Uint32Array, owners: Uint16Array, weights: Float32Array}} null when there are no triangles
+   */
+  const usedMesh = (source, triangles) => {
+    if (!triangles.length) return null;
+    const renumbered = new Int32Array(source.positions.length / VECTOR).fill(-1);
+    let used = 0;
+    for (let corner = 0; corner < triangles.length; corner++) if (renumbered[triangles[corner]] < 0) renumbered[triangles[corner]] = used++;
+    const mesh = { positions: new Float32Array(used * VECTOR), normals: new Float32Array(used * VECTOR), owners: new Uint16Array(used * OWNERS), weights: new Float32Array(used * OWNERS) };
+    renumbered.forEach((to, vertex) => {
+      if (to < 0) return;
+      for (let axis = 0; axis < VECTOR; axis++) {
+        mesh.normals[to * VECTOR + axis] = source.normals[vertex * VECTOR + axis];
+        mesh.positions[to * VECTOR + axis] = source.positions[vertex * VECTOR + axis];
+      }
+      for (let slot = 0; slot < OWNERS; slot++) {
+        mesh.owners[to * OWNERS + slot] = source.owners[vertex * OWNERS + slot];
+        mesh.weights[to * OWNERS + slot] = source.weights[vertex * OWNERS + slot];
+      }
+    });
+    const indices = Array.from(triangles, (vertex) => renumbered[vertex]);
+    return { ...mesh, indices: used > MOST_SHORT_INDEX ? Uint32Array.from(indices) : Uint16Array.from(indices) };
+  };
+
+  /** A covered surface is kept this many triangles in from the edge of what covers it (a hem seen from below still has skin behind it). */
+  const COVER_RINGS = 1;
+
+  /**
+   * What is left of a layer when a layer above covers part of it: the triangles a viewer can still see, plus
+   * a margin of `rings` triangles under the cover's edge. A layer under a garment is never seen, and drawing it
+   * costs its triangles for nothing (and lets it poke through the garment in a deep bend).
+   * @param {SculptLayer} layer
+   * @param {function(number, number, number): boolean} covers is this point of the layer under the cover?
+   * @param {function(number): boolean} mayHold can `covers` hold on vertices owned by this bone? (it is not asked elsewhere)
+   * @param {number} [rings] triangles kept in from the cover's edge
+   * @returns {?Object} the mesh left (see `usedMesh`); the layer itself when nothing is covered; null when all of it is
+   * @complexity O(vertices) calls of `covers`, O(rings * triangles) besides
+   * @example
+   * const seen = Kit.figure.uncovered(skin, (x, y, z) => y < 1, () => true); // skin under a knee-length robe: gone, but for a band under its hem
+   */
+  const uncovered = (layer, covers, mayHold, rings = COVER_RINGS) => {
+    const { positions, indices, owners } = layer;
+    const hidden = Uint8Array.from({ length: positions.length / VECTOR }, (_unused, vertex) => (mayHold(owners[vertex * OWNERS]) && covers(positions[vertex * VECTOR], positions[vertex * VECTOR + 1], positions[vertex * VECTOR + 2]) ? 1 : 0));
+    if (!hidden.includes(1)) return layer;
+    for (let ring = 0; ring < rings; ring++) {
+      const shown = new Uint8Array(hidden.length);
+      for (let corner = 0; corner < indices.length; corner += VECTOR) {
+        if (hidden[indices[corner]] && hidden[indices[corner + 1]] && hidden[indices[corner + 2]]) continue;
+        for (let turn = 0; turn < VECTOR; turn++) shown[indices[corner + turn]] = 1;
+      }
+      shown.forEach((isShown, vertex) => {
+        if (isShown) hidden[vertex] = 0;
+      });
+    }
+    const kept = [];
+    for (let corner = 0; corner < indices.length; corner += VECTOR) {
+      if (!(hidden[indices[corner]] && hidden[indices[corner + 1]] && hidden[indices[corner + 2]])) kept.push(indices[corner], indices[corner + 1], indices[corner + 2]);
+    }
+    return kept.length === indices.length ? layer : usedMesh(layer, kept);
+  };
+
+  /** Edges are keyed by their two vertex numbers; this many vertices fit in half a key. */
+  const EDGE_KEY = 0x4000000;
+
+  /**
+   * Paint on a layer: the layer's surface parted where a predicate holds (stripes, a trim, a tattoo) into a
+   * painted sheet and the rest, both made of the layer's own triangles. A sheet meshed on its own and laid
+   * over the surface is faceted differently from it and crosses it in ragged bands, shades by normals of its
+   * own, takes skin weights of its own, and costs its triangles twice; the two parts here share every vertex
+   * on the cut, its normal and its skin, so they shade as one surface, never part in a pose, and add only the
+   * triangles the cut itself makes.
+   *
+   * The pattern's edge is found exactly: the predicate is asked at every vertex; an edge whose ends differ is
+   * crossed once, at a point placed by bisection; an edge whose ends agree is asked at its middle too, and split
+   * there when the middle differs (a stripe narrower than a triangle is still seen, at any level of detail). A
+   * crossing or a split is decided per edge, so the two triangles on it agree and neither part has cracks.
+   * @param {SculptLayer} canvas the layer painted on (a skin, or a raised garment)
+   * @param {function(number, number, number): boolean} keep is a point of the canvas painted? (in the canvas's space)
+   * @param {function(number): boolean} mayHold can the predicate hold on vertices owned by this bone? (it is not asked elsewhere)
+   * @returns {{painted: ?Object, rest: ?Object}} the painted sheet and what is left of the canvas (positions, normals, indices, owners, weights); either is null when empty
+   * @complexity O(vertices + triangles of the canvas), with about one predicate call per vertex and edge near the paint and 7 per crossing
+   * @example
+   * const { painted, rest } = Kit.figure.paintedOn(skin, (x, y, z) => Math.floor(y * 20) % 2 === 0, () => true);
+   * // hoops 5 cm wide: painted and rest together cover the skin exactly, and meet along level lines
+   */
+  const paintedOn = (canvas, keep, mayHold) => {
+    // Working vertices: the canvas's own, then the middles and crossings made here.
+    const positions = Array.from(canvas.positions);
+    const normals = Array.from(canvas.normals);
+    const owners = Array.from(canvas.owners);
+    const weights = Array.from(canvas.weights);
+    /** Per working vertex: 1 painted, 0 not, -1 not asked yet. */
+    const flags = new Array(canvas.positions.length / VECTOR).fill(-1);
+    const isPainted = (vertex) => {
+      if (flags[vertex] < 0) flags[vertex] = keep(positions[vertex * VECTOR], positions[vertex * VECTOR + 1], positions[vertex * VECTOR + 2]) ? 1 : 0;
+      return flags[vertex];
+    };
+    /** A new working vertex `share` of the way from one to another: position, normal and skin blended. */
+    const between = (from, to, share, flag) => {
+      const vertex = flags.length;
+      for (let axis = 0; axis < VECTOR; axis++) positions.push(positions[from * VECTOR + axis] + (positions[to * VECTOR + axis] - positions[from * VECTOR + axis]) * share);
+      const normal = [0, 1, 2].map((axis) => normals[from * VECTOR + axis] + (normals[to * VECTOR + axis] - normals[from * VECTOR + axis]) * share);
+      const length = Math.hypot(...normal) || 1;
+      normals.push(normal[0] / length, normal[1] / length, normal[2] / length);
+      // The owners of both ends, each by its end's share; the strongest four, made to sum to one.
+      const shares = new Map();
+      for (let slot = 0; slot < OWNERS; slot++) {
+        shares.set(owners[from * OWNERS + slot], (shares.get(owners[from * OWNERS + slot]) || 0) + weights[from * OWNERS + slot] * (1 - share));
+        shares.set(owners[to * OWNERS + slot], (shares.get(owners[to * OWNERS + slot]) || 0) + weights[to * OWNERS + slot] * share);
+      }
+      const strongest = [...shares].filter(([, held]) => held > 0).sort((first, second) => second[1] - first[1]).slice(0, OWNERS);
+      const total = strongest.reduce((sum, [, held]) => sum + held, 0) || 1;
+      for (let slot = 0; slot < OWNERS; slot++) {
+        owners.push(slot < strongest.length ? strongest[slot][0] : 0);
+        weights.push(slot < strongest.length ? strongest[slot][1] / total : 0);
+      }
+      flags.push(flag);
+      return vertex;
+    };
+    const edgeKey = (first, second) => (first < second ? first * EDGE_KEY + second : second * EDGE_KEY + first);
+    /** The middle of each canvas edge the pattern's edge may pass through, by edge; -1 for an edge it does not. */
+    const middles = new Map();
+    const middleOf = (first, second) => {
+      const key = edgeKey(first, second);
+      if (middles.has(key)) return middles.get(key);
+      // Ends that differ have one crossing between them, found by bisection; ends that agree may still have a
+      // stripe (or a gap) pass between them, which only the middle can tell.
+      let middle = -1;
+      if (isPainted(first) === isPainted(second)) {
+        const at = [0, 1, 2].map((axis) => (positions[first * VECTOR + axis] + positions[second * VECTOR + axis]) / 2);
+        const flag = keep(at[0], at[1], at[2]) ? 1 : 0;
+        if (flag !== flags[first]) middle = between(first, second, HALF, flag);
+      }
+      middles.set(key, middle);
+      return middle;
+    };
+    /** Where the pattern's edge crosses the edge between a painted and an unpainted working vertex, by edge. */
+    const crossings = new Map();
+    const crossingOf = (inside, outside) => {
+      const key = edgeKey(inside, outside);
+      if (crossings.has(key)) return crossings.get(key);
+      let [low, high] = [0, 1];
+      for (let step = 0; step < PAINT_STEPS; step++) {
+        const share = (low + high) / 2;
+        const at = [0, 1, 2].map((axis) => positions[inside * VECTOR + axis] + (positions[outside * VECTOR + axis] - positions[inside * VECTOR + axis]) * share);
+        if (keep(at[0], at[1], at[2])) low = share;
+        else high = share;
+      }
+      const crossing = between(inside, outside, (low + high) / 2, 1);
+      crossings.set(key, crossing);
+      return crossing;
+    };
+    const painted = [];
+    const rest = [];
+    /** Parts a triangle whose corners know whether they are painted between the two lists; the winding is kept. */
+    const part = (first, second, third) => {
+      const corners = [first, second, third];
+      const inside = corners.filter((vertex) => flags[vertex] === 1).length;
+      if (inside === 0 || inside === VECTOR) {
+        (inside ? painted : rest).push(first, second, third);
+        return;
+      }
+      // Turned so the odd corner out (the one painted, or the one not) comes first.
+      const odd = corners.findIndex((vertex) => (flags[vertex] === 1) === (inside === 1));
+      const [lone, next, last] = [corners[odd], corners[(odd + 1) % VECTOR], corners[(odd + 2) % VECTOR]];
+      const [toNext, toLast] = inside === 1 ? [crossingOf(lone, next), crossingOf(lone, last)] : [crossingOf(next, lone), crossingOf(last, lone)];
+      (inside === 1 ? painted : rest).push(lone, toNext, toLast);
+      (inside === 1 ? rest : painted).push(next, last, toLast, next, toLast, toNext);
+    };
+    const source = canvas.indices;
+    for (let corner = 0; corner < source.length; corner += VECTOR) {
+      const corners = [source[corner], source[corner + 1], source[corner + 2]];
+      if (!corners.some((vertex) => mayHold(canvas.owners[vertex * OWNERS]))) {
+        rest.push(...corners);
+        continue;
+      }
+      const split = [middleOf(corners[0], corners[1]), middleOf(corners[1], corners[2]), middleOf(corners[2], corners[0])];
+      const splits = split.filter((middle) => middle >= 0).length;
+      if (splits === 0) part(...corners);
+      else if (splits === VECTOR) {
+        part(corners[0], split[0], split[2]);
+        part(split[0], corners[1], split[1]);
+        part(split[2], split[1], corners[2]);
+        part(split[0], split[1], split[2]);
+      } else {
+        const lead = splits === 1 ? split.findIndex((middle) => middle >= 0) : split.findIndex((middle, index) => middle >= 0 && split[(index + 2) % VECTOR] < 0);
+        const [first, second, third] = [corners[lead], corners[(lead + 1) % VECTOR], corners[(lead + 2) % VECTOR]];
+        const [firstMiddle, secondMiddle] = [split[lead], split[(lead + 1) % VECTOR]];
+        part(first, firstMiddle, third);
+        if (splits === 1) part(firstMiddle, second, third);
+        else {
+          part(firstMiddle, secondMiddle, third);
+          part(firstMiddle, second, secondMiddle);
+        }
+      }
+    }
+    const working = { positions, normals, owners, weights };
+    return { painted: usedMesh(working, painted), rest: usedMesh(working, rest) };
+  };
+
   /** Numbers in a signature are rounded to this many decimals (a hundredth of a millimetre). */
   const SIGNATURE_DECIMALS = 5;
 
@@ -483,12 +718,14 @@
    * @example Kit.figure.sculptSignature(bake, layout) === Kit.figure.sculptSignature(recoloured, Kit.figure.layout(recoloured)) // true
    */
   const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
-    const { wears, hangs } = wearOf(bake.plan);
+    const { wears, hangs, ranks, clings, covers } = wearOf(bake.plan);
     const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) =>
-      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone]].join('~')
+      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone], ranks[piece.bone], clings[piece.bone], covers[piece.bone]].join('~')
     );
     const rest = bake.rest || Kit.body.createPose(bake.plan);
-    const pose = [rest.translation, rest.rotation, rest.scale].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
+    // Every array of the pose: a size dial (a height) writes `uniform` alone, and two bodies that differ only
+    // there must not share layers (a drape is made in the rest pose, so it is as long as the body it was made for).
+    const pose = [rest.translation, rest.rotation, rest.scale, rest.uniform].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
     return [detail, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
   };
 
@@ -621,9 +858,12 @@
     const headGroup = Kit.figure.INK_GROUPS.head;
     const isHeadBone = Uint8Array.from({ length: plan.boneCount }, (_unused, bone) => (Kit.figure.inkGroupOf(Kit.figure.inkKeyOf(plan, bone)) === headGroup ? 1 : 0));
     const layers = [];
+    /** Per bone: how far the outermost raised garment on it stands off the skin (what a drape over it must clear). */
+    const lifts = new Float32Array(plan.boneCount);
     for (const group of groups.values()) {
       const bones = [...new Set(group.solids.map((part) => part.owner))];
       const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
+      specs.filter((spec) => !spec.isPaint).forEach((spec) => spec.garment.tests.forEach((_tests, bone) => (lifts[bone] = Math.max(lifts[bone], spec.offset))));
       const field = yield* Kit.sculpt.sampleSteps(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
       const layerOf = (id, ramp, mesh, offset) => ({
         id,
@@ -636,21 +876,62 @@
       const bare = Kit.sculpt.surface(field);
       yield undefined;
       const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
-      skin.faceShare = shareOf(skin, isHeadBone);
-      layers.push(skin);
+      const first = layers.push(skin) - 1;
+      /** How far each layer of this group stands off the skin, and each raised garment's cut. */
+      const standsOff = new Map([[skin, 0]]);
+      const raisedCuts = new Map();
       yield undefined;
+      /** The layer each raised garment of this group became, by garment key: what its paint is painted on. */
+      const layerOfGarment = new Map();
+      /** Paint waiting for its turn: the canvas, the pattern, and the place in the list its sheet takes. */
+      const paints = [];
       for (const { garment, offset, host, isPaint } of specs) {
         const own = cutOf(garment, field, frames);
-        const within = host ? cutOf(host, field, frames) : null;
-        const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
-        // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
-        const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
-        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: SCULPT.buriedDepth, walls: !isPaint });
-        if (cloth.indices.length) layers.push(layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
+        if (isPaint) {
+          const canvas = host ? layerOfGarment.get(host.key) : skin;
+          // On a raised garment, paint is on the seen side: its outer surface and its hem's wall, not its underside.
+          const least = offset - SCULPT.paintLift - cell * PAINT_DEPTH_CELLS;
+          const keep = host ? (x, y, z) => own(x, y, z) && Kit.sculpt.valueAt(field, x, y, z) >= least : own;
+          if (canvas) paints.push({ canvas, keep, garment, at: layers.push(null) - 1 });
+        } else {
+          const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
+          const cloth = Kit.sculpt.surface(field, { offset, cut: own, near, depth: SCULPT.buriedDepth });
+          if (cloth.indices.length) {
+            layerOfGarment.set(garment.key, layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
+            layers.push(layerOfGarment.get(garment.key));
+            standsOff.set(layerOfGarment.get(garment.key), offset);
+            raisedCuts.set(garment, { own, offset });
+          }
+        }
         yield undefined;
       }
+      // Paint is cut out of the surface it is on, the last painted first: where two patterns overlap, the later
+      // one shows, and no triangle is drawn twice.
+      for (const { canvas, keep, garment, at } of paints.reverse()) {
+        const { painted, rest } = paintedOn(canvas, keep, (bone) => garment.tests.has(bone));
+        if (painted) {
+          layers[at] = { id: `region:${garment.key}`, ramp: garment.ramp, inkGroup: group.inkGroup, inkClass: garment.ramp, ...painted };
+          standsOff.set(layers[at], standsOff.get(canvas));
+          Object.assign(canvas, rest || { indices: new Uint16Array(0) });
+        }
+        yield undefined;
+      }
+      // The layering rule: what a raised garment covers is not drawn. Each layer of this group gives up what
+      // lies under a garment standing further off the skin than it does.
+      for (let at = first; at < layers.length; at++) {
+        if (!layers[at]) continue;
+        for (const [garment, { own, offset }] of raisedCuts) {
+          if (!(offset > standsOff.get(layers[at]) + SCULPT.paintLift)) continue;
+          const left = uncovered(layers[at], own, (bone) => garment.tests.has(bone));
+          if (left !== layers[at]) layers[at] = left ? Object.assign(layers[at], left) : null;
+          if (!layers[at]) break;
+        }
+        yield undefined;
+      }
+      skin.faceShare = shareOf(skin, isHeadBone);
     }
-    const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead });
+    for (let at = layers.length - 1; at >= 0; at--) if (!layers[at]) layers.splice(at, 1);
+    const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead, lifts });
     worn.forEach(({ layer, pieces }) => {
       layers.push(layer);
       pieces.forEach((piece) => replaced.add(piece.id));
@@ -658,15 +939,112 @@
     return { layers, replaced, matrices, clearance };
   }
 
+  /** A built shape's points placed by a bone matrix (column-major 4 x 4 at `at` in `matrices`). */
+  const placedPoints = (positions, matrices, at) => {
+    const placed = new Float32Array(positions.length);
+    for (let offset = 0; offset < positions.length; offset += VECTOR) {
+      const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
+      for (let axis = 0; axis < VECTOR; axis++) placed[offset + axis] = matrices[at + axis] * x + matrices[at + 4 + axis] * y + matrices[at + 8 + axis] * z + matrices[at + 12 + axis];
+    }
+    return placed;
+  };
+
+  /** Is a bone matrix a mirror (its three axes left-handed)? A shape placed by one has its triangles wound the other way. */
+  const isMirror = (matrices, at) => {
+    const [xx, xy, xz, , yx, yy, yz, , zx, zy, zz] = matrices.subarray(at, at + ROW_AFFINE);
+    return xx * (yy * zz - yz * zy) - yx * (xy * zz - xz * zy) + zx * (xy * yz - xz * yy) < 0;
+  };
+
+  /** Several meshes as one: `{ positions, normals, indices }` end to end, with a per-vertex array of `tags` (one tag per mesh). */
+  const joinedMesh = (meshes, tags) => {
+    const vertexCount = meshes.reduce((sum, mesh) => sum + mesh.positions.length / VECTOR, 0);
+    const positions = new Float32Array(vertexCount * VECTOR);
+    const normals = new Float32Array(vertexCount * VECTOR);
+    const indices = new Uint32Array(meshes.reduce((sum, mesh) => sum + mesh.indices.length, 0));
+    const tagOf = new Int32Array(vertexCount);
+    let [vertexAt, indexAt] = [0, 0];
+    meshes.forEach((mesh, order) => {
+      positions.set(mesh.positions, vertexAt * VECTOR);
+      normals.set(mesh.normals, vertexAt * VECTOR);
+      for (let corner = 0; corner < mesh.indices.length; corner++) indices[indexAt + corner] = mesh.indices[corner] + vertexAt;
+      tagOf.fill(tags[order], vertexAt, vertexAt + mesh.positions.length / VECTOR);
+      vertexAt += mesh.positions.length / VECTOR;
+      indexAt += mesh.indices.length;
+    });
+    return { positions, normals, indices: vertexCount > MOST_SHORT_INDEX ? indices : Uint16Array.from(indices), tagOf };
+  };
+  /** The largest vertex index a 16-bit index buffer can hold. */
+  const MOST_SHORT_INDEX = 65535;
+
+  /** The longest edge of a surface net, in cells: a cell's diagonal and a half. */
+  const NET_EDGE_CELLS = 2.6;
+  /** Balls per edge length that make a laid cloth's vertices one surface for the next cloth (`Kit.drape.cloud`). */
+  const CLOUD_SHARE = 0.6;
+  /** The vertices of a laid cloth that were moved from where they were authored, as a solid for the cloths laid over it. */
+  const movedCloud = (mesh, before, longestEdge) => {
+    const points = [];
+    for (let at = 0; at < before.length; at += VECTOR)
+      if (mesh.positions[at] !== before[at] || mesh.positions[at + 1] !== before[at + 1] || mesh.positions[at + 2] !== before[at + 2]) points.push(mesh.positions[at], mesh.positions[at + 1], mesh.positions[at + 2]);
+    return Kit.drape.cloud(points, longestEdge * CLOUD_SHARE);
+  };
+
   /**
-   * The layers of the worn objects of a bake (bone rows with `wear`): one per object and paint, each on a grid of
-   * its own. A solid is made in the sculpting pose and moved by its own bones. A drape is made at rest, where
-   * it hangs as authored, given to the body solids beside it, and then carried into the sculpting pose by them.
+   * Swings the bones of a draped object out to where they rest on what is under them (`Kit.drape.hangAngle`):
+   * each bone that hangs to one side of the body bone it is mounted on turns about its own joint, away from
+   * that bone, with whatever hangs from it. `hung` (bone matrices, the rest pose) is changed in place.
+   */
+  const hangBones = (plan, pieces, hung, rest, below, need, edge) => {
+    const bones = [...new Set(pieces.map((piece) => piece.bone))].sort((first, second) => first - second);
+    /** Per bone that hangs: the joint it hangs from and the unit direction it hangs in, as swung. */
+    const hangs = new Map();
+    bones.forEach((bone) => {
+      // What it is mounted on: the nearest bone up the tree that is the body's own (a part's bones are named '<socket>/<bone>').
+      let host = plan.parent[bone];
+      while (host > 0 && plan.boneNames[host].includes('/')) host = plan.parent[host];
+      if (host < 0) return;
+      const joint = originOf(hung, bone);
+      const mount = originOf(rest, host);
+      const outward = [joint[0] - mount[0], 0, joint[2] - mount[2]];
+      // Points all over the piece (a built shape alone has them only at its corners): the shape as a shell.
+      const points = pieces
+        .filter((piece) => piece.bone === bone)
+        .flatMap((piece) => {
+          const built = Kit.figure.buildShape(piece.shape, 'low');
+          return Array.from(Kit.drape.shell({ positions: placedPoints(built.positions, hung, bone * MATRIX), indices: built.indices }, edge).positions);
+        });
+      const middle = [0, 1, 2].map((axis) => points.reduce((sum, value, index) => (index % VECTOR === axis ? sum + value : sum), 0) / (points.length / VECTOR) - joint[axis]);
+      const length = Math.hypot(...middle);
+      if (length < SCULPT.leastHang) return;
+      const along = middle.map((value) => value / length);
+      hangs.set(bone, { joint, along });
+      const axis = Math.hypot(...outward) < Kit.drape.DRAPE.midline ? null : Kit.drape.swingAxis(along, outward);
+      if (!axis) return;
+      const angle = Kit.drape.hangAngle(points, joint, axis, below, need);
+      Kit.drape.turnAbout(hung, bone, plan.subtreeEnd[bone], joint, axis, angle);
+      // The way it hangs, swung with it (a direction: turned about the origin).
+      const turned = Kit.drape.turnAbout(Float32Array.from({ length: MATRIX }, (_unused, index) => along[index] || 0), 0, 1, [0, 0, 0], axis, angle);
+      const swung = [turned[0], turned[1], turned[2]];
+      // Away from the body, across the hang: the way the swing itself carries the cloth.
+      hangs.set(bone, { joint, along: swung, outward: [axis[1] * swung[2] - axis[2] * swung[1], axis[2] * swung[0] - axis[0] * swung[2], axis[0] * swung[1] - axis[1] * swung[0]] });
+    });
+    return hangs;
+  };
+
+  /**
+   * The layers of the worn objects of a bake (bone rows with `wear`): one per object and paint. A solid is made
+   * on a grid of its own in the sculpting pose and moved by its own bones. A drape is cloth (kit/drape.js): it
+   * is made at rest, where it hangs as authored; swung out and laid over what is under it there (the body with
+   * the garments on it, and the drapes of lower rank), so nothing under it shows through and it is hidden in
+   * nothing; meshed on the grid where it is thick and as a thin shell where it is thinner than the grid can
+   * hold; shared between the body solids beneath it and its own bone; and then carried into the sculpting pose.
    * @returns {Generator<undefined, Array<{layer: SculptLayer, pieces: Object[]}>, unknown>} yields between steps; returns the layers
    */
-  function* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces, limbLead }) {
+  function* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces, limbLead, lifts }) {
     const { plan } = bake;
-    const { wears, hangs } = wearOf(plan);
+    const { wears, hangs, ranks, clings, covers } = wearOf(plan);
+    const besideMask = Kit.body.roleMask([...SCULPT.beside]);
+    /** Is a body bone under a drape whose row covers `mask` (0: every bone but the limbs that hang beside)? */
+    const isUnder = (bone, mask) => (mask ? (plan.roles[bone] & mask) !== 0 : (plan.roles[bone] & besideMask) === 0);
     const worn = wornPieces(figureLayout, wears);
     if (!worn.length) return [];
     const rest = restMatrices(bake);
@@ -678,44 +1056,148 @@
     });
     /** The body's solids at rest, made once and only when something is draped. */
     let hosts = null;
+    const allHosts = () => (hosts = hosts || bodyPieces.map((piece) => ({ piece, part: solidOf(piece, rest, limbLead) })));
     const hostsFor = (mask) => {
-      hosts = hosts || bodyPieces.map((piece) => ({ piece, part: solidOf(piece, rest, limbLead) }));
-      const chosen = hosts.filter(({ piece }) => mask === 0 || (plan.roles[piece.bone] & mask) !== 0);
-      return (chosen.length ? chosen : hosts).map(({ part }) => part);
+      const chosen = allHosts().filter(({ piece }) => mask === 0 || (plan.roles[piece.bone] & mask) !== 0);
+      return (chosen.length ? chosen : allHosts()).map(({ part }) => part);
     };
+    /** What the drapes made so far add to the pile: their solids as they hang, and their thickness on the body under them. */
+    const laid = { solids: [], lift: 0 };
+    const isDrape = (pieces) => wears[pieces[0].bone] === 'drape';
+    // In rising rank (in the layout's order within a rank): solids with no rank first, then each drape over those
+    // before it, and a solid with a rank set on the drapes under it.
+    const ordered = [...objects].sort(([, first], [, second]) => ranks[first[0].bone] - ranks[second[0].bone]);
     const made = [];
-    for (const [key, pieces] of objects) {
-      const isDrape = wears[pieces[0].bone] === 'drape';
-      const pose = isDrape ? rest : matrices;
+    for (const [key, pieces] of ordered) {
+      const draped = isDrape(pieces);
+      const [lead] = pieces;
       const ownCell =
         cell ||
         Kit.sculpt.cellFor(
-          pieces.map((piece) => solidOf(piece, pose, limbLead)),
+          pieces.map((piece) => solidOf(piece, draped ? rest : matrices, limbLead)),
           figureLayout.level
         );
-      const kept = [];
-      pieces.forEach((piece) => {
-        const part = fittedSolid(piece, pose, limbLead, ownCell);
-        // An object is one thing: its solids blend wherever they meet, and it joins nothing else.
-        if (part) kept.push({ piece, part: Object.assign(part, { group: 0, anchor: undefined, join: undefined }) });
-      });
-      if (!kept.length) continue;
-      const solids = kept.map(({ part }) => part);
-      const mesh = Kit.sculpt.surface(yield* Kit.sculpt.sampleSteps(solids, { cell: ownCell }));
-      if (!mesh.indices.length) continue;
+      /** Half the least thickness the grid can hold. */
+      const least = (ownCell * SCULPT.thickenedCells) / 2;
+      const meshes = [];
+      /** Per mesh: the bone that owns it whole, or -1 when its vertices take their owners from `gridSolids`. */
+      const owns = [];
+      let gridSolids = [];
+      let keptPieces = [];
+      let below = null;
+      /** How far off the bare body this cloth lies where it rests on it: what is worn under it, its gap and its own thickness. */
+      let restsAt = 0;
+      let isSeated = false;
+      if (draped) {
+        // Where it hangs: the rest pose, each of its bones swung out to rest on what is under it.
+        const hung = Float32Array.from(rest);
+        const beneath = allHosts().filter(({ piece }) => isUnder(piece.bone, covers[lead.bone]));
+        below = Kit.drape.under([...beneath.map(({ piece, part }) => ({ ...part, lift: lifts[piece.bone] + laid.lift })), ...laid.solids]);
+        const authored = pieces.map((piece) => solidOf(piece, rest, limbLead));
+        /** The cloth's own thickness where it is a thin sheet (0 for a solid, which has one side). */
+        const thickness = Math.max(0, ...authored.map((part) => (part.thinness < least ? part.thinness * 2 : 0)));
+        /** Cloth clears what is under it by a share of a cell: a coarse mesh cuts the corners of a fine curve. */
+        const gap = Math.max(Kit.drape.DRAPE.gap, ownCell * SCULPT.gapCells);
+        const hangOf = bodyPieces.length ? hangBones(plan, pieces, hung, rest, below, gap + thickness, ownCell * SCULPT.shellEdgeCells) : new Map();
+        const thick = [];
+        pieces.forEach((piece) => {
+          const part = Object.assign(solidOf(piece, hung, limbLead), { group: 0, anchor: undefined, join: undefined });
+          if (part.thinness >= least) return thick.push({ piece, part });
+          // Thinner than the grid can hold: a shell of the shape as it is built, exactly as thin as authored.
+          const built = Kit.figure.buildShape(piece.shape, figureLayout.level);
+          const flipped = isMirror(hung, piece.bone * MATRIX) ? Uint32Array.from(built.indices, (_index, corner) => built.indices[corner - (corner % VECTOR) + [0, 2, 1][corner % VECTOR]]) : built.indices;
+          const cloth = Kit.drape.shell({ positions: placedPoints(built.positions, hung, piece.bone * MATRIX), indices: flipped }, ownCell * SCULPT.shellEdgeCells);
+          if (!cloth.indices.length) return undefined;
+          const mesh = { ...cloth, normals: Kit.drape.smoothNormals(cloth.positions, cloth.indices) };
+          const before = Float32Array.from(mesh.positions);
+          if (bodyPieces.length && Kit.drape.settle(mesh, below, { gap, thickness: part.thinness * 2, hang: hangOf.get(piece.bone) })) laid.solids.push(movedCloud(mesh, before, ownCell * SCULPT.shellEdgeCells));
+          meshes.push(mesh);
+          owns.push(piece.bone);
+          keptPieces.push(piece);
+          laid.solids.push(part);
+          return undefined;
+        });
+        if (thick.length) {
+          gridSolids = thick.map(({ part }) => part);
+          const mesh = Kit.sculpt.surface(yield* Kit.sculpt.sampleSteps(gridSolids, { cell: ownCell }));
+          if (mesh.indices.length) {
+            const before = Float32Array.from(mesh.positions);
+            if (bodyPieces.length && Kit.drape.settle(mesh, below, { gap, hang: hangOf.get(lead.bone) })) laid.solids.push(movedCloud(mesh, before, ownCell * NET_EDGE_CELLS));
+            // Hung all round the body (no one side to swing to): what it encloses is under whatever is laid over it.
+            const hang = hangOf.get(lead.bone);
+            if (hang && !hang.outward) laid.solids.push(Kit.drape.round(mesh.positions, hang.joint, hang.along, ownCell * NET_EDGE_CELLS));
+            meshes.unshift(mesh);
+            owns.unshift(-1);
+            keptPieces = [...thick.map(({ piece }) => piece), ...keptPieces];
+            laid.solids.push(...gridSolids);
+          }
+        }
+        restsAt = laid.lift + thickness + gap + Math.max(0, ...beneath.map(({ piece }) => lifts[piece.bone]));
+        laid.lift += thickness + gap;
+      } else {
+        // Worn over cloth already laid: made at rest, moved out until it sits on that cloth, and carried into the bind pose.
+        isSeated = ranks[lead.bone] > 0 && laid.solids.length > 0;
+        let placed = matrices;
+        if (isSeated) {
+          placed = Float32Array.from(rest);
+          const corners = pieces.flatMap((piece) => Array.from(placedPoints(Kit.figure.buildShape(piece.shape, 'low').positions, rest, piece.bone * MATRIX)));
+          const middle = [0, 1, 2].map((axis) => corners.reduce((sum, value, at) => (at % VECTOR === axis ? sum + value : sum), 0) / (corners.length / VECTOR));
+          const outward = [0, 0, 0];
+          Kit.drape.under(allHosts().map(({ part }) => part)).slope(middle[0], middle[1], middle[2], outward);
+          // Its outer half is what must show: cloth may pass through the half against the body, as a strap would hold it there.
+          const outer = [];
+          for (let at = 0; at < corners.length; at += VECTOR) {
+            if ((corners[at] - middle[0]) * outward[0] + (corners[at + 1] - middle[1]) * outward[1] + (corners[at + 2] - middle[2]) * outward[2] >= 0) outer.push(corners[at], corners[at + 1], corners[at + 2]);
+          }
+          const shift = Math.hypot(...outward) > 0 ? Kit.drape.seat(outer, outward, Kit.drape.under(laid.solids)) : 0;
+          pieces.forEach((piece) => outward.forEach((part, axis) => (placed[piece.bone * MATRIX + MOVE + axis] += part * shift)));
+        }
+        const kept = [];
+        pieces.forEach((piece) => {
+          const part = fittedSolid(piece, placed, limbLead, ownCell);
+          // An object is one thing: its solids blend wherever they meet, and it joins nothing else.
+          if (part) kept.push({ piece, part: Object.assign(part, { group: 0, anchor: undefined, join: undefined }) });
+        });
+        if (!kept.length) continue;
+        gridSolids = kept.map(({ part }) => part);
+        const mesh = Kit.sculpt.surface(yield* Kit.sculpt.sampleSteps(gridSolids, { cell: ownCell }));
+        if (mesh.indices.length) {
+          meshes.push(mesh);
+          owns.push(-1);
+          keptPieces = kept.map(({ piece }) => piece);
+        }
+      }
+      if (!meshes.length) continue;
       yield undefined;
-      const [first] = kept;
-      const drapeHosts = isDrape && bodyPieces.length ? hostsFor(hangs[first.piece.bone]) : null;
-      const skin = drapeHosts
-        ? Kit.sculpt.weights(mesh.positions, drapeHosts, { spread: SCULPT.drapeSpread, reach: Infinity, sharpness: SCULPT.drapeSharpness })
-        : Kit.sculpt.weights(mesh.positions, solids, { spread: SCULPT.weightSpread, reach: ownCell });
-      // Made at rest (a drape with something to hang on, or a drape alone): carried into the pose the skeleton is bound in.
-      if (isDrape) carry(mesh, skin, rest, matrices);
-      made.push({ layer: { id: `worn:${key}`, ramp: first.piece.ramp, inkGroup: first.piece.inkGroup, inkClass: first.piece.ramp, ...mesh, ...skin }, pieces: kept.map(({ piece }) => piece) });
+      const mesh = joinedMesh(meshes, owns);
+      // Its own bones: a shell is its bone's whole; a grid's vertices belong to the solids they lie on.
+      const own = gridSolids.length ? Kit.sculpt.weights(mesh.positions, gridSolids, { spread: SCULPT.weightSpread, reach: ownCell }) : null;
+      let skin = own;
+      if (!own || meshes.length > 1) {
+        skin = own || { owners: new Uint16Array(mesh.tagOf.length * OWNERS), weights: new Float32Array(mesh.tagOf.length * OWNERS) };
+        mesh.tagOf.forEach((bone, vertex) => {
+          if (bone < 0) return;
+          skin.owners.fill(0, vertex * OWNERS, vertex * OWNERS + OWNERS);
+          skin.weights.fill(0, vertex * OWNERS, vertex * OWNERS + OWNERS);
+          skin.owners[vertex * OWNERS] = bone;
+          skin.weights[vertex * OWNERS] = 1;
+        });
+      }
+      if (draped && bodyPieces.length) {
+        // The body beneath carries the cloth where it lies on it; where it hangs free it rides its own bone.
+        const carriers = hostsFor(hangs[lead.bone]);
+        const ownBone = Uint16Array.from(mesh.tagOf, (_bone, vertex) => skin.owners[vertex * OWNERS]);
+        skin = Kit.sculpt.weights(mesh.positions, carriers, { spread: SCULPT.drapeSpread, reach: Infinity, sharpness: SCULPT.drapeSharpness });
+        Kit.drape.ride(skin, mesh.positions, ownBone, Kit.drape.under(carriers).distance, { clings: clings[lead.bone], contact: restsAt + Kit.drape.DRAPE.contact });
+      }
+      // Made at rest: carried into the pose the skeleton is bound in.
+      if (draped || isSeated) carry(mesh, skin, rest, matrices);
+      const { positions, normals, indices } = mesh;
+      made.push({ layer: { id: `worn:${key}`, ramp: lead.ramp, inkGroup: lead.inkGroup, inkClass: lead.ramp, positions, normals, indices, ...skin }, pieces: keptPieces });
       yield undefined;
     }
     return made;
   }
 
-  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers, sculptTask });
+  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, paintedOn, uncovered, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers, sculptTask });
 })();

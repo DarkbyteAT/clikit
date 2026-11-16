@@ -929,7 +929,11 @@
           turn: [-7, 0, 0],
           tail: [0, -0.85, 0],
           girth: 0.4,
-          // Loose: a panel hung from the shoulders swings out behind the body, never forward through it (`Kit.motion.loose`).
+          // A panel over everything else worn: it rests on the shoulders and the seat, and hangs free of the legs on its own bone.
+          rank: 3,
+          hangs: ['spine', 'neck'],
+          clings: 0.03,
+          // That bone is loose: hung from the shoulders, it swings out behind the body, never forward through it (`Kit.motion.loose`).
           soft: 'cloak',
           shape: {
             kind: 'extrude',
@@ -1436,8 +1440,12 @@
     hat: { wear: 'solid' },
     horns: { wear: 'solid' },
     tail: { wear: 'solid' },
-    bottom: { wear: 'drape', hangs: ['leg'] },
-    outerwear: { wear: 'drape', hangs: ['spine', 'neck'] },
+    bottom: { wear: 'drape', hangs: ['leg'], rank: 1, clings: 0.25 },
+    outerwear: { wear: 'drape', hangs: ['spine', 'neck', 'leg'], rank: 2, clings: 0.05 },
+    // What is slung on the back is sculpted like the body (rounded, smooth, skinned to its own bone) and worn over
+    // everything draped there (rank 4: above a cloak's 3). What is held stays the piece it was built as: a pole or
+    // a blade is thinner than the grid holds, and thickened to fit it comes out lumpy.
+    back: { wear: 'solid', rank: 4 },
   });
   Object.keys(PARTS).forEach((id) => {
     const worn = PARTS[id].fits.map((type) => WEAR_BY_FIT[type]).find(Boolean);

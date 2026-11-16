@@ -86,6 +86,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [figure-shapes.js](#figure-shapesjs) (0) - Kit figure shapes: the surface of one bone, as plain arrays.
 - [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
 - [sculpt.js](#sculptjs) (17) - Kit sculpt: smooth surfaces from simple solids.
+- [drape.js](#drapejs) (13) - Kit drape: cloth that hangs on a body, as plain geometry.
 - [figure-sculpt.js](#figure-sculptjs) (0) - Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone.
 - [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
 - [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
@@ -99,7 +100,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
 - [body-portrait.js](#body-portraitjs) (4) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
-- [body-proof.js](#body-proofjs) (11) - Kit body proof: coverage sheets for judging the body system by eye.
+- [body-proof.js](#body-proofjs) (12) - Kit body proof: coverage sheets for judging the body system by eye.
 - [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
 - [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
 - [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
@@ -8736,6 +8737,292 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
   - `owners` *Uint16Array* - 4 per vertex: owner ids (bone indices), strongest first; unused slots are 0
   - `weights` *Float32Array* - 4 per vertex: their shares, summing to 1
 
+## drape.js
+
+> Kit drape: cloth that hangs on a body, as plain geometry. A hanging garment (a skirt, a cloak, a scarf's end)
+> is authored once, as a shape on a bone; a body under it may be any build. This module makes the authored
+> shape lie on the body it meets: it is swung out about the joint it hangs from until it is clear of what is
+> under it, what the body still pushes through it is laid over the body, thin cloth is meshed as a thin shell
+> at any level of detail, and every vertex is shared between the bone the cloth hangs from and the body bones
+> beneath it, so a knee pushes a skirt and a simulated cloak bone carries its cloak.
+>
+> Owns:  `Kit.drape.under` (solids -> the surface a cloth must stay outside of), `cloud` (a cloth already laid, as
+>        one of those solids), `hangAngle` and `turnAbout`
+>        (the least swing that clears it), `shell` (a built shape -> a welded, evenly fine, closed mesh),
+>        `settle` (vertices pushed out of what is under them), `ride` (skin weights shared with the cloth's own
+>        bone), `smoothNormals` and the `DRAPE` tunables.
+> Does not own: which bones are draped and in what order (catalogue data read by kit/figure-sculpt.js), the
+>        solids' distances (kit/sculpt.js), built shapes (kit/figure-shapes.js), movement (kit/motion.js) or THREE.
+>
+> Conventions: metres; points are in the space the solids were placed in (a body's rest pose); a mesh is
+> `{ positions, normals, indices }` with three numbers per vertex and triangles wound counter-clockwise seen
+> from outside.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-drape.js.
+
+### `Kit.drape.DRAPE`
+
+Tunables, metres unless noted.
+
+### `Kit.drape.FAR`
+
+"Out of every solid's reach": the distance `under` gives there, metres.
+
+### `Kit.drape.under(solids, options = {})`
+
+The surface under a cloth: the union of the solids beneath it, each grown by what is already worn on it.
+Distances are the solids' own (not a grid's), so a cloth is placed as exactly as the body is described.
+
+- `solids` *UnderSolid[]*
+- `[options]` *{reach?: number, slopeStep?: number}* - see `DRAPE`
+
+**Returns** *Under*
+
+**Complexity** O(solids) per distance (a bounds test each, a distance for those near); a slope is one distance and three more of one solid
+
+```js
+const under = Kit.drape.under(bodySolids.map((part) => ({ ...part, lift: 0.009 }))); under.distance(0, 1, -0.2) // > 0: behind the back
+```
+
+#### `Kit.drape.under().distance(x, y, z)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.drape.under().slope(x, y, z, out)`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.drape.cloud(points, radius)`
+
+Points as something a cloth lies over: the union of a ball round each (a cloth already laid, by its
+vertices, for the cloth laid on top of it). The balls of neighbouring vertices must overlap: give a radius
+of at least 0.6 of the mesh's longest edge. Outside every ball's reach the distance is `Kit.drape.FAR`.
+
+- `points` *ArrayLike\<number\>* - x, y, z each
+- `radius` *number* - metres
+
+**Returns** *UnderSolid*
+
+**Complexity** O(points) to make; O(points in the 27 cells round a point) per distance
+
+```js
+const skirtAsLaid = Kit.drape.cloud(skirt.positions, 0.012);
+```
+
+#### `Kit.drape.cloud().distance(x, y, z)`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.drape.swingAxis(along, outward)`
+
+The axis a hanging piece swings about: across both the way it hangs and the way out of the body, so a
+positive turn carries its free end outward. Null when it hangs straight out already or has no way out.
+
+- `along` *number[]* - unit [x, y, z]: from the joint towards the piece's free end
+- `outward` *number[]* - [x, y, z]: away from what it hangs on
+
+**Returns** *?number[]* unit [x, y, z]
+
+**Complexity** O(1)
+
+```js
+Kit.drape.swingAxis([0, -1, 0], [0, 0, -1]) // [1, 0, 0]: a cloak down a back swings about the shoulders' line
+```
+
+### `Kit.drape.hangAngle(points, joint, axis, below, need, options = {})`
+
+The least angle a hanging piece must swing out, about its joint, to rest on the body instead of passing
+through it: the smallest swing after which nothing of it is buried deeper than `restDepth` (what `settle`
+then lays over the body), or, when no swing does that (its top, at the joint, never moves), the smallest
+that leaves about as little buried deeper as any swing can. A cloak then lies down the back of a slight
+body and of a stout one alike, and how it hangs depends on nothing but the piece and what is under it.
+
+- `points` *ArrayLike\<number\>* - x, y, z of points of the piece, as authored (its built surface)
+- `joint` *number[]* - [x, y, z] it hangs from
+- `axis` *number[]* - unit [x, y, z] to swing about (`swingAxis`)
+- `below` *Under* - what it must clear
+- `need` *number* - metres every point should stand off `below`
+- `[options]` *{mostSwing?: number, swingSteps?: number, swingHalvings?: number, swingSlack?: number, restDepth?: number, swingFrom?: number}* - see `DRAPE`
+
+**Returns** *number* radians, 0 .. `mostSwing`
+
+**Complexity** O((swingSteps + swingHalvings) x min(points, swingPoints) x solids)
+
+```js
+const angle = Kit.drape.hangAngle(cloakPoints, shoulders, [1, 0, 0], under, 0.01);
+```
+
+### `Kit.drape.turnAbout(matrices, from, to, joint, axis, angle)`
+
+Turns bone matrices about an axis through a point, in place: a piece (and whatever hangs from it) swung to
+where `hangAngle` says it rests.
+
+- `matrices` *Float32Array* - column-major 4 x 4 per bone
+- `from` *number* - the first bone to turn
+- `to` *number* - one past the last
+- `joint` *number[]* - [x, y, z]
+- `axis` *number[]* - unit [x, y, z]
+- `angle` *number* - radians
+
+**Returns** *Float32Array* `matrices`
+
+**Complexity** O(bones turned)
+
+```js
+Kit.drape.turnAbout(matrices, cloak, plan.subtreeEnd[cloak], shoulders, [1, 0, 0], 0.2);
+```
+
+### `Kit.drape.shell(arrays, edge)`
+
+A built shape as cloth: its vertices welded where they coincide (a built shape repeats a vertex wherever
+its faces meet in a hard edge), and its edges split until none is longer than `edge`, so the surface is one
+closed skin fine enough to bend and to be laid over a body. A thin panel stays exactly as thin as it was
+authored, at any level of detail, where a grid would have to thicken it to hold it at all.
+
+Every edge longer than the target is split at its middle, and each triangle is cut by which of its edges
+were split (one, two or three); a split is decided per edge, so both triangles on an edge agree and the
+mesh stays closed.
+
+- `arrays` *{positions: ArrayLike\<number\>, indices: ArrayLike\<number\>}* - a built shape (`Kit.figure.buildShape`), or any triangle mesh
+- `edge` *number* - metres: the longest an edge may stay
+
+**Returns** *{positions: Float32Array, indices: Uint32Array}*
+
+**Complexity** O(surface area / edge^2) vertices and triangles; at most `DRAPE.mostSplits` passes over them
+
+```js
+const cloth = Kit.drape.shell(Kit.figure.buildShape(panel, 'low'), 0.03);
+```
+
+### `Kit.drape.round(points, joint, along, edge)`
+
+A cloth hung all round a line (a skirt round the hips) as something a later cloth lies over: everything
+nearer the line than the cloth is, where the cloth reaches along it. The cloth itself is hollow, and so is
+the shape it was built from; a coat's tails laid over a skirt must clear the space the skirt encloses, not
+only its wall.
+
+The cloth's vertices are binned by how far along the line and which way round it they lie; a bin keeps
+the furthest of them from the line, or of its neighbours'. The distance of a point is how far outside that radius it is, read
+between the four bins round it (negative inside), or how far beyond the cloth's ends it is, if that is more.
+
+- `points` *ArrayLike\<number\>* - x, y, z each: the cloth's vertices as laid
+- `joint` *number[]* - a point of the line
+- `along` *number[]* - the line's unit direction
+- `edge` *number* - metres: the cloth's longest edge (a bin is twice that long, so none is empty inside the cloth)
+
+**Returns** *UnderSolid*
+
+**Complexity** O(points) to make; O(1) per distance
+
+```js
+laid.push(Kit.drape.round(skirt.positions, hips, [0, -1, 0], 0.03));
+```
+
+#### `Kit.drape.round().distance(x, y, z)`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.drape.settle(mesh, below, options = {})`
+
+Lays a cloth over what is under it, as cloth lies: pushed out where the body is in its way, and hanging
+straight on down from there.
+
+1. Each vertex nearer `below` than it should be is moved out until it is not, by at most `mostPush`. The
+   way out is the slope of `below`; for a cloth that hangs (`hang`), only the part of it across the hang,
+   so a skirt's waist is pushed outwards level and never up the body, and a cloak inside a skirt's cone
+   comes out through its side, not its bottom. Where the slope has almost nothing across the hang, the
+   hang's own `outward` is the way, or with none (a cloth hung all round the body) straight away from the
+   line it hangs along. A thin sheet (`thickness` above 0) has two sides: the side whose
+   normal points out comes to rest `gap + thickness` off what is under it and the lining `gap` off it, so
+   a panel the body pushes through keeps its thickness where it lies on the body.
+2. With `hang`, a move is handed on down the cloth: a vertex further along the way the cloth hangs takes
+   its neighbours' move from above, less `1 / fall` of it per metre, across the hang only. A cloak pushed
+   out by a seat then falls from the seat instead of folding back under it.
+The normals are made again afterwards, and averaged over neighbours `normalPasses` times: a move differs a
+little from vertex to vertex, and a toon ramp would show each step as a patch. Where nothing is in the cloth's way it keeps its authored shape
+exactly, so how a garment hangs depends only on the garment and the body under it.
+
+- `mesh` *{positions: Float32Array, normals: Float32Array, indices: ArrayLike\<number\>}* - changed in place
+- `below` *Under*
+- `[options]` *{gap?: number, thickness?: number, mostPush?: number, settleSteps?: number, normalPasses?: number, hang?: {joint: number[], along: number[], outward?: number[]}, fall?: number}* - `thickness`: metres between the cloth's two sides (default 0: one side); `hang`: the point the cloth hangs from, the unit direction it hangs in and, for a cloth that hangs to one side of the body, the unit direction away from the body across that; the rest as `DRAPE`
+
+**Returns** *number* how many vertices were moved
+
+**Complexity** O(vertices x settleSteps x solids + (vertices + triangles) x normalPasses + vertices log vertices)
+
+```js
+const moved = Kit.drape.settle(cloak, under, { thickness: 0.018, hang: { joint: shoulders, along: [0, -1, 0] } });
+```
+
+### `Kit.drape.seat(points, outward, cloth, options = {})`
+
+How far out a thing worn over cloth must be moved to sit on it: the least move along `outward` after which
+no cloth is in front of any of its points (inside it or behind it is where cloth under a pack belongs). A
+pack authored against the back then sits on the cloak laid over that back instead of showing through it.
+
+- `points` *ArrayLike\<number\>* - x, y, z of the thing (its corners will do)
+- `outward` *number[]* - unit direction away from the body
+- `cloth` *Under* - the cloth laid so far (`Kit.drape.under` of its solids)
+- `[options]` *{seatStep?: number, mostSeat?: number, seatReach?: number, seatProbe?: number}* - see `DRAPE`
+
+**Returns** *number* metres, 0 when nothing is in front of it; never more than `mostSeat`
+
+**Complexity** O(mostSeat / seatStep x points x seatReach / seatProbe x solids) at worst
+
+```js
+const shift = Kit.drape.seat(packCorners, [0, 0, -1], Kit.drape.under(cloakSolids)); // 0.05: the cloak's back is 5 cm behind the pack's
+```
+
+### `Kit.drape.smoothNormals(positions, indices, out = new Float32Array(positions.length), passes = 0)`
+
+Vertex normals of a mesh: each triangle's area-weighted normal added to its corners, so the surface shades
+as one smooth cloth, round its edges too.
+
+- `positions` *Float32Array*
+- `indices` *ArrayLike\<number\>*
+- `[out]` *Float32Array* - receives the normals (default: a new array)
+- `[passes]` *number* - times each normal is then replaced by the mean of its triangles' corners' normals (default 0)
+
+**Returns** *Float32Array* unit normals, 3 per vertex
+
+**Complexity** O((vertices + triangles) x (1 + passes))
+
+```js
+mesh.normals = Kit.drape.smoothNormals(mesh.positions, mesh.indices);
+```
+
+### `Kit.drape.ride(skin, positions, own, bodyDistance, options = {})`
+
+Shares a cloth's vertices between the body bones beneath it and the bone it hangs from. Where the cloth
+lies on the body (within `contact`) the body carries it, so a knee pushes a skirt; further off it rides
+its own bone more, and `clings` beyond contact it rides its own bone alone, so a bone that is simulated (a
+loose cloak, a swaying hem) carries the cloth that hangs free.
+
+- `skin` *{owners: Uint16Array, weights: Float32Array}* - the body's share (`Kit.sculpt.weights`); changed in place
+- `positions` *Float32Array* - the cloth's vertices
+- `own` *ArrayLike\<number\>\|number* - the cloth's own bone: one for all, or one per vertex
+- `bodyDistance` *function(number, number, number): number* - metres from a point to the body that carries the cloth
+- `[options]` *{contact?: number, clings?: number}* - `clings`: metres (default `DRAPE.clings`); `contact` as `DRAPE`
+
+**Returns** *{owners: Uint16Array, weights: Float32Array}* `skin`
+
+**Complexity** O(vertices x the cost of `bodyDistance`)
+
+```js
+Kit.drape.ride(skin, cloak.positions, cloakBone, bodyUnder.distance, { clings: 0.03 });
+```
+
+### Types
+
+- **UnderSolid** - A solid a cloth lies over.
+  - `distance` *function(number, number, number): number* - signed distance, negative inside (a `Solid` of kit/sculpt.js)
+  - `min` *number[]* - [x, y, z] of its bounds
+  - `max` *number[]*
+  - `[lift=0]` *number* - metres the layers already on it stand off it: the cloth clears the solid grown by this
+- **Under** - What a cloth must stay outside of: the union of solids, each grown by its `lift`.
+  - `distance` *function(number, number, number): number* - metres to that union, negative inside; `Kit.drape.FAR` beyond every solid's reach
+  - `slope` *function(number, number, number, number[]): number* - writes the unit direction out of the union (zero where none) and returns the distance there
+
 ## figure-sculpt.js
 
 > Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone. The
@@ -10626,6 +10913,10 @@ Directions of a turnaround, in turns of a full circle; 0 faces the camera and th
 
 The three directions that between them show a front, a side and a back.
 
+### `Kit.body.proof.WORN_SOCKETS`
+
+The sockets the `worn` suite turns all the way round unless told others: garments that hang, and what is carried behind.
+
 ### `Kit.body.proof.DEFAULT_VIEWS`
 
 A three-quarter view and the front: what a movement is shown from unless its row says otherwise.
@@ -10655,7 +10946,7 @@ The cells of a suite for a catalogue.
 
 - `name` *string* - a key of `SUITES`
 - `catalog` *Object* - from `Kit.body.catalog`
-- `[options]` *{species?: string[], count?: number, acts?: string[]}* - `species`: which (default all)
+- `[options]` *{species?: string[], count?: number, acts?: string[], sockets?: string[]}* - `species`: which (default all); `sockets`: which socket paths the `worn` suite turns round
 
 **Returns** *ProofSheet*
 

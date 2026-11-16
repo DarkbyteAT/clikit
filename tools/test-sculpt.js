@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const FILES = ['sculpt', 'figure-sculpt'];
+const FILES = ['sculpt', 'drape', 'figure-sculpt'];
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const VECTOR = 3;
 const OWNERS = 4;
@@ -56,6 +56,57 @@ const edgesOf = ({ positions, indices }) => {
     else if (times !== 1) pinched++;
   });
   return { open, pinched };
+};
+
+/** An open edge of a covered skin lies this near a vertex of the garment over it (metres: a low-detail cell and the garment's lift). */
+const MOST_UNDER = 0.09;
+const WELD = 1e5;
+
+/** Several layers as one mesh, their vertices welded where they coincide (a paint and the surface it was cut out of). */
+const welded = (layers) => {
+  const numbers = new Map();
+  const positions = [];
+  const indices = [];
+  layers.forEach((layer) => {
+    layer.indices.forEach((vertex) => {
+      const at = [0, 1, 2].map((axis) => layer.positions[vertex * VECTOR + axis]);
+      const key = at.map((value) => Math.round(value * WELD)).join(',');
+      if (!numbers.has(key)) {
+        numbers.set(key, positions.length / VECTOR);
+        positions.push(...at);
+      }
+      indices.push(numbers.get(key));
+    });
+  });
+  return { positions, indices };
+};
+
+/** The middles of a mesh's open edges, and how many edges more than two triangles share. */
+const openEdgesOf = ({ positions, indices }) => {
+  const count = positions.length / VECTOR;
+  const seen = new Map();
+  for (let face = 0; face < indices.length; face += VECTOR) {
+    for (let corner = 0; corner < VECTOR; corner++) {
+      const from = indices[face + corner];
+      const to = indices[face + ((corner + 1) % VECTOR)];
+      if (from !== to) seen.set(from * count + to, (seen.get(from * count + to) || 0) + 1);
+    }
+  }
+  const open = [];
+  let pinched = 0;
+  seen.forEach((times, key) => {
+    const from = Math.floor(key / count);
+    const to = key - from * count;
+    if (times !== (seen.get(to * count + from) || 0)) open.push([0, 1, 2].map((axis) => (positions[from * VECTOR + axis] + positions[to * VECTOR + axis]) / 2));
+    else if (times !== 1) pinched++;
+  });
+  return { open, pinched };
+};
+
+const nearestVertex = (positions, x, y, z) => {
+  let nearest = Infinity;
+  for (let offset = 0; offset < positions.length; offset += VECTOR) nearest = Math.min(nearest, Math.hypot(positions[offset] - x, positions[offset + 1] - y, positions[offset + 2] - z));
+  return nearest;
 };
 
 module.exports = ({ Kit, sandbox, test, assert }) => {
@@ -223,6 +274,114 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
 
   const catalogs = ['wardrobe', 'samples'].filter((name) => Kit.body[name]).map((name) => ({ name, catalog: Kit.body.catalog(Kit.body[name].CATALOG) }));
 
+  /** A flat sheet of `cells` x `cells` squares over the unit square at z = 0, facing +z, owned by bone 0 (left half) or 1. */
+  const sheetOf = (cells) => {
+    const side = cells + 1;
+    const positions = [];
+    const normals = [];
+    const owners = [];
+    const weights = [];
+    for (let row = 0; row < side; row++) {
+      for (let column = 0; column < side; column++) {
+        positions.push(column / cells, row / cells, 0);
+        normals.push(0, 0, 1);
+        owners.push(column / cells < 0.5 ? 0 : 1, 0, 0, 0);
+        weights.push(1, 0, 0, 0);
+      }
+    }
+    const indices = [];
+    for (let row = 0; row < cells; row++) {
+      for (let column = 0; column < cells; column++) {
+        const corner = row * side + column;
+        indices.push(corner, corner + 1, corner + side + 1, corner, corner + side + 1, corner + side);
+      }
+    }
+    return { positions: Float32Array.from(positions), normals: Float32Array.from(normals), owners: Uint16Array.from(owners), weights: Float32Array.from(weights), indices: Uint16Array.from(indices) };
+  };
+  const areaOfMesh = (mesh) => {
+    let area = 0;
+    for (let face = 0; mesh && face < mesh.indices.length; face += VECTOR) {
+      const [first, second, third] = [0, 1, 2].map((corner) => mesh.indices[face + corner] * VECTOR);
+      // Signed, about +z: a triangle turned over would take area away.
+      area += ((mesh.positions[second] - mesh.positions[first]) * (mesh.positions[third + 1] - mesh.positions[first + 1]) - (mesh.positions[third] - mesh.positions[first]) * (mesh.positions[second + 1] - mesh.positions[first + 1])) / 2;
+    }
+    return area;
+  };
+
+  test('paint: a pattern parts a surface into a painted sheet and the rest along its exact edge, with no crack, overlap or turned triangle, at any coarseness', () => {
+    // Hoops narrower than a triangle of the coarse sheet: 0.07 wide, every 0.2.
+    const hoop = (_x, y) => (y + 0.031) % 0.2 < 0.07;
+    [3, 8, 40].forEach((cells) => {
+      const canvas = sheetOf(cells);
+      const { painted, rest } = figure.paintedOn(canvas, hoop, () => true);
+      assert.ok(painted && rest, `${cells}: both parts exist`);
+      // The two parts tile the sheet: their signed areas sum to its area, and the painted share is the pattern's.
+      assert.ok(Math.abs(areaOfMesh(painted) + areaOfMesh(rest) - 1) < 1e-5, `${cells}: the parts cover the canvas once (${areaOfMesh(painted) + areaOfMesh(rest)})`);
+      const exact = 5 * 0.07;
+      // A coarse sheet sees each hoop where its edges meet it, so the share is near, not exact; a fine one is exact.
+      assert.ok(Math.abs(areaOfMesh(painted) - exact) < (cells >= 8 ? 0.004 : 0.12), `${cells}: painted share ${areaOfMesh(painted)} of ${exact}`);
+      // Every vertex on the cut lies on a hoop's edge, to within the bisection (2^-7 of an edge).
+      const edge = 1 / cells;
+      const cutHeights = [];
+      for (let vertex = 0; vertex < painted.positions.length / VECTOR; vertex++) {
+        const y = painted.positions[vertex * VECTOR + 1];
+        const within = (y + 0.031) % 0.2;
+        assert.ok(within < 0.07 + edge / 64 || within > 0.2 - edge / 64, `${cells}: a painted vertex at y=${y} lies off the hoops`);
+        cutHeights.push(Math.min(Math.abs(within), Math.abs(within - 0.07), Math.abs(within - 0.2)));
+      }
+      if (cells >= 8) assert.ok(cutHeights.filter((off) => off < edge / 64).length >= cells * 5, `${cells}: the cut runs the width of the sheet on both edges of each hoop`);
+      // One surface: the sheet takes the canvas's normals and skin, and together the two parts are watertight inside the sheet.
+      assert.ok(painted.normals.every((value, at) => (at % VECTOR === 2 ? value === 1 : value === 0)), `${cells}: the canvas's normals`);
+      for (let vertex = 0; vertex < painted.owners.length / OWNERS; vertex++) {
+        let sum = 0;
+        for (let slot = 0; slot < OWNERS; slot++) sum += painted.weights[vertex * OWNERS + slot];
+        assert.ok(Math.abs(sum - 1) < 1e-6, `${cells}: weights sum to one`);
+        const x = painted.positions[vertex * VECTOR];
+        if (Math.abs(x - 0.5) > edge) assert.strictEqual(painted.owners[vertex * OWNERS], x < 0.5 ? 0 : 1, `${cells}: the canvas's owner at x=${x}`);
+      }
+      const together = openEdgesOf(welded([painted, rest]));
+      assert.strictEqual(together.pinched, 0, `${cells}: no doubled triangle`);
+      together.open.forEach(([x, y]) => assert.ok(Math.min(x, 1 - x, y, 1 - y) < 1e-6, `${cells}: an open edge inside the sheet at ${x},${y}: a crack`));
+    });
+    // Nothing painted, everything painted, and bones the pattern cannot hold on.
+    assert.strictEqual(figure.paintedOn(sheetOf(4), () => false, () => true).painted, null);
+    assert.strictEqual(figure.paintedOn(sheetOf(4), () => true, () => true).rest, null);
+    const half = figure.paintedOn(sheetOf(4), () => true, (bone) => bone === 1);
+    assert.ok(Math.abs(areaOfMesh(half.painted) - 0.75) < 1e-6, 'only triangles with a vertex of a bone the pattern holds on are asked');
+    // Control: read at the vertices alone (what a sheet meshed apart does), the coarse sheet's rows meet two of the
+    // five hoops; the cut finds more paint than those two hold.
+    const coarse = sheetOf(3);
+    const rowsInHoops = [0, 1, 2, 3].filter((row) => hoop(0, row / 3)).length;
+    assert.strictEqual(rowsInHoops, 2, 'control: two rows of vertices lie in hoops');
+    assert.ok(areaOfMesh(figure.paintedOn(coarse, hoop, () => true).painted) > rowsInHoops * 0.07 + 0.05, 'hoops between the rows are painted too');
+  });
+
+  test('paint: what a garment covers is not drawn, but for a margin under its edge; what shows is untouched', () => {
+    const canvas = sheetOf(10);
+    const covers = (_x, y) => y < 0.55;
+    const left = figure.uncovered(canvas, covers, () => true, 1);
+    // Rows wholly under the cover go, but for one ring of triangles in from its edge.
+    const lowest = Math.min(...Array.from({ length: left.positions.length / VECTOR }, (_unused, vertex) => left.positions[vertex * VECTOR + 1]));
+    assert.ok(Math.abs(lowest - 0.4) < 1e-6, `kept down to one ring under the edge (${lowest})`);
+    assert.ok(Math.abs(areaOfMesh(left) - 0.6) < 1e-6, 'whole triangles, as wound');
+    assert.ok(figure.uncovered(canvas, covers, () => true, 2).indices.length > left.indices.length, 'a wider margin keeps more');
+    assert.strictEqual(figure.uncovered(canvas, () => false, () => true), canvas, 'nothing covered: the layer itself');
+    assert.strictEqual(figure.uncovered(canvas, () => true, () => true), null, 'all covered: nothing');
+    assert.strictEqual(figure.uncovered(canvas, () => true, () => false), canvas, 'bones the cover is not on are not asked');
+    // On a figure: a clothed body draws fewer skin triangles than a bare one, and from eight directions no ray reaches a hole.
+    const { catalog } = catalogs[0];
+    const editor = Kit.body.editor(catalog);
+    const bakery = catalog.bakery({ capacity: 4 });
+    const skinOf = (recipe) => {
+      figure.sculptCache.clear();
+      const bake = bakery.bakeRecipe(recipe);
+      return figure.sculptLayers(bake, figure.layout(bake, { level: 'low' })).layers.filter((layer) => layer.id.startsWith('skin:')).reduce((sum, layer) => sum + layer.indices.length / VECTOR, 0);
+    };
+    const bare = ['top', 'bottom', 'footwear', 'outerwear', 'hair'].reduce((recipe, socket) => editor.setSocket(recipe, socket, 'none'), { species: 'person', seed: 1 });
+    const clothed = [['top', 'longSleeve'], ['bottom', 'trousers'], ['footwear', 'boots']].reduce((recipe, [socket, choice]) => editor.setSocket(recipe, socket, choice), bare);
+    assert.ok(skinOf(clothed) < skinOf(bare) * 0.7, `clothes hide skin: ${skinOf(clothed)} of ${skinOf(bare)} triangles drawn`);
+  });
+
   test('sculpt: every species of both catalogues sculpts to closed skins and non-empty layers that replace the pieces they were made from', () => {
     assert.strictEqual(catalogs.length, 2, 'both catalogues are loaded');
     catalogs.forEach(({ name, catalog }) => {
@@ -249,11 +408,27 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
             }
             if (Math.abs(sum - 1) > 1e-4) assert.fail(`${where} ${layer.id}: weights of vertex ${vertex} sum to ${sum}`);
           }
-          if (layer.id.startsWith('skin:') || layer.id.startsWith('worn:')) {
+          if (layer.id.startsWith('worn:')) {
             assert.deepStrictEqual(edgesOf(layer), { open: 0, pinched: 0 }, `${where} ${layer.id}: closed, every edge shared by exactly two triangles`);
             assert.ok(sixVolumes(layer) > 0, `${where} ${layer.id}: wound outward`);
           }
         });
+        // A skin is closed but for what a garment covers: with the paint cut out of it put back, its open edges
+        // all lie under a raised garment (within a cell or so of one), and nothing is pinched.
+        const isRaised = (layer) => layer.id.startsWith('region:') && !layer.id.endsWith('|0');
+        const raised = sculpted.layers.filter(isRaised);
+        sculpted.layers
+          .filter((layer) => layer.id.startsWith('skin:'))
+          .forEach((skin) => {
+            const whole = welded([skin, ...sculpted.layers.filter((layer) => layer.id.startsWith('region:') && !isRaised(layer) && layer.inkGroup === skin.inkGroup)]);
+            const edges = openEdgesOf(whole);
+            assert.strictEqual(edges.pinched, 0, `${where} ${skin.id}: no edge shared by more than two triangles`);
+            assert.ok(sixVolumes(skin) > 0, `${where} ${skin.id}: wound outward`);
+            edges.open.forEach(([x, y, z]) => {
+              const nearest = Math.min(...raised.map((layer) => nearestVertex(layer.positions, x, y, z)));
+              if (!(nearest < MOST_UNDER)) assert.fail(`${where} ${skin.id}: an open edge at ${[x, y, z].map((value) => value.toFixed(3))} is ${nearest} from any garment: the skin is open where it can be seen`);
+            });
+          });
         // What is replaced is exactly what was meshed: every such piece has a shape, and its bone owns vertices.
         const owning = new Set();
         sculpted.layers.forEach((layer) => layer.owners.forEach((owner, slot) => layer.weights[slot] > 0 && owning.add(owner)));
@@ -270,7 +445,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     });
   });
 
-  test('sculpt: worn objects follow their data: a skirt is draped on the legs and hangs as authored at rest, a hat is a solid on its own bone, a sword stays rigid', () => {
+  test('sculpt: worn objects follow their data: a skirt is draped on the legs and its own bone and hangs as authored where the body is not in its way, a hat is a solid on its own bone, a sword stays rigid', () => {
     const { catalog } = catalogs[0];
     const editor = Kit.body.editor(catalog);
     const [species] = catalog.speciesIds();
@@ -284,7 +459,10 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.ok(skirt && hat, `layers: ${sculpted.layers.map((layer) => layer.id).join(' ')}`);
     assert.ok(skirt.id.endsWith('drape') && hat.id.endsWith('solid'));
     const legMask = Kit.body.roleMask(['leg']);
-    assert.ok(skirt.owners.every((owner, slot) => skirt.weights[slot] === 0 || (plan.roles[owner] & legMask) !== 0), 'every owner of the skirt is a leg bone');
+    const ownBone = plan.boneIndex('bottom/skirt');
+    assert.ok(skirt.owners.every((owner, slot) => skirt.weights[slot] === 0 || owner === ownBone || (plan.roles[owner] & legMask) !== 0), 'every owner of the skirt is a leg bone or the bone it hangs from');
+    const legShare = skirt.weights.reduce((sum, share, slot) => sum + (skirt.owners[slot] === ownBone ? 0 : share), 0) / (skirt.positions.length / 3);
+    assert.ok(legShare > 0.6 && legShare < 1, `the legs carry most of it, its own bone the rest: ${legShare}`);
     assert.ok(new Set(Array.from(skirt.owners).filter((_owner, slot) => skirt.weights[slot] > 0.5)).size >= 2, 'both legs carry it');
     assert.ok(hat.owners.every((owner, slot) => hat.weights[slot] === 0 || plan.boneNames[owner].startsWith('hat/')), 'the hat is moved by its own bones');
     // Skinned from the sculpting pose (legs spread) to rest, the skirt is the authored cone again: every vertex on its solid.
@@ -306,14 +484,19 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       }
       return out;
     };
-    let worstAtRest = 0;
-    let worstUnmoved = 0;
+    // Cloth is laid over the body (kit/drape.js): where the hips are in its way it is pushed outwards, never inwards.
+    let [worstInside, worstOutside, asAuthored, worstInsideUnmoved] = [0, 0, 0, 0];
     for (let vertex = 0; vertex < skirt.positions.length / 3; vertex++) {
-      worstAtRest = Math.max(worstAtRest, Math.abs(authored.distance(...moved(rest, skirt, vertex))));
-      worstUnmoved = Math.max(worstUnmoved, Math.abs(authored.distance(skirt.positions[vertex * 3], skirt.positions[vertex * 3 + 1], skirt.positions[vertex * 3 + 2])));
+      const atRest = authored.distance(...moved(rest, skirt, vertex));
+      worstInside = Math.max(worstInside, -atRest);
+      worstOutside = Math.max(worstOutside, atRest);
+      if (Math.abs(atRest) < 0.004) asAuthored += 1;
+      worstInsideUnmoved = Math.max(worstInsideUnmoved, -authored.distance(skirt.positions[vertex * 3], skirt.positions[vertex * 3 + 1], skirt.positions[vertex * 3 + 2]));
     }
-    assert.ok(worstAtRest < 0.012, `at rest the skirt hangs as authored (thickened to the grid): off by ${worstAtRest}`);
-    assert.ok(worstUnmoved > worstAtRest * 2, `the control: in the sculpting pose it is spread with the legs (${worstUnmoved})`);
+    assert.ok(worstInside < 0.012, `at rest no part of the skirt is inside the authored cone: ${worstInside}`);
+    assert.ok(worstOutside < Kit.drape.DRAPE.mostPush + 0.012, `and none is pushed out of it further than cloth is ever pushed: ${worstOutside}`);
+    assert.ok(asAuthored > 0, 'some of it is exactly where it was authored');
+    assert.ok(worstInsideUnmoved > Math.max(worstInside, 0.012) * 2, `the control: in the sculpting pose it is spread with the legs (${worstInsideUnmoved})`);
     // A held thing has no wear: it is the rigid piece it was.
     const armed = catalog.bakery({ capacity: 4 }).bakeRecipe(editor.setSocket({ species, seed: 1 }, 'handRight', 'shortBlade'));
     const armedLayout = figure.layout(armed, { level: 'medium' });
