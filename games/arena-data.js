@@ -381,7 +381,7 @@
     { id: 'tier1', rank: 1, name: 'Threat I', desc: 'Plain elites. One warden.', hpScale: 1, xpScale: 1, speedScale: 1, touchScale: 1, affixCount: 0, levelHealScale: 1, bossCount: 1 },
     { id: 'tier2', rank: 2, name: 'Threat II', desc: 'Elites carry an affix. Tougher swarm.', hpScale: 1.4, xpScale: 1.3, speedScale: 1.1, touchScale: 1.15, affixCount: 1, levelHealScale: 1, bossCount: 1 },
     { id: 'tier3', rank: 3, name: 'Threat III', desc: 'Two affixes. Level-ups heal half.', hpScale: 1.9, xpScale: 1.7, speedScale: 1.16, touchScale: 1.3, affixCount: 2, levelHealScale: 0.5, bossCount: 1 },
-    { id: 'tier4', rank: 4, name: 'Threat IV', desc: 'Two wardens. Level-ups do not heal.', hpScale: 2.3, xpScale: 2, speedScale: 1.24, touchScale: 1.5, affixCount: 2, levelHealScale: 0, bossCount: 2 },
+    { id: 'tier4', rank: 4, name: 'Threat IV', desc: 'Two wardens. Level-ups do not heal.', hpScale: 2.1, xpScale: 2, speedScale: 1.22, touchScale: 1.4, affixCount: 2, levelHealScale: 0, bossCount: 2 },
   ]);
 
   /**

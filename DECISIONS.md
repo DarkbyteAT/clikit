@@ -318,17 +318,18 @@ machine at load 20 to 40, so only the ratios mean anything.
   query allocates nothing). `Kit.crowd.buckets` (kit/crowd.js, written by another agent at the same time: same
   idea, but `near` returns a new array per query and `fill` drops its buckets each frame). A dense grid over the
   bounded arena (typed arrays, no Map lookups; fastest, but fixed bounds and more code).
-- **Measured** (scratch/arena/simulate.js bench, one separation pass, shared machine, microseconds per frame):
-  110 bodies: all pairs 20, spatialHash 75, crowd.buckets 105. 400 bodies: 150 / 194 / 456. 1600 bodies:
-  3018 / 1143 / 1461. So at the game's cap of 120 enemies the hash is about 55 microseconds a frame SLOWER than
-  all pairs for separation; it breaks even near 500 bodies and wins 2.6x at 1600. A whole simulated frame (every
-  system, about 100 enemies) costs about 120 microseconds in Bun.
+- **Measured** (`bun scratch/arena/simulate.js bench`, one separation pass, microseconds per frame, machine idle at
+  load 1; a run under load 35 gave the same ordering): 110 bodies: all pairs 22, spatialHash 65, crowd.buckets 118.
+  400 bodies: 157 / 169 / 375. 1600 bodies: 2768 / 1169 / 2495. So at the game's cap of 120 enemies the hash is
+  about 45 microseconds a frame SLOWER than all pairs for separation; it breaks even a little past 400 bodies and
+  wins 2.4x at 1600. A whole simulated frame (every system, about 100 enemies) costs about 135 microseconds in Bun.
+  Shots against enemies and the other queries were not benchmarked separately.
 - **Chosen.** The hash, because the owner asked for it, because seven different queries (separation, nearest
   target, shots, blades, pulse and nova, mines, dash ram) share one structure and one padding rule, and because the
   cost at today's cap is under half a percent of a 16 ms frame while the cap can now rise without a rewrite.
   It is not an optimisation at 120 bodies and must not be reported as one.
 - **Revisit if.** The enemy cap stays at 120 and a phone profile shows simulation time matters: all pairs for
-  separation alone would win back the 55 microseconds. Or if the cap rises past about 500: then the dense grid is
+  separation alone would win back the 45 microseconds. Or if the cap rises past about 500: then the dense grid is
   the next brick.
 - **Open: two spatial hashes in the kit.** `Kit.spatialHash` and `Kit.crowd.buckets` were written in parallel.
   Proposal for the kit steward: keep `Kit.spatialHash` as the primitive and make `Kit.crowd.buckets` a thin wrapper

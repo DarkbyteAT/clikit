@@ -38,6 +38,7 @@ share the machine; the load column says so.
 | 24 | Tower Smash | depth (sim split, generator, loadout, worlds, progression) | fable | not measured by the agent | not measured (about 75 by file times) | 12+ agents | standard, theme, depth | 0 so far | 3 files; headless solver clears 18/18; Agent tool not available to this session, so nothing was dispatched |
 | 25 | Component library (kit/ui/: 12 component files, menu, gallery), menu scroll root-cause, framework spike, tools/touch-scroll.js, tools/test-ui.js | new kit area + investigation + compatibility layer | fable (lead only: no Agent tool in this session, so nothing was dispatched) | not visible to the agent | not measured; one sitting | load 42 at the start, lighter later | standard, decisions, tests (5 pure, 49 in-browser checks) | 0 so far (amendment 20 arrived mid-task) | 12 browser runs; one self-inflicted break caught by the first smoke (Kit.ui.h overwritten); the menu failure did not reproduce, so the real-phone cause is still open |
 | 26 | Marble Works | depth (boards, songs, logic parts, marble kinds, profile) | fable | not visible to the agent | about 105 | 12+ agents | standard, theme, depth | 0 so far | lead did every piece: no Agent tool in the session, so nothing was dispatched; 2 kit additions; 9 boards and 8 songs proven headless |
+| 27 | Swarm Arena | depth (rules split into data / sim / bots / theme / presentation; dash, graze, tells, 6 new enemy kinds, elites with affixes, warden; slots, exclusions, evolutions, synergies; ships, arenas, tiers, achievements; bots and five headless experiments) | fable (lead only: no Agent tool in this session, so nothing was dispatched) | not visible to the agent | about 110 by file times | 12+ agents, load 35 for most of it, idle at the end | standard (lint 0 findings), theme, depth (simulated) | 0 so far; amendments 14 to 20 arrived mid-task | kit: kit/hash.js (Kit.spatialHash), Kit.upgrades slots / excludes / requiresMax; 10 new tests; 4 browser runs; balance retuned 5 times from simulation output; known gap: a dead stretch between Threat III and IV |
 
 ## Orchestrated work (from amendment 17)
 
@@ -57,6 +58,12 @@ One row per piece a lead dispatched or kept. This is what tests whether tiered, 
 | Core Miner | Rules tests in tools/test-kit.js | would be sonnet | low | not metered | n/a | done by the lead |
 | Core Miner | Tap feel, weak point, heat gauge, forks, Camp sheet, theme, QA | fable | medium | not metered | n/a | kept by the lead by rule (feel, layout, QA) |
 | UI lead (kit/ui/) | all pieces | fable | high | not measured | n/a | kept by the lead: no Agent tool. Would have routed: logic.js + tests, field.js, meter.js, layout.js to sonnet/low from the written component contract; README table and script tags to haiku/low; scroll pane, dialog, compatibility layer, root cause and QA stay with the lead |
+| Swarm Arena | Depth plan, rule design (dash, graze, tells, counters, slots, evolutions), spatial hash, per-frame code, scene and HUD, QA | fable | medium | not measured | n/a | kept by the lead by rule (design, performance, layout, QA) |
+| Swarm Arena | Content tables to stated targets and tags (upgrades, synergies, enemies, affixes, ships, arenas, tiers, achievements: games/arena-data.js) | would be sonnet | low | not measured | n/a | done by the lead: no Agent tool. Separable once the stat names and row typedefs exist |
+| Swarm Arena | Kit.upgrades gates and Kit.spatialHash with their tests | would be sonnet | medium | not measured | n/a | done by the lead; each is a pure function with a written contract |
+| Swarm Arena | Bots and headless experiments (games/arena-bots.js, scratch/arena/simulate.js) | would be sonnet | medium | not measured | n/a | done by the lead; needs only Arena.sim's interface |
+| Swarm Arena | Balance tuning from simulation output (5 rounds) | would be opus | medium | not measured | n/a | done by the lead; each round is a table edit and one experiment |
+| Swarm Arena | Theme CSS from the written design; rule tests in tools/test-kit.js; lint fixes and renames | would be sonnet / haiku | low | not measured | n/a | done by the lead |
 
 ## What the ledger says so far
 
@@ -135,3 +142,7 @@ entries become the next tooling work.
 | Play runner cannot call a game's debug hooks (jump to a level, grant stars), so deep states still need hand-written Playwright | sling | open: a `do <expression>` step in tools/dev/play.js |
 | Smoke fails on another game's or the kit's in-flight error, so a clean run of your own game is luck | sling | partly: worktrees (amendment 20) |
 | No kit view for a level map, a loadout row or an upgrade list inside a sheet; each game styles its own | sling | for the UI lead (kit/ui/) |
+| Two agents wrote a spatial hash for the kit in the same hour (Kit.spatialHash, Kit.crowd.buckets); a grep ten minutes earlier found neither | arena | open: `make docs` index searched before `new module`; consolidation proposed in DECISIONS.md |
+| Balance tuning needed five rounds because each headless experiment took 4 to 10 minutes at load 35 (20 seconds idle) | arena | open: a fixed-seed `quick` experiment per game, and experiments in a worktree off the shared cores |
+| A pick style that stacked one weapon's multipliers cleared every tier; only a per-style table showed it, the pooled clear rate hid it | arena | learned: report balance per policy, never pooled; tools/dev/simulate.js could print a per-policy split by default |
+| Background jobs survived a stopped task and kept writing result files with stale numbers | arena | worked around with pkill; a job runner that owns its children would fix it |
