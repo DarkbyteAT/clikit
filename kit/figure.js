@@ -220,9 +220,15 @@
    * @property {Object} measured the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
    * @property {function(): void} rest copies the bake's rest pose into `local`
    * @property {function(): void} pose forward kinematics over `local` and a matrix write per mesh; no allocation
-   * @property {function(Object, Object=): Object} setBake draws another bake with the fewest changes; returns the plan carried out
+   * @property {function(Object, Object=, {settle?: boolean}=): Object} setBake draws another bake with the fewest
+   *   changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is
+   *   still moving (a dial being dragged): the sculpted surfaces are bent to the new proportions by the skeleton
+   *   at once, and sculpted again by `settle()`
+   * @property {function(): boolean} settle sculpts the surfaces for the bake shown if they were only bent to it; true when it did
+   * @property {function(): boolean} isSettled false while the surfaces wait for `settle()`
    * @property {function(number): Object} frame a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
-   * @property {function(): {meshes: number, materialsCreated: number, geometriesCreated: number}} counters
+   * @property {function(): {meshes: number, skinned: number, materialsCreated: number, geometriesCreated: number}} counters `meshes`:
+   *   draw objects in all, of which `skinned` are sculpted surfaces
    * @property {function(): void} dispose
    */
 
@@ -262,14 +268,16 @@
     const shouldSculpt = options.sculpt !== false && Boolean(Kit.figure.sculptLayers);
     /** The skinned surfaces standing in for the body's rigid pieces (kit/figure-sculpt.js); null when not sculpted. */
     let skin = null;
+    /** The surfaces were sculpted for an earlier bake and are being bent to this one by the skeleton (see `setBake`). */
+    let isStale = false;
 
     /** Takes the sculpted surfaces down. */
     const removeSkin = () => {
       if (!skin) return;
-      skin.meshes.forEach(({ mesh, dressed }) => {
+      skin.meshes.forEach(({ mesh, dressed, layer }) => {
         root.remove(mesh);
         view.shading.undress(dressed);
-        mesh.geometry.dispose();
+        releaseSkinGeometry(layer);
       });
       skin.bones.forEach((bone) => root.remove(bone));
       skin.skeleton.dispose();
@@ -287,13 +295,7 @@
       const inverses = bones.map((_bone, index) => new THREE.Matrix4().fromArray(sculpted.matrices, index * MATRIX).invert());
       const skeleton = new THREE.Skeleton(bones, inverses);
       const meshes = sculpted.layers.map((layer) => {
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(layer.positions, VECTOR));
-        geometry.setAttribute('normal', new THREE.BufferAttribute(layer.normals, VECTOR));
-        geometry.setAttribute('skinIndex', new THREE.BufferAttribute(layer.owners, SKIN_OWNERS));
-        geometry.setAttribute('skinWeight', new THREE.BufferAttribute(layer.weights, SKIN_OWNERS));
-        geometry.setIndex(new THREE.BufferAttribute(layer.indices, 1));
-        const mesh = new THREE.SkinnedMesh(geometry);
+        const mesh = new THREE.SkinnedMesh(acquireSkinGeometry(layer));
         mesh.name = layer.id;
         // The bones move the surface anywhere; its rest bounds say nothing about where it is drawn.
         mesh.frustumCulled = false;
@@ -301,9 +303,22 @@
         mesh.bind(skeleton, new THREE.Matrix4());
         const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, anchor });
         materialsCreated += MATERIALS_PER_DRESS;
-        return { mesh, dressed };
+        return { mesh, dressed, layer };
       });
       skin = { ...sculpted, bones, skeleton, meshes, scratch: Kit.body.createPose(shown.plan) };
+      isStale = false;
+    };
+    /**
+     * Makes the sculpted surfaces match the bake shown now, and the rigid pieces match what the surfaces leave
+     * to them (a solid too thin to sculpt at this size is a rigid piece; a dial can move it either way).
+     */
+    const resculpt = () => {
+      removeSkin();
+      addSkin();
+      entries.filter((entry) => isReplaced(entry.piece)).forEach(removeEntry);
+      entries = entries.filter((entry) => !isReplaced(entry.piece));
+      const drawn = new Set(entries.map((entry) => entry.piece));
+      shownLayout.pieces.filter((piece) => !drawn.has(piece)).forEach(addPiece);
     };
     /**
      * The pose with every buried limb opened (kit/figure-sculpt.js `limbClearance`): the same turn in front of
@@ -374,7 +389,7 @@
         for (let index = 0; index < entries.length; index++) Kit.figure.writeBoneMatrix(figure.world, entries[index].piece.bone, entries[index].mesh.matrix.elements);
         if (skin) for (let bone = 0; bone < skin.bones.length; bone++) Kit.figure.writeBoneMatrix(figure.world, bone, skin.bones[bone].matrix.elements);
       },
-      setBake(next, changes) {
+      setBake(next, changes, settleOptions = {}) {
         const previousPlan = shown.plan;
         const nextLayout = Kit.figure.layout(next, layoutOptions);
         const update = Kit.figure.planUpdate(shownLayout, nextLayout, changes);
@@ -386,14 +401,17 @@
         shownLayout = nextLayout;
         figure.bake = next;
         figure.layout = nextLayout;
-        // The sculpted surfaces depend on every shape and every dial: made again for the new bake.
-        if (shouldSculpt) {
-          removeSkin();
-          addSkin();
-          entries.filter((entry) => isReplaced(entry.piece)).forEach(removeEntry);
-          entries = entries.filter((entry) => !isReplaced(entry.piece));
-        }
         update.add.forEach(addPiece);
+        if (shouldSculpt) {
+          // A colour change leaves the surfaces as they are. A dial in mid-drag (`settle: false`) bends them
+          // through the skeleton at once and they are sculpted again when the drag rests; anything else
+          // (a garment, a species, a caller that does not say) sculpts now.
+          const isSame = skin && skin.signature === Kit.figure.sculptSignature(next, nextLayout);
+          const canBend = skin && settleOptions.settle === false && next.plan === previousPlan && changes && !changes.rebuild && !(changes.sockets || []).length;
+          if (isSame) isStale = false;
+          else if (canBend) isStale = true;
+          else resculpt();
+        }
         if (update.recolor) view.atlas.write(block, paddedRamps(next.ramps));
         if (next.plan !== previousPlan) {
           // Another plan (an outfit or a species): bones sit at other indices, so the pose buffers are made
@@ -404,10 +422,17 @@
         if (update.remeasure) remeasure();
         figure.rest();
         figure.pose();
-        return { kept: update.keep.length, added: update.add.length, removed: update.remove.length, recolored: update.recolor, remeasured: update.remeasure };
+        return { kept: update.keep.length, added: update.add.length, removed: update.remove.length, recolored: update.recolor, remeasured: update.remeasure, settled: !isStale };
       },
+      settle() {
+        if (!isStale) return false;
+        resculpt();
+        figure.pose();
+        return true;
+      },
+      isSettled: () => !isStale,
       frame: (aspect, frameOptions) => Kit.figure.fitView(figure.measured, aspect, frameOptions),
-      counters: () => ({ meshes: entries.length, materialsCreated, geometriesCreated: cache.stats().created }),
+      counters: () => ({ meshes: entries.length + (skin ? skin.meshes.length : 0), skinned: skin ? skin.meshes.length : 0, materialsCreated, geometriesCreated: cache.stats().created }),
       dispose() {
         entries.forEach(removeEntry);
         entries = [];
@@ -423,6 +448,36 @@
     figure.rest();
     figure.pose();
     return figure;
+  };
+
+  /** @type {WeakMap<Object, {geometry: THREE.BufferGeometry, users: number}>} one geometry per sculpted layer, shared by every figure showing it */
+  const skinGeometries = new WeakMap();
+  /**
+   * The geometry of a sculpted layer (kit/figure-sculpt.js `SculptLayer`). Equal bakes share their layers, so
+   * figures of one look share one upload.
+   */
+  const acquireSkinGeometry = (layer) => {
+    const known = skinGeometries.get(layer);
+    if (known) {
+      known.users += 1;
+      return known.geometry;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(layer.positions, VECTOR));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(layer.normals, VECTOR));
+    geometry.setAttribute('skinIndex', new THREE.BufferAttribute(layer.owners, SKIN_OWNERS));
+    geometry.setAttribute('skinWeight', new THREE.BufferAttribute(layer.weights, SKIN_OWNERS));
+    geometry.setIndex(new THREE.BufferAttribute(layer.indices, 1));
+    skinGeometries.set(layer, { geometry, users: 1 });
+    return geometry;
+  };
+  const releaseSkinGeometry = (layer) => {
+    const entry = skinGeometries.get(layer);
+    if (!entry) return;
+    entry.users -= 1;
+    if (entry.users > 0) return;
+    entry.geometry.dispose();
+    skinGeometries.delete(layer);
   };
 
   let moduleCache = null;

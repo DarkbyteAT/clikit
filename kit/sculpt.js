@@ -37,8 +37,14 @@
   const FEWEST_CELLS_ACROSS = 1.6;
   /** Most grid nodes of one field: a guard against a stray huge solid, not a tuning knob. */
   const MOST_NODES = 6e6;
-  /** Two surfaces crossing at this cosine between their outward directions (60 degrees apart) or less get the full fillet. */
-  const CROSSING_COSINE = 0.5;
+  /**
+   * How two surfaces cross decides their fillet. Two rounds of half-thickness t whose outward directions are an
+   * angle apart meet in a groove t x (1 - cos(angle / 2)) deep; a fillet fills a groove by a quarter of its
+   * width, so the width that brings the groove just up to the line across the two rounds is `GROOVE_FILL` times
+   * that depth. Stacked parts of a torso (a shallow groove) then run into each other without a roll standing
+   * proud between them, and a limb leaving a trunk (a deep one) gets the solids' whole `blend`.
+   */
+  const GROOVE_FILL = 4;
   /** A group's join with the rest stays full within this many fillet widths of its anchor, and is gone at twice that. */
   const JOIN_REACH = 2.5;
   /** "Far outside": the value of a node nothing was measured at, metres (its negative: far inside). */
@@ -50,20 +56,23 @@
   /**
    * A flat section (a lathe's profile, an extrude's outline) is measured once into a table: its distance at
    * the nodes of a 2D grid of about `cells` nodes along its longer side (each between `finest` and `coarsest`
-   * metres), reaching `pad` metres past the section. Further out the section is measured directly.
+   * metres), reaching `pad` metres past the section. Further out the section is measured directly. The table's
+   * step stays well under a grid cell: a blend of four nodes is smooth inside a step and creased between two,
+   * and creases as far apart as the mesh's own vertices would show as rings round a torso.
    */
-  const TABLE = Object.freeze({ cells: 40, finest: 0.002, coarsest: 0.008, pad: 0.1, mostKept: 256 });
+  const TABLE = Object.freeze({ cells: 120, finest: 0.001, coarsest: 0.003, pad: 0.07, mostKept: 256 });
   /** The widest block of nodes measured as one when a field is sampled (it is halved down to single nodes near a surface). */
   const BLOCK = 8;
   /**
-   * Times a surface's normals are averaged with their neighbours' over the mesh. A vertex's first normal is
-   * that of the triangles round it, which is true to the form once the vertex has been moved onto the field's
-   * surface but still carries the grid's last wobble, and banded shading would show that as blotches. Averaging
-   * over the mesh costs triangles; measuring the field's slope instead would cost a wider band of grid nodes.
+   * A surface's normals are averaged with their neighbours' over the mesh, one pass per cell of `reach` metres
+   * (within `least` and `most` passes). A vertex's first normal is that of the triangles round it, which is
+   * true to the form but carries every wobble a few cells long (the grid's own, and the shallow rolls where
+   * stacked solids meet), and banded shading would show those as blotches and rings. Averaging over the mesh
+   * costs triangles; measuring the field's slope further out instead would cost a wider band of grid nodes.
    */
-  const NORMAL_SMOOTHING = 2;
+  const NORMAL_SMOOTHING = Object.freeze({ reach: 0.044, least: 1, most: 4 });
   /** Nodes are measured this many cells past the surfaces a field will be asked for: the cell a vertex is made in, and the one it may be moved into. */
-  const BAND_CELLS = 2;
+  const BAND_CELLS = 2.25;
   /** The most a solid's distance may change per metre: 1 for a true distance, a little more for a stretched solid's estimate. */
   const STEEPEST = 1.2;
   const VECTOR = 3;
@@ -174,8 +183,8 @@
   };
 
   /**
-   * The slope of the distance last measured by a kind that states one (`SLOPED`): a unit vector in the shape's
-   * own space, pointing away from the solid. One shared scratch, read straight after the call.
+   * The slope of the distance last measured by a kind that states one (`SLOPED`): a vector in the shape's own
+   * space, pointing away from the solid (any length; zero when unknown). One shared scratch, read straight after the call.
    */
   const SLOPE = new Float64Array(VECTOR);
   /** A table lookup's slope in the section's plane, (du, dv); zero when the point was off the table. */
@@ -352,7 +361,8 @@
       const px = m0 * sx + m4 * sy + m8 * sz;
       const py = m1 * sx + m5 * sy + m9 * sz;
       const pz = m2 * sx + m6 * sy + m10 * sz;
-      const steepness = Math.sqrt(px * px + py * py + pz * pz);
+      // Only the slope's direction is used: a table's slope is short where its section's nearest edge changes.
+      const steepness = Math.sqrt((px * px + py * py + pz * pz) / (sx * sx + sy * sy + sz * sz || 1));
       // No slope (the centre of a ball, a point off a section's table): fall back to the safe shrink.
       // Inside, the estimate can run past the solid's middle (a flat ball's slope there says nothing of how
       // thin it is): no point is deeper than the solid is thick.
@@ -670,10 +680,6 @@
           nearest[node] = ownIndex[node];
         }
         if (values[node] === -FAR) continue;
-        if (first < lowest) {
-          values[node] = -FAR;
-          continue;
-        }
         let distance = first;
         const other = second[node];
         const indexA = ownIndex[node];
@@ -692,8 +698,8 @@
           const by = beside(indexB, node, sizeX, x, y + cell, z) - other;
           const bz = beside(indexB, node, stepZ, x, y, z + cell) - other;
           const alignment = (ax * bx + ay * by + az * bz) / (Math.sqrt((ax * ax + ay * ay + az * az) * (bx * bx + by * by + bz * bz)) || 1);
-          // Full fillet when the surfaces meet at `CROSSING_COSINE` or more steeply; none when they are parallel.
-          distance = smoothMin(first, other, radius * Math.max(0, Math.min(1, (1 - alignment) / (1 - CROSSING_COSINE))));
+          const grooveDepth = Math.min(solids[indexA].thinness, solids[indexB].thinness) * (1 - Math.sqrt(Math.max(0, 1 + alignment) / 2));
+          distance = smoothMin(first, other, Math.min(radius, GROOVE_FILL * grooveDepth));
         }
         const before = values[node];
         if (before === FAR) {
@@ -903,8 +909,8 @@
     const { inside, vertexOf, isListed } = scratchFor(count);
     /** A cut solid is hollow below this value of the field. */
     const floor = -depth - cell * ROOT_THREE;
-    /** How far a node's value may be from that of a surface through one of its cells (with room for a stretched solid's estimate). */
-    const reach = cell * ROOT_THREE * STEEPEST;
+    /** How far a node's value may be from that of a surface through one of its cells: a diagonal, with room for a blend steeper than a true distance. */
+    const reach = cell * BAND_CELLS;
     /** Node offsets of a cell's corners from its lowest node, and each corner's place in the cell (0 or 1 per axis). */
     const cornerStep = Int32Array.from(CORNERS, ([x, y, z]) => x + y * stepY + z * stepZ);
     const cornerPlace = Float64Array.from(CORNERS.flat());
@@ -1058,7 +1064,8 @@
     const isAlong = walls ? faces.alongs : null;
     settle(field, mesh.positions, offset, smoothVertices(mesh.positions.length / VECTOR, mesh.indices, isAlong), mesh.rims);
     const { normals, isSmooth } = normalsOf(mesh.positions, mesh.indices, isAlong);
-    for (let pass = 0; pass < NORMAL_SMOOTHING; pass++) smoothNormals(normals, mesh.indices, isSmooth);
+    const passes = Math.max(NORMAL_SMOOTHING.least, Math.min(NORMAL_SMOOTHING.most, Math.round(NORMAL_SMOOTHING.reach / cell)));
+    for (let pass = 0; pass < passes; pass++) smoothNormals(normals, mesh.indices, isSmooth);
     return { positions: mesh.positions, normals, indices: mesh.positions.length / VECTOR > MOST_SHORT_INDEX ? mesh.indices : Uint16Array.from(mesh.indices) };
   };
 

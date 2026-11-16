@@ -233,7 +233,9 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       () => body.dials(biped, [{ id: 'jaw', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'profile.1.0' }] }]),
       /shape.profile.1.0 of bone "head", whose shape \(sphere\) has no number there/
     );
-    throwsWith(() => body.dials(biped, [{ id: 'fat', min: 0.5, max: 2, affects: [{ bones: ['waist'], shape: 'radius' }] }]), /is the default capsule; give the bone a `shape`/);
+    // The sample biped states a drawn shape for every bone, so the default capsule is tried on a copy whose waist states none.
+    const bare = body.plan({ ...plan, id: 'bareWaist', bones: plan.bones.map(({ shape, ...bone }) => (bone.name === 'waist' ? bone : { ...bone, ...(shape ? { shape } : {}) })) });
+    throwsWith(() => body.dials(bare, [{ id: 'fat', min: 0.5, max: 2, affects: [{ bones: ['waist'], shape: 'radius' }] }]), /is the default capsule; give the bone a `shape`/);
     throwsWith(() => body.dials(biped, [{ id: 'jaw', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'radius', mode: 'twist' }] }]), /has the mode "twist"/);
     throwsWith(() => body.dials(biped, [{ id: 'eyes', min: 0.5, max: 2, affects: [{ feature: 'eye' }] }]), /needs a `param`/);
     const fine = body.dials(biped, [{ id: 'headRound', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'radius' }] }]);

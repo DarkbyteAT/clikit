@@ -55,6 +55,8 @@
   const DRAFT_KEY = 'draft';
   /** A change is written to the draft after this many seconds of quiet. */
   const DRAFT_DELAY_SECONDS = 1.5;
+  /** Seconds without an edit before the body's sculpted surfaces are made again (during a drag the skeleton bends them). */
+  const SCULPT_DELAY_SECONDS = 0.18;
   /** Walking in place: how fast the treadmill runs, metres per second. */
   const WALK_SPEED = 1.3;
   /** Share of the screen the panel takes: the height in portrait, the width in landscape (CSS clamp bounds). */
@@ -156,7 +158,7 @@
     };
     const status = signal(statusNow());
     const latencies = [];
-    const measurement = { applyMs: 0, flushMs: 0, inputToApplyMs: 0, applied: 0 };
+    const measurement = { applyMs: 0, flushMs: 0, inputToApplyMs: 0, applied: 0, sculptMs: 0, sculpted: 0 };
     let lastInputAt = 0;
     let isDraftDirty = false;
     let quietSeconds = 0;
@@ -241,7 +243,8 @@
     const showRecipe = (recipe) => {
       const startedAt = performance.now();
       const next = bakery.bakeRecipe(recipe);
-      figure.setBake(next, editor.changes(bake, next));
+      // `settle: false`: a dial drag bends the sculpted surfaces at once; `update` sculpts them when the drag rests.
+      figure.setBake(next, editor.changes(bake, next), { settle: false });
       bake = next;
       drawnRecipe = recipe;
       const finishedAt = performance.now();
@@ -296,6 +299,12 @@
         director.step(dt, reducedMotion.matches);
         quietSeconds += dt;
         if (isDraftDirty && quietSeconds >= DRAFT_DELAY_SECONDS) saveDraft();
+        if (quietSeconds >= SCULPT_DELAY_SECONDS && !figure.isSettled()) {
+          const startedAt = performance.now();
+          figure.settle();
+          measurement.sculptMs = performance.now() - startedAt;
+          measurement.sculpted += 1;
+        }
       },
       render() {
         watchStage();

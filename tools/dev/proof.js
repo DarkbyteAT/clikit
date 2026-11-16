@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ROOT } = require('./project');
-const { openArcade } = require('./browser');
+const { openArcade, SHOT_MS } = require('./browser');
 
 /** Pixels per cell across, and the most rows per picture (a picture stays readable when scaled to a screen). */
 const PAGE = { cellWidth: Number(process.env.PROOF_CELL) || 230, rows: 4, mostPages: 40, settleMs: 350 };
@@ -73,7 +73,7 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         await session.page.waitForTimeout(PAGE.settleMs);
         const numbered = (count) => `${catalog}-${suite}-${preset}${count > 1 ? `-${String(filed + 1).padStart(2, '0')}` : ''}.png`;
         if (rows === 1) {
-          strips.push(await session.page.screenshot());
+          strips.push(await session.page.screenshot({ timeout: SHOT_MS }));
           if (strips.length === PAGE.rows || page === Math.min(pageCount, mostPages) - 1) {
             await flush(numbered(Math.ceil(pageCount / PAGE.rows)));
             filed += 1;

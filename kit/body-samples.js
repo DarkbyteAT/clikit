@@ -8,6 +8,9 @@
  *        ready for `Kit.body.catalog`).
  * Does not own: any behaviour. There is no code here beyond freezing the tables.
  *
+ * A bone's `girth` is its mass data (kit/dynamics.js reads it) and is lean; what is drawn is its `shape` row, a
+ * stylised solid stated beside it (`drawn`, `flattened`, `fin` below), so every plan is presentable as it stands.
+ *
  * Conventions (kit/body-plan.js): metres, +Y up, +Z forward, +X the body's left. Every plan starts with a
  * `ground` bone at the origin, so a `size` dial on the root scales the whole body about the point it stands on.
  *
@@ -17,6 +20,13 @@
   /** The role that goes with a side suffix: 'Left' -> 'left'. */
   const sideRoles = (side) => (side === 'Left' ? 'left' : 'right');
 
+  /** A drawn limb or trunk segment: a capsule of this radius (metres), narrowing to `taper` of it at a tail's end. */
+  const drawn = (radius, taper) => ({ kind: 'capsule', radius, ...(taper === undefined ? {} : { taper }) });
+  /** The same, pressed to `depth` of its width front to back (a torso) or `width` of it side to side (a fish). */
+  const flattened = (radius, { width = 1, depth = 1, taper } = {}) => ({ ...drawn(radius, taper), scale: [width, 1, depth] });
+  /** A flat fin or wing: an outline [[across, along], ...] in the plane of the bone's long axis and `across`. */
+  const fin = (outline, across, depth = 0.014) => ({ kind: 'extrude', outline, depth, across });
+
   /** The three bones of a biped arm (and, below, leg) for one side; `side` is 'Left' or 'Right', `sign` +1 or -1 on X. */
   const bipedArm = (side, sign) => [
     {
@@ -25,6 +35,7 @@
       at: [0.2 * sign, 0.16, 0],
       roles: ['arm', 'primary', sideRoles(side)],
       girth: 0.07,
+      shape: drawn(0.056),
       limits: [
         [-170, 60],
         [-90, 90],
@@ -39,6 +50,7 @@
       at: [0, -0.28, 0],
       roles: ['arm', 'primary', sideRoles(side)],
       girth: 0.06,
+      shape: drawn(0.047),
       joint: 'hinge',
       limits: [
         [-150, 0],
@@ -47,7 +59,7 @@
       ],
       paint: 'skin',
     },
-    { name: `hand${side}`, parent: `forearm${side}`, at: [0, -0.26, 0], tail: [0, -0.1, 0], roles: ['arm', 'hand', 'primary', 'tip', sideRoles(side)], girth: 0.05, paint: 'skin' },
+    { name: `hand${side}`, parent: `forearm${side}`, at: [0, -0.26, 0], tail: [0, -0.1, 0], roles: ['arm', 'hand', 'primary', 'tip', sideRoles(side)], girth: 0.05, shape: drawn(0.046, 0.8), paint: 'skin' },
   ];
   const bipedLeg = (side, sign) => [
     {
@@ -56,6 +68,7 @@
       at: [0.1 * sign, -0.05, 0],
       roles: ['leg', 'primary', sideRoles(side)],
       girth: 0.1,
+      shape: drawn(0.088),
       limits: [
         [-120, 45],
         [-40, 40],
@@ -64,7 +77,7 @@
       paint: 'cloth',
     },
     // A knee folds the shin backwards: the default hinge, 0 to 150 degrees about X.
-    { name: `shin${side}`, parent: `thigh${side}`, at: [0, -0.45, 0], roles: ['leg', 'primary', sideRoles(side)], girth: 0.08, joint: 'hinge', paint: 'cloth' },
+    { name: `shin${side}`, parent: `thigh${side}`, at: [0, -0.45, 0], roles: ['leg', 'primary', sideRoles(side)], girth: 0.08, shape: drawn(0.066), joint: 'hinge', paint: 'cloth' },
     {
       name: `foot${side}`,
       parent: `shin${side}`,
@@ -72,7 +85,8 @@
       tail: [0, 0, 0.16],
       roles: ['leg', 'foot', 'primary', 'tip', sideRoles(side)],
       girth: 0.06,
-      shape: { kind: 'box', size: [0.09, 0.06, 0.22], at: [0, 0, 0.07] },
+      // A rounded shoe: a ball pressed flat and drawn out forwards.
+      shape: { kind: 'sphere', radius: 0.075, at: [0, 0.005, 0.06], scale: [0.72, 0.6, 1.6] },
     },
   ];
   /** A quadruped leg; `end` is 'front' or 'hind', `hip` the bone it hangs from. */
@@ -80,9 +94,9 @@
     const prefix = `${end}${side}`;
     const roles = ['leg', end, sideRoles(side), ...(end === 'hind' ? ['primary'] : [])];
     return [
-      { name: `${prefix}Upper`, parent: hip, at: [0.12 * sign, -0.06, 0], roles, girth: 0.08 },
-      { name: `${prefix}Lower`, parent: `${prefix}Upper`, at: [0, -0.27, 0], roles, girth: 0.06 },
-      { name: `${prefix}Paw`, parent: `${prefix}Lower`, at: [0, -0.25, 0], tail: [0, 0, 0.08], roles: [...roles, 'foot', 'tip'], girth: 0.05 },
+      { name: `${prefix}Upper`, parent: hip, at: [0.12 * sign, -0.06, 0], roles, girth: 0.08, shape: drawn(0.058) },
+      { name: `${prefix}Lower`, parent: `${prefix}Upper`, at: [0, -0.27, 0], roles, girth: 0.06, shape: drawn(0.038) },
+      { name: `${prefix}Paw`, parent: `${prefix}Lower`, at: [0, -0.25, 0], tail: [0, 0, 0.08], roles: [...roles, 'foot', 'tip'], girth: 0.05, shape: drawn(0.04, 0.85) },
     ];
   };
 
@@ -96,13 +110,14 @@
     biped: {
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
-        { name: 'pelvis', parent: 'ground', at: [0, 0.92, 0], roles: ['spine'], girth: 0.16, joint: 'free', paint: 'cloth' },
+        { name: 'pelvis', parent: 'ground', at: [0, 0.92, 0], roles: ['spine'], girth: 0.16, shape: flattened(0.15, { depth: 0.72 }), joint: 'free', paint: 'cloth' },
         {
           name: 'waist',
           parent: 'pelvis',
           at: [0, 0.18, 0],
           roles: ['spine'],
           girth: 0.15,
+          shape: flattened(0.135, { depth: 0.72 }),
           limits: [
             [-30, 45],
             [-30, 30],
@@ -116,6 +131,7 @@
           at: [0, 0.2, 0],
           roles: ['spine'],
           girth: 0.18,
+          shape: flattened(0.168, { depth: 0.68 }),
           limits: [
             [-20, 30],
             [-30, 30],
@@ -129,6 +145,7 @@
           at: [0, 0.22, 0],
           roles: ['neck'],
           girth: 0.05,
+          shape: drawn(0.055),
           limits: [
             [-40, 40],
             [-60, 60],
@@ -166,20 +183,20 @@
     quadruped: {
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
-        { name: 'hips', parent: 'ground', at: [0, 0.58, -0.35], roles: ['spine'], girth: 0.14, joint: 'free', paint: 'skin' },
-        { name: 'belly', parent: 'hips', at: [0, 0, 0.35], roles: ['spine'], girth: 0.17 },
-        { name: 'shoulders', parent: 'belly', at: [0, 0, 0.35], roles: ['spine'], girth: 0.16 },
-        { name: 'neck', parent: 'shoulders', at: [0, 0.14, 0.14], roles: ['neck'], girth: 0.08 },
-        { name: 'head', parent: 'neck', at: [0, 0.1, 0.14], tail: [0, 0, 0.24], roles: ['head'], girth: 0.12 },
-        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.06], tail: [0, 0, 0.16], roles: ['jaw'], girth: 0.04 },
+        { name: 'hips', parent: 'ground', at: [0, 0.58, -0.35], roles: ['spine'], girth: 0.14, shape: drawn(0.105), joint: 'free', paint: 'skin' },
+        { name: 'belly', parent: 'hips', at: [0, 0, 0.35], roles: ['spine'], girth: 0.17, shape: drawn(0.112) },
+        { name: 'shoulders', parent: 'belly', at: [0, 0, 0.35], roles: ['spine'], girth: 0.16, shape: drawn(0.125) },
+        { name: 'neck', parent: 'shoulders', at: [0, 0.14, 0.14], roles: ['neck'], girth: 0.08, shape: drawn(0.075) },
+        { name: 'head', parent: 'neck', at: [0, 0.1, 0.14], tail: [0, 0, 0.24], roles: ['head'], girth: 0.12, shape: drawn(0.085, 0.5) },
+        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.06], tail: [0, 0, 0.16], roles: ['jaw'], girth: 0.04, shape: drawn(0.034, 0.7) },
         ...quadrupedLeg('front', 'shoulders', 'Left', 1),
         ...quadrupedLeg('front', 'shoulders', 'Right', -1),
         ...quadrupedLeg('hind', 'hips', 'Left', 1),
         ...quadrupedLeg('hind', 'hips', 'Right', -1),
         // A tail is loose: low stiffness and under-damped, so a spring or chain driving it wags.
-        { name: 'tailBase', parent: 'hips', at: [0, 0.06, -0.1], roles: ['tail'], girth: 0.05, stiffness: 40, damping: 0.5, paint: 'skin' },
-        { name: 'tailMiddle', parent: 'tailBase', at: [0, 0.04, -0.2], roles: ['tail'], girth: 0.04, stiffness: 30, damping: 0.4, paint: 'skin' },
-        { name: 'tailEnd', parent: 'tailMiddle', at: [0, 0.03, -0.2], tail: [0, 0.02, -0.18], roles: ['tail', 'tip'], girth: 0.03, stiffness: 20, damping: 0.4, paint: 'skin' },
+        { name: 'tailBase', parent: 'hips', at: [0, 0.06, -0.1], roles: ['tail'], girth: 0.05, shape: drawn(0.032), stiffness: 40, damping: 0.5, paint: 'skin' },
+        { name: 'tailMiddle', parent: 'tailBase', at: [0, 0.04, -0.2], roles: ['tail'], girth: 0.04, shape: drawn(0.026), stiffness: 30, damping: 0.4, paint: 'skin' },
+        { name: 'tailEnd', parent: 'tailMiddle', at: [0, 0.03, -0.2], tail: [0, 0.02, -0.18], roles: ['tail', 'tip'], girth: 0.03, shape: drawn(0.021, 0.5), stiffness: 20, damping: 0.4, paint: 'skin' },
       ],
       sockets: [
         { name: 'headTop', bone: 'head', type: 'headTop', at: [0, 0.1, 0.06] },
@@ -190,12 +207,12 @@
     fish: {
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
-        { name: 'trunk', parent: 'ground', at: [0, 0.5, 0], roles: ['spine'], girth: 0.16, joint: 'free', paint: 'skin' },
-        { name: 'head', parent: 'trunk', at: [0, 0, 0.24], tail: [0, 0, 0.2], roles: ['head'], girth: 0.13 },
-        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.1], tail: [0, 0, 0.1], roles: ['jaw'], girth: 0.03 },
-        { name: 'rear', parent: 'trunk', at: [0, 0, -0.24], roles: ['spine'], girth: 0.12 },
-        { name: 'tailRoot', parent: 'rear', at: [0, 0, -0.2], roles: ['tail'], girth: 0.07 },
-        { name: 'tailStalk', parent: 'tailRoot', at: [0, 0, -0.16], roles: ['tail'], girth: 0.04 },
+        { name: 'trunk', parent: 'ground', at: [0, 0.5, 0], roles: ['spine'], girth: 0.16, shape: flattened(0.15, { width: 0.6 }), joint: 'free', paint: 'skin' },
+        { name: 'head', parent: 'trunk', at: [0, 0, 0.24], tail: [0, 0, 0.2], roles: ['head'], girth: 0.13, shape: flattened(0.13, { width: 0.6, taper: 0.45 }) },
+        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.1], tail: [0, 0, 0.1], roles: ['jaw'], girth: 0.03, shape: drawn(0.03, 0.7) },
+        { name: 'rear', parent: 'trunk', at: [0, 0, -0.24], roles: ['spine'], girth: 0.12, shape: flattened(0.12, { width: 0.55 }) },
+        { name: 'tailRoot', parent: 'rear', at: [0, 0, -0.2], roles: ['tail'], girth: 0.07, shape: flattened(0.095, { width: 0.5 }) },
+        { name: 'tailStalk', parent: 'tailRoot', at: [0, 0, -0.16], roles: ['tail'], girth: 0.04, shape: flattened(0.052, { width: 0.5 }) },
         {
           name: 'tailFin',
           parent: 'tailStalk',
@@ -211,16 +228,82 @@
               [0, -0.16],
               [-0.12, -0.22],
             ],
-            depth: 0.01,
+            depth: 0.014,
           },
         },
-        { name: 'dorsalFin', parent: 'trunk', at: [0, 0.14, -0.02], tail: [0, 0.16, -0.1], roles: ['fin'], girth: 0.02 },
-        { name: 'sideFinLeft', parent: 'trunk', at: [0.11, -0.04, 0.1], tail: [0.16, -0.06, -0.08], roles: ['fin', 'left', 'primary'], girth: 0.02 },
-        { name: 'sideFinRight', parent: 'trunk', at: [-0.11, -0.04, 0.1], tail: [-0.16, -0.06, -0.08], roles: ['fin', 'right', 'primary'], girth: 0.02 },
+        // Fins are flat outlines: the dorsal fin stands in the plane of the body, the side fins lie out from it.
+        {
+          name: 'dorsalFin',
+          parent: 'trunk',
+          at: [0, 0.14, -0.02],
+          tail: [0, 0.16, -0.1],
+          roles: ['fin'],
+          girth: 0.02,
+          shape: fin(
+            [
+              [0.14, -0.03],
+              [-0.02, 0.16],
+              [-0.17, 0.12],
+              [-0.14, -0.03],
+            ],
+            'z'
+          ),
+        },
+        {
+          name: 'sideFinLeft',
+          parent: 'trunk',
+          at: [0.08, -0.04, 0.1],
+          tail: [0.16, -0.06, -0.08],
+          roles: ['fin', 'left', 'primary'],
+          girth: 0.02,
+          shape: fin(
+            [
+              [0.06, 0],
+              [0.01, 0.22],
+              [-0.14, 0.2],
+              [-0.06, 0],
+            ],
+            'z'
+          ),
+        },
+        {
+          name: 'sideFinRight',
+          parent: 'trunk',
+          at: [-0.08, -0.04, 0.1],
+          tail: [-0.16, -0.06, -0.08],
+          roles: ['fin', 'right', 'primary'],
+          girth: 0.02,
+          shape: fin(
+            [
+              [0.06, 0],
+              [0.01, -0.22],
+              [-0.14, -0.2],
+              [-0.06, 0],
+            ],
+            'z'
+          ),
+        },
       ],
       sockets: [{ name: 'back', bone: 'trunk', type: 'back', at: [0, 0.14, 0.06] }],
     },
   };
+
+  /** A left wing's arm blade, [up, out] from the shoulder, and its hand blade, [out, up] from the wrist; the right wing mirrors `out`. */
+  const WING_ARM = [
+    [0.03, 0],
+    [0.27, 0.44],
+    [0.16, 0.46],
+    [-0.16, 0.34],
+    [-0.2, 0.06],
+  ];
+  const WING_HAND = [
+    [-0.02, 0.05],
+    [0.06, 0.02],
+    [0.3, -0.34],
+    [0.16, -0.38],
+    [-0.1, -0.26],
+    [-0.1, -0.06],
+  ];
 
   /**
    * Parts by id, as `PartSpec` rows without their id.
@@ -302,10 +385,11 @@
     wings: {
       fits: ['back'],
       bones: [
-        { name: 'wingLeft', at: [0.06, 0, 0], roles: ['wing', 'left'], girth: 0.04 },
-        { name: 'wingLeftTip', parent: 'wingLeft', at: [0.42, 0.22, -0.06], tail: [0.3, -0.34, -0.04], roles: ['wing', 'left', 'tip'], girth: 0.03 },
-        { name: 'wingRight', at: [-0.06, 0, 0], roles: ['wing', 'right'], girth: 0.04 },
-        { name: 'wingRightTip', parent: 'wingRight', at: [-0.42, 0.22, -0.06], tail: [-0.3, -0.34, -0.04], roles: ['wing', 'right', 'tip'], girth: 0.03 },
+        // Each wing is two flat blades: an arm out to the wrist, and a hand that sweeps down from it.
+        { name: 'wingLeft', at: [0.06, 0, 0], roles: ['wing', 'left'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, out]), 'y') },
+        { name: 'wingLeftTip', parent: 'wingLeft', at: [0.42, 0.22, -0.06], tail: [0.3, -0.34, -0.04], roles: ['wing', 'left', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [out, up]), 'x') },
+        { name: 'wingRight', at: [-0.06, 0, 0], roles: ['wing', 'right'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, -out]), 'y') },
+        { name: 'wingRightTip', parent: 'wingRight', at: [-0.42, 0.22, -0.06], tail: [-0.3, -0.34, -0.04], roles: ['wing', 'right', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [-out, up]), 'x') },
       ],
     },
   };
