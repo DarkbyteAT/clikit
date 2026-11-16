@@ -24,6 +24,7 @@ const THUMB = {
   swipePixels: 90, // well past the kit's swipe threshold
   swipeMoves: 4,
   dragMovesPerLeg: 8,
+  flickMoves: 3,
   dragSeconds: 0.4,
   tapGapSeconds: 0.15, // between repeated taps: a fast but human rate
 };
@@ -93,10 +94,15 @@ const editDistance = (from, to) => {
 
 // ---- running helpers -------------------------------------------------------------------------------------------------
 
-/** Evaluates a predicate (expression text or a function's source) in the page against the live debug state. */
+const MS_PER_SECOND = 1000;
+
+/**
+ * Evaluates a predicate (expression text or a function's source) in the page against the live debug state.
+ * An expression that gives a promise is waited for, so `log Kit.debug.probe(3)` prints the probe, not `{}`.
+ */
 const evaluateTest = (session, test) =>
   session.page.evaluate(
-    ({ source, isFunction }) => {
+    async ({ source, isFunction }) => {
       const kit = Kit.debug.state();
       const state = kit.state || {};
       const show = (value) => {
@@ -107,9 +113,10 @@ const evaluateTest = (session, test) =>
         }
       };
       try {
-        const value = isFunction
+        const given = isFunction
           ? new Function(`return (${source});`)()(state, kit.hud, kit)
           : new Function('state', 'hud', 'time', 'modal', 'kit', `return (${source});`)(state, kit.hud, kit.time, kit.modal, kit);
+        const value = given && typeof given.then === 'function' ? await given : given;
         return { passed: Boolean(value), shown: show(value), hasState: Boolean(kit.state) };
       } catch (error) {
         return { passed: false, error: error.message, hasState: Boolean(kit.state) };
@@ -128,11 +135,21 @@ const explainTest = (result) => {
 /** The kit-level debug state, for timeouts and the final report. */
 const readKitState = (session) => session.page.evaluate(() => Kit.debug.state());
 
-/** Waits for game time (not wall-clock time) to advance, so a wait means the same on a fast or a slow machine. */
+/**
+ * Waits for game time (not wall-clock time) to advance, so a wait means the same on a fast or a slow machine.
+ * A game that is paused when the wait begins (a modal or a sheet is open) has no game time to wait for: the
+ * wait is then that many real seconds, and the step's note says so.
+ * @returns {Promise<(string|void)>} a note for the report when the wait ran on the wall clock
+ */
 async function waitGameSeconds(session, seconds) {
-  const deadline = Date.now() + (LIMITS.waitBaseSeconds + seconds * LIMITS.waitStretch) * 1000;
+  const deadline = Date.now() + (LIMITS.waitBaseSeconds + seconds * LIMITS.waitStretch) * MS_PER_SECOND;
   let elapsed = 0;
-  let last = (await readKitState(session)).time;
+  const atStart = await readKitState(session);
+  if (atStart.paused) {
+    await session.page.waitForTimeout(seconds * MS_PER_SECOND);
+    return `the game is paused${atStart.modal ? ` ("${atStart.modal}" is open)` : ''}: waited ${seconds} real seconds`;
+  }
+  let last = atStart.time;
   while (elapsed < seconds) {
     if (Date.now() > deadline) {
       const kit = await readKitState(session);
@@ -149,7 +166,7 @@ async function waitGameSeconds(session, seconds) {
 
 /** Polls an in-page action until it reports `done`, or throws its last complaint when the time is up. */
 async function retryInPage(session, seconds, action, argument) {
-  const deadline = Date.now() + seconds * 1000;
+  const deadline = Date.now() + seconds * MS_PER_SECOND;
   for (;;) {
     const result = await session.page.evaluate(action, argument);
     if (result.done) return result;
@@ -162,7 +179,10 @@ async function retryInPage(session, seconds, action, argument) {
 const pressInPage = (label) => {
   const wanted = label.toLowerCase();
   const chips = { back: '#back', restart: '#restart' };
-  const buttons = chips[wanted] ? [document.querySelector(chips[wanted])] : [...document.querySelectorAll('#actions button, #hud-layer button')];
+  // An open component dialog (ui.dialog) is modal: only its buttons can be pressed while it is open.
+  const dialog = document.querySelector('dialog.ui-dialog[open]');
+  const pressable = dialog ? [...dialog.querySelectorAll('button')] : [...document.querySelectorAll('#actions button, #hud-layer button')];
+  const buttons = chips[wanted] ? [document.querySelector(chips[wanted])] : pressable;
   const labelOf = (button) => (button.querySelector('b') || button).textContent.trim();
   const match = buttons.find((button) => labelOf(button).toLowerCase() === wanted) || buttons.find((button) => button.textContent.toLowerCase().includes(wanted));
   const available = buttons.map((button) => `"${labelOf(button)}"${button.disabled ? ' (disabled)' : ''}`).join(', ') || 'none';
@@ -174,7 +194,7 @@ const pressInPage = (label) => {
 
 /** In-page: clicks an option of the open modal, by index or by label. */
 const chooseInPage = (option) => {
-  const buttons = [...document.querySelectorAll('#modal:not([hidden]) button')];
+  const buttons = [...document.querySelectorAll('#modal:not([hidden]) button, dialog.ui-dialog[open] button')];
   const labelOf = (button) => (button.querySelector('b') || button).textContent.trim();
   if (!buttons.length) return { done: false, complaint: `no modal opened to choose "${option}" from. Wait for it with \`until modal\`.` };
   const match = typeof option === 'number' ? buttons[option] : buttons.find((button) => button.textContent.toLowerCase().includes(String(option).toLowerCase()));
@@ -209,7 +229,7 @@ const STEPS = {
       const point = resolvePoint(at, session.size);
       for (let count = 0; count < times; count++) {
         await session.pointer.tap(point.x, point.y);
-        if (count < times - 1) await session.page.waitForTimeout(every * 1000);
+        if (count < times - 1) await session.page.waitForTimeout(every * MS_PER_SECOND);
       }
     },
   },
@@ -226,7 +246,7 @@ const STEPS = {
     },
     async run(session, { points, seconds }) {
       const [start, ...rest] = points.map((point) => resolvePoint(point, session.size));
-      const pauseMs = (seconds * 1000) / (rest.length * THUMB.dragMovesPerLeg);
+      const pauseMs = (seconds * MS_PER_SECOND) / (rest.length * THUMB.dragMovesPerLeg);
       await session.pointer.down(start.x, start.y);
       let from = start;
       for (const to of rest) {
@@ -238,6 +258,85 @@ const STEPS = {
         from = to;
       }
       await session.pointer.up();
+    },
+  },
+  down: {
+    usage: 'down <point>',
+    about: 'press a point and keep it down across the next steps (move it with `move`, let go with `up`)',
+    fromText: (text) => ({ down: takePoints(wordsOf(text)).points[0] }),
+    normalize: (at) => {
+      if (at === undefined || at === true) throw new Error('down needs a point, e.g. "down 0.5,0.7" or { down: "center" }.');
+      return { at };
+    },
+    async run(session, { at }) {
+      const point = resolvePoint(at, session.size);
+      await session.pointer.down(point.x, point.y);
+      session.held = point;
+    },
+  },
+  move: {
+    usage: 'move <point> [in <seconds>]',
+    about: 'move the held pointer to a point and keep it down (take a `shot` of a drag in progress, then `up`)',
+    fromText: (text) => {
+      const duration = /\bin\s+([\d.]+)\s*$/.exec(text);
+      return { move: takePoints(wordsOf(text.replace(/\bin\s+[\d.]+\s*$/, ''))).points[0], seconds: duration ? Number(duration[1]) : THUMB.dragSeconds };
+    },
+    normalize: (at, { seconds = THUMB.dragSeconds }) => {
+      if (at === undefined || at === true) throw new Error('move needs a point, e.g. "move 0.4,0.9 in 0.5".');
+      return { at, seconds };
+    },
+    async run(session, { at, seconds }) {
+      if (!session.held) throw new Error('move needs the pointer to be down: add a `down <point>` step before it.');
+      const to = resolvePoint(at, session.size);
+      const from = session.held;
+      for (let move = 1; move <= THUMB.dragMovesPerLeg; move++) {
+        const progress = move / THUMB.dragMovesPerLeg;
+        await session.pointer.move(from.x + (to.x - from.x) * progress, from.y + (to.y - from.y) * progress);
+        await session.page.waitForTimeout((seconds * MS_PER_SECOND) / THUMB.dragMovesPerLeg);
+      }
+      session.held = to;
+    },
+  },
+  flick: {
+    usage: 'flick <point>',
+    about: 'whip the held pointer to a point and let go at once (the end of a drag that is thrown, not placed)',
+    fromText: (text) => ({ flick: takePoints(wordsOf(text)).points[0] }),
+    normalize: (at) => {
+      if (at === undefined || at === true) throw new Error('flick needs a point, e.g. "flick 0.7,0.9" after a `down`.');
+      return { at };
+    },
+    async run(session, { at }) {
+      if (!session.held) throw new Error('flick needs the pointer to be down: add a `down <point>` step before it.');
+      const to = resolvePoint(at, session.size);
+      const from = session.held;
+      // The travel and the release are one burst, timed as a thumb's flick is (see `flick` in browser.js).
+      await session.pointer.flick(Array.from({ length: THUMB.flickMoves }, (_unused, move) => ({ x: from.x + ((to.x - from.x) * (move + 1)) / THUMB.flickMoves, y: from.y + ((to.y - from.y) * (move + 1)) / THUMB.flickMoves })));
+      session.held = null;
+    },
+  },
+  up: {
+    usage: 'up',
+    about: 'let go of the pointer that `down` pressed',
+    fromText: () => ({ up: true }),
+    normalize: () => ({}),
+    async run(session) {
+      if (!session.held) throw new Error('up needs the pointer to be down: add a `down <point>` step before it.');
+      await session.pointer.up();
+      session.held = null;
+    },
+  },
+  resize: {
+    usage: 'resize <width>x<height>',
+    about: 'change the window to a size in CSS pixels (turn a phone on its side mid-game: "resize 844x390")',
+    fromText: (text) => ({ resize: text.trim() }),
+    normalize: (size) => {
+      const parsed = /^(\d+)x(\d+)$/.exec(String(size));
+      if (!parsed) throw new Error(`resize needs <width>x<height> in CSS pixels, e.g. "resize 844x390", got "${size}".`);
+      return { width: Number(parsed[1]), height: Number(parsed[2]) };
+    },
+    async run(session, { width, height }) {
+      await session.page.setViewportSize({ width, height });
+      Object.assign(session.size, { width, height });
     },
   },
   swipe: {
@@ -314,7 +413,7 @@ const STEPS = {
     },
     normalize: (test, { timeout = LIMITS.untilSeconds }) => ({ test, timeout }),
     async run(session, { test, timeout }) {
-      const deadline = Date.now() + timeout * 1000;
+      const deadline = Date.now() + timeout * MS_PER_SECOND;
       for (;;) {
         const result = await evaluateTest(session, test);
         if (result.passed) return;
@@ -335,7 +434,7 @@ const STEPS = {
   },
   log: {
     usage: 'log <expression>',
-    about: 'print the value of an expression over the debug state (try: log kit)',
+    about: 'print the value of an expression over the debug state; a promise is waited for (try: log kit, log Kit.debug.probe(3))',
     fromText: (text) => ({ log: text.trim() || 'kit' }),
     normalize: (test) => ({ test }),
     async run(session, { test }) {

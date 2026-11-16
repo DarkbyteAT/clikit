@@ -42,12 +42,13 @@ async function stack(session, strips, file) {
 
 /**
  * Photographs suites.
- * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number, count?: number}} options `count`: how many
+ * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], acts?: string[], out?: string, pages?: number, count?: number}} options
+ *   `acts` narrows the acts suite to those movements (default: every one a body can do); `count`: how many
  *   individuals the rolls and faces suites roll (their default when left out)
  * @returns {Promise<{files: string[], problems: string[]}>}
  * @example await makeProof({ suites: ['turn', 'rolls'], catalog: 'wardrobe', preset: 'pixel' });
  */
-async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages, count }) {
+async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], acts, out = OUT, pages: mostPages = PAGE.mostPages, count }) {
   const session = await openArcade({ size: { width: PAGE.cellWidth * 8, height: 1200 } });
   const files = [];
   const problems = [];
@@ -66,9 +67,9 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         strips = [];
       };
       for (let page = 0, pageCount = 1, filed = 0; page < Math.min(pageCount, mostPages); page++) {
-        const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, count, page: 0, rows: 1 });
+        const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, ...(acts ? { acts } : {}), count, page: 0, rows: 1 });
         const rows = probe.framing === 'head' ? 1 : PAGE.rows;
-        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, count, page, rows });
+        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, ...(acts ? { acts } : {}), count, page, rows });
         pageCount = first.pages;
         await session.page.setViewportSize({ width: first.columns * PAGE.cellWidth, height: Math.round((first.columns * PAGE.cellWidth) / first.aspect) });
         await session.page.waitForTimeout(PAGE.settleMs);

@@ -639,6 +639,8 @@
    * @property {function(): void} [dispose] called when the game is left or restarted
    * @property {function(): Object} [debugState] plain data describing the run right now (score, phase, positions);
    *   surfaced as `Kit.debug.state().state` to the developer overlay and to `node tools/dev.js play` predicates
+   * @property {Object<string, *>} [tools] handles for scripted playtests and measurements (jump to a level, fire an
+   *   action without a finger, time a frame), reached as `Kit.debug.tools()`; never used by the game itself
    */
 
   /**

@@ -9,7 +9,10 @@
  *        `legs` (what a plan's legs are, measured from its data), the stages `plant` (full detail: planted
  *        feet, inverse kinematics, a pelvis held where the legs can reach, a sprung bob and a shift over the
  *        support), `swing` (level of detail 1: the same clock driving joint angles, no solving) and `arms`
- *        (arms swing against the legs), the ready composition `walk`, and `feet` / `support` (read where the
+ *        (arms swing against the legs, as far as the stride is long, folded at a run); the trunk over the legs
+ *        (hips and shoulders counter-rotate, a trunk on two rows of legs rocks), a heel strike, the tucked
+ *        swing and the flight of a run; `reachLeg` / `levelFoot` (one leg solved to a point, for other
+ *        stages); the ready composition `walk`, and `feet` / `support` (read where the
  *        feet are and whether the centre of mass is over them).
  * Does not own: the stage machinery, lean, trailing chains or the fixed clock (kit/motion.js, kit/dynamics.js),
  *        the solvers (kit/reach.js), plans and which way a knee bends (kit/body-plan.js), where the body goes
@@ -106,15 +109,36 @@
   const SWING_ONLY = Object.freeze({ mostReach: 0.85, stanceKnee: 0.12, swingKnee: 0.95, fullSwingAt: 0.4, dipShare: 0.6 });
   /** Arms. Radians unless noted. */
   const ARMS = Object.freeze({
-    swing: 0.9, // shoulder swing per (half a stance length over leg length)
-    elbowRest: 0.12,
-    elbowPerFroude: 0.55, // runners carry their forearms up
-    mostElbowFroude: 2.2,
-    elbowSwing: 0.35, // extra fold as the arm comes forward
+    swingPerStride: 0.34, // shoulder swing each way per leg length of stride: an arm swings as far as the leg it balances
+    mostSwing: 1, // however long the stride
+    elbowRest: 0.16, // a walker's arm hangs almost straight
+    elbowRun: 1.45, // a runner's is folded to about a right angle
+    elbowSwing: 0.3, // extra fold as the arm comes forward
   });
-
-  /** Radians a walker's body tilts forward per metre per second: nothing to see at a walk, a clear lean at a run. */
-  const RUN_LEAN = 0.035;
+  /** How much of a run a movement is, from its Froude number: none at or below `from`, all at `full`. People break into a run near 0.5. */
+  const RUN = Object.freeze({ from: 0.5, full: 1.3 });
+  /**
+   * The trunk over the legs. Radians per unit of stride size (half a stance over a leg length, at most 1) unless noted.
+   */
+  const TORSO = Object.freeze({
+    twist: 0.36, // a girdle turns towards its leg that is forward (the hip follows the foot)
+    list: 0.08, // and drops on the side of the leg that is in the air
+    shoulders: 0.9, // of the hips' twist the shoulders show the OTHER way: the arms' swing starts in the chest
+    steadyHead: 0.9, // of all that turning the neck takes back, so the eyes stay on where the body is going
+    rock: 0.14, // a trunk on two rows of legs pitches towards the row that is on the ground (a gallop rocks)
+    lean: 0.14, // radians of forward lean per unit of Froude number: almost nothing at a walk, a clear lean at a run
+  });
+  /** A swinging foot beyond the plain arc of its gait's clearance. In leg lengths unless noted. */
+  const SWING_PATH = Object.freeze({
+    tuck: 0.3, // at a run the heel comes up behind before the knee drives through
+    tuckBy: 0.55, // fraction of the swing by which the tuck is over
+    strike: 0.5, // radians the toes are held up as a walking foot reaches forward: it comes down heel first
+    strikeFrom: 0.4, // fraction of the swing at which the toes start to lift; they are flat again as the weight comes on
+  });
+  /** With no foot on the ground a body is a projectile: it rises and falls on a parabola, drawn this many times taller so it reads. */
+  const FLIGHT_BOOST = 2.5;
+  /** How fast each leg's place in the stride eases to a new gait's, per second: a walk becomes a trot over a stride, not in a frame. */
+  const OFFSET_RATE = 5;
 
   const NAME = 'Kit.gait';
   const SIDE = Object.freeze({ left: 0, middle: 1, right: 2 });
@@ -128,6 +152,11 @@
   const WALK_NEEDS = Kit.body.requirement({ atLeast: { legs: 2 } });
   const LEG_MASK = Kit.body.roleMask(['leg']);
   const ARM_MASK = Kit.body.roleMask(['arm']);
+  const SPINE_MASK = Kit.body.roleMask(['spine']);
+  const NECK_MASK = Kit.body.roleMask(['neck']);
+  const HEAD_MASK = Kit.body.roleMask(['head']);
+  /** Rows of legs a trunk's turning is worked out for (a centipede's further rows ride rigidly). */
+  const MOST_ROWS = 8;
 
   const clamp = (value, lowest, highest) => Math.min(highest, Math.max(lowest, value));
   const fraction = (value) => value - Math.floor(value);
@@ -200,6 +229,14 @@
    * @property {number} upright 1 for a body whose hips are all in one row (it can lean from them), falling to 0 as
    *   the rows of hips spread a leg length apart (a level trunk on legs at both ends must not nod)
    * @property {number} carrier the bone the body is carried by (`Kit.motion.carrier`)
+   * @property {number} rowCount rows of hips, at most `MOST_ROWS`
+   * @property {Int16Array} rowLeft per row: a left leg of it, or -1
+   * @property {Int16Array} rowRight per row: a right leg of it, or -1
+   * @property {Int16Array} rowGirdle per row: the spine bone its hips hang from (a pelvis, a shoulder girdle)
+   * @property {number} armGirdle the spine bone the arms hang from, or -1 when that is the carrier or there are no arms
+   * @property {number} steadyBone the first bone of the neck (else the head), which keeps the head facing ahead; or -1
+   * @property {Uint8Array} steadyUnder per row, then the arm girdle: 1 when the steady bone hangs from that girdle
+   * @property {Float32Array} frames `Kit.motion.restFrames`: for turning bones about the body's axes
    * @property {number} stretchX how much the carrier's parent stretches offsets, left and up (for writing a
    *   world shift into the local pose)
    * @property {number} stretchY
@@ -298,6 +335,14 @@
       standLift: 0,
       upright: Math.max(0, 1 - (hipsBackToFront[count - 1] - hipsBackToFront[0]) / legLength),
       carrier: Kit.motion.carrier(plan),
+      rowCount: 0,
+      rowLeft: new Int16Array(0),
+      rowRight: new Int16Array(0),
+      rowGirdle: new Int16Array(0),
+      armGirdle: -1,
+      steadyBone: -1,
+      steadyUnder: new Uint8Array(0),
+      frames: new Float32Array(0),
       stretchX: world.scale[0],
       stretchY: world.scale[1],
       gaits: [],
@@ -345,6 +390,31 @@
       armLeg: Int16Array.from(partners, (partner) => partner.leg),
       armShift: Float32Array.from(partners, (partner) => partner.shift),
     });
+    // The trunk: which spine bone each row of hips hangs from, and what the arms and the head hang from.
+    const girdleOf = (bone) => {
+      let above = plan.parent[bone];
+      while (above > 0 && !(plan.roles[above] & SPINE_MASK)) above = plan.parent[above];
+      return above > 0 ? above : rig.carrier;
+    };
+    const isUnder = (bone, ancestor) => {
+      for (let above = bone; above >= 0; above = plan.parent[above]) if (above === ancestor) return true;
+      return false;
+    };
+    const rowCount = Math.min(MOST_ROWS, rowStarts.length);
+    const legOfRow = (row, side) => Array.from(rig.side).findIndex((legSide, leg) => rig.row[leg] === row && legSide === side);
+    const rowGirdle = Int16Array.from({ length: rowCount }, (_unused, row) => girdleOf(rig.upper[Array.from(rig.row).indexOf(row)]));
+    const armGirdle = arms.length ? girdleOf(arms[0][0]) : -1;
+    const steadyBone = [...Kit.body.bonesWithRoles(plan, NECK_MASK), ...Kit.body.bonesWithRoles(plan, HEAD_MASK), -1][0];
+    Object.assign(rig, {
+      rowCount,
+      rowLeft: Int16Array.from({ length: rowCount }, (_unused, row) => legOfRow(row, SIDE.left)),
+      rowRight: Int16Array.from({ length: rowCount }, (_unused, row) => legOfRow(row, SIDE.right)),
+      rowGirdle,
+      armGirdle: armGirdle === rig.carrier || rowGirdle.includes(armGirdle) ? -1 : armGirdle,
+      steadyBone,
+      steadyUnder: Uint8Array.from([...rowGirdle, armGirdle], (girdle) => (steadyBone >= 0 && girdle >= 0 && isUnder(steadyBone, girdle) ? 1 : 0)),
+      frames: Kit.motion.restFrames(plan, rest),
+    });
     rigByRest.set(rest, Object.freeze(rig));
     return rig;
   };
@@ -363,6 +433,8 @@
    * @property {Float32Array} targetY
    * @property {Float32Array} targetZ
    * @property {Float32Array} pitch how far the foot is pitched about its toe, radians
+   * @property {Float32Array} strike how far a swinging foot's toes are held up as it reaches forward, radians (zero or negative)
+   * @property {number} air metres the body is off its standing height because no foot is down (a run's flight)
    * @property {Float32Array} swing 0..1 through the swing, for a foot in the air
    * @property {Uint32Array} plantCount how many times the foot has landed
    * @property {Object} bob the spring the body's height rides on (`Kit.dynamics` spring)
@@ -380,16 +452,18 @@
    * @property {number} cadence strides per second
    * @property {number} halfStance metres a planted foot travels each side of its hip
    * @property {boolean} isMoving false while standing
-   * @property {Float32Array} offsets per leg: where in the stride it starts its stance
+   * @property {number} runShare 0 at a walk, 1 at a full run (`Kit.gait.RUN`)
+   * @property {Float32Array} offsets per leg: where in the stride it starts its stance (eased from one gait's to the next's)
    * @property {?FeetState} feet made by the `plant` stage; null at lower detail
    */
 
   const DUTY_BLEND = 1 - Math.exp(-CLOCK.dutyRate * FIXED_STEP);
+  const OFFSET_BLEND = 1 - Math.exp(-OFFSET_RATE * FIXED_STEP);
 
   /** @returns {GaitClock} */
   const createClock = (motion) => {
     const rig = legs(motion.plan, motion.rest);
-    return { rig, gait: 0, froude: 0, duty: rig.gaits[0].duty, stride: 0, cadence: 0, halfStance: 0, isMoving: false, offsets: rig.gaits[0].offsets, feet: null };
+    return { rig, gait: 0, froude: 0, duty: rig.gaits[0].duty, stride: 0, cadence: 0, halfStance: 0, isMoving: false, runShare: 0, offsets: Float32Array.from(rig.gaits[0].offsets), feet: null };
   };
   const clockOf = (motion) => memory(motion, 'gait', createClock);
 
@@ -401,8 +475,13 @@
     while (clock.gait < rig.gaits.length - 1 && clock.froude > rig.gaits[clock.gait].fastestFroude * (1 + CLOCK.gaitHysteresis)) clock.gait += 1;
     while (clock.gait > 0 && clock.froude < rig.gaits[clock.gait - 1].fastestFroude * (1 - CLOCK.gaitHysteresis)) clock.gait -= 1;
     const row = rig.gaits[clock.gait];
-    clock.offsets = row.offsets;
+    // Each leg's place in the stride moves to the gait's the shorter way round the cycle.
+    for (let leg = 0; leg < rig.count; leg++) {
+      const apart = row.offsets[leg] - clock.offsets[leg];
+      clock.offsets[leg] = fraction(clock.offsets[leg] + (apart - Math.round(apart)) * OFFSET_BLEND);
+    }
     clock.isMoving = clock.froude > CLOCK.idleFroude;
+    clock.runShare = Kit.blend.smooth(clamp((clock.froude - RUN.from) / (RUN.full - RUN.from), 0, 1));
     clock.stride = STRIDE.factor * rig.legLength * clock.froude ** STRIDE.exponent;
     // A foot can only stay down while the body travels about a leg length over it: at speed the duty factor falls below the table's.
     const reachDuty = clock.isMoving ? (CLOCK.mostTravel * rig.legLength) / clock.stride : 1;
@@ -430,11 +509,15 @@
     targetY: new Float32Array(rig.count),
     targetZ: new Float32Array(rig.count),
     pitch: new Float32Array(rig.count),
+    strike: new Float32Array(rig.count),
     swing: new Float32Array(rig.count),
     plantCount: new Uint32Array(rig.count),
     bob: Kit.dynamics.spring({ stiffness: STANCE.bobStiffness, damping: STANCE.bobDamping * Kit.dynamics.criticalDamping(STANCE.bobStiffness) }),
     shift: Kit.dynamics.spring({ stiffness: STANCE.shiftStiffness }),
     drop: 0,
+    flightSeconds: 0,
+    flightSpan: 0,
+    air: 0,
     isSettling: false,
     epoch: -1,
     steppedAt: -1,
@@ -453,8 +536,11 @@
       feet.targetY[leg] = motion.y + rig.sole[leg];
       feet.targetZ[leg] = feet.footZ[leg];
       feet.pitch[leg] = 0;
+      feet.strike[leg] = 0;
       feet.swing[leg] = 0;
     }
+    feet.flightSpan = 0;
+    feet.air = 0;
     feet.bob.value = 0;
     feet.bob.velocity = 0;
     feet.shift.value = 0;
@@ -477,9 +563,14 @@
     const swingSeconds = clamp(clock.cadence > 0 ? (1 - duty) / clock.cadence : Infinity, SWING.shortest * period, SWING.longest * period);
     const stanceSeconds = clock.isMoving ? duty / clock.cadence : 0;
     const clearance = rig.gaits[clock.gait].clearance * rig.legLength;
+    const tuck = SWING_PATH.tuck * clock.runShare * rig.legLength;
+    // Only a walking foot comes down heel first, and the toes lift further the longer the stride.
+    const strike = -SWING_PATH.strike * (1 - clock.runShare) * Math.min(1, clock.halfStance / (SWING_ONLY.fullSwingAt * rig.legLength));
     const sine = Math.sin(motion.heading);
     const cosine = Math.cos(motion.heading);
     let stillSettling = false;
+    let plantedCount = 0;
+    let soonestLanding = Infinity;
     // Hot path: an index loop over the legs, no allocation.
     for (let leg = 0; leg < rig.count; leg++) {
       const legPhase = fraction(motion.phase + clock.offsets[leg]);
@@ -500,9 +591,13 @@
           feet.liftHeading[leg] = feet.footHeading[leg];
         } else if (isAstray) stillSettling = true;
       }
-      if (feet.planted[leg]) continue;
+      if (feet.planted[leg]) {
+        plantedCount += 1;
+        continue;
+      }
       stillSettling = true;
       feet.swing[leg] = Math.min(1, feet.swing[leg] + dt / swingSeconds);
+      soonestLanding = Math.min(soonestLanding, (1 - feet.swing[leg]) * swingSeconds);
       // Land ahead of where the hip will be at touchdown by a share of the stance's travel, so the body passes over the foot.
       const lead = (1 - feet.swing[leg]) * swingSeconds + stanceSeconds * STANCE.landShare;
       const landHeading = motion.heading + motion.turnRate * lead;
@@ -519,7 +614,9 @@
         feet.targetY[leg] = motion.y + rig.sole[leg];
         feet.targetZ[leg] = landZ;
         feet.pitch[leg] = 0;
+        feet.strike[leg] = 0;
         feet.plantCount[leg] += 1;
+        plantedCount += 1;
         // The body gives a little as the weight comes onto the new foot.
         feet.bob.velocity -= STANCE.bobKick * motion.speed;
         continue;
@@ -527,11 +624,81 @@
       const eased = Kit.blend.smooth(feet.swing[leg]);
       feet.targetX[leg] = feet.liftX[leg] + (landX - feet.liftX[leg]) * eased;
       feet.targetZ[leg] = feet.liftZ[leg] + (landZ - feet.liftZ[leg]) * eased;
-      feet.targetY[leg] = motion.y + rig.sole[leg] + feet.liftY[leg] * (1 - eased) + clearance * Math.sin(Math.PI * feet.swing[leg]);
+      // The gait's arc, and at a run the heel coming up behind in the first part of the swing.
+      const tucked = feet.swing[leg] < SWING_PATH.tuckBy ? tuck * Math.sin((Math.PI * feet.swing[leg]) / SWING_PATH.tuckBy) : 0;
+      feet.targetY[leg] = motion.y + rig.sole[leg] + feet.liftY[leg] * (1 - eased) + clearance * Math.sin(Math.PI * feet.swing[leg]) + tucked;
       feet.pitch[leg] = feet.liftPitch[leg] * (1 - eased);
+      // Toes up through the reach, flat by the moment of landing: a planted foot never turns but about its toe.
+      feet.strike[leg] = strike * Math.sin(Math.PI * clamp((feet.swing[leg] - SWING_PATH.strikeFrom) / (1 - SWING_PATH.strikeFrom), 0, 1)) ** 2;
       feet.footHeading[leg] = feet.liftHeading[leg] + shortestTurn(feet.liftHeading[leg], motion.heading) * eased;
     }
     feet.isSettling = stillSettling;
+    // Flight: from the step the last foot leaves until the next one lands the body is a projectile, up and
+    // down on the parabola gravity gives it over that time.
+    if (plantedCount > 0 || !clock.isMoving) feet.flightSpan = 0;
+    else if (feet.flightSpan === 0) {
+      feet.flightSpan = Math.max(soonestLanding, dt);
+      feet.flightSeconds = 0;
+    } else feet.flightSeconds = Math.min(feet.flightSpan, feet.flightSeconds + dt);
+    feet.air = feet.flightSpan > 0 ? FLIGHT_BOOST * (GRAVITY / 2) * feet.flightSeconds * (feet.flightSpan - feet.flightSeconds) : 0;
+  };
+
+  const rowYaw = new Float32Array(MOST_ROWS);
+  const rowTilt = new Float32Array(MOST_ROWS);
+  const rowLift = new Float32Array(MOST_ROWS);
+  /** How far through its swing arc a leg is at a phase: 0 on the ground, 1 at mid swing. */
+  const swingLift = (legPhase, duty) => (legPhase < duty ? 0 : Math.sin((Math.PI * (legPhase - duty)) / (1 - duty)));
+
+  /**
+   * Turns the trunk with the legs: each girdle (the spine bone a row of hips hangs from) turns towards its
+   * leg that is forward and drops on the side of its leg that is in the air; the bone the arms hang from
+   * turns the other way; a trunk on two rows of legs rocks towards the row that is down; and the neck takes
+   * most of it back so the head keeps facing where the body goes. All from the clock, so it is smooth.
+   */
+  const poseTorso = (motion, clock) => {
+    const { rig } = clock;
+    const size = Math.min(1, clock.halfStance / rig.legLength);
+    if (size <= 0) return;
+    const { rotation } = motion.pose;
+    const { frames } = rig;
+    let carrierRow = -1;
+    for (let row = 0; row < rig.rowCount; row++) {
+      const left = rig.rowLeft[row];
+      const right = rig.rowRight[row];
+      rowYaw[row] = 0;
+      rowTilt[row] = 0;
+      rowLift[row] = 0;
+      if (rig.rowGirdle[row] === rig.carrier) carrierRow = row;
+      if (left < 0 || right < 0) continue;
+      const leftPhase = fraction(motion.phase + clock.offsets[left]);
+      const rightPhase = fraction(motion.phase + clock.offsets[right]);
+      const leftLift = swingLift(leftPhase, clock.duty);
+      const rightLift = swingLift(rightPhase, clock.duty);
+      // The right foot forward brings the right hip forward: a turn to the left.
+      rowYaw[row] = (TORSO.twist * size * (footOffset(rightPhase, clock.duty) - footOffset(leftPhase, clock.duty))) / 2;
+      rowTilt[row] = TORSO.list * size * (leftLift - rightLift);
+      rowLift[row] = (leftLift + rightLift) / 2;
+    }
+    const hipsYaw = carrierRow >= 0 ? rowYaw[carrierRow] : 0;
+    const hipsTilt = carrierRow >= 0 ? rowTilt[carrierRow] : 0;
+    // Nose down when the hindmost row is in the air and the foremost is down, and the other way about.
+    const rock = rig.rowCount > 1 ? TORSO.rock * size * (rowLift[0] - rowLift[rig.rowCount - 1]) : 0;
+    Kit.motion.turnBody(rotation, frames, rig.carrier, rock, hipsYaw, hipsTilt);
+    let headYaw = hipsYaw;
+    let headTilt = hipsTilt;
+    for (let row = 0; row < rig.rowCount; row++) {
+      if (row === carrierRow || rig.rowGirdle[row] === rig.carrier) continue;
+      Kit.motion.turnBody(rotation, frames, rig.rowGirdle[row], 0, rowYaw[row] - hipsYaw, rowTilt[row] - hipsTilt);
+      headYaw += rig.steadyUnder[row] * (rowYaw[row] - hipsYaw);
+      headTilt += rig.steadyUnder[row] * (rowTilt[row] - hipsTilt);
+    }
+    if (rig.armGirdle >= 0) {
+      const counter = -(1 + TORSO.shoulders);
+      Kit.motion.turnBody(rotation, frames, rig.armGirdle, 0, hipsYaw * counter, hipsTilt * counter);
+      headYaw += rig.steadyUnder[rig.rowCount] * hipsYaw * counter;
+      headTilt += rig.steadyUnder[rig.rowCount] * hipsTilt * counter;
+    }
+    if (rig.steadyBone >= 0) Kit.motion.turnBody(rotation, frames, rig.steadyBone, -rock * TORSO.steadyHead, -headYaw * TORSO.steadyHead, -headTilt * TORSO.steadyHead);
   };
 
   /** Shifts the carrier bone, and so the whole body, by a world offset given in the body frame, in the local pose. */
@@ -633,11 +800,21 @@
 
   const scratchQuaternion = new Float32Array(QUATERNION_STRIDE);
 
-  /** Holds a leg's foot level, facing the way it was planted and pitched about its toe, whatever the shin is doing. */
-  const levelFoot = (motion, rig, feet, leg) => {
+  /**
+   * Holds a leg's foot level, facing a heading and pitched about its own left axis, whatever the shin is doing.
+   * @param {Object} motion a `MotionState` whose world transforms are current for the leg
+   * @param {LegRig} rig
+   * @param {number} leg index in the rig's gait order
+   * @param {number} heading the way the foot points, radians about +Y
+   * @param {number} pitch radians; positive puts the toes down (a heel rising), negative lifts them (a heel strike)
+   * @returns {void}
+   * @complexity O(bones hanging from the foot), no allocation
+   * @example Kit.gait.levelFoot(motion, rig, leg, motion.heading, 0);
+   */
+  const levelFoot = (motion, rig, leg, heading, pitch) => {
     const { plan, pose, world } = motion;
-    const halfYaw = feet.footHeading[leg] / 2;
-    const halfPitch = feet.pitch[leg] / 2;
+    const halfYaw = heading / 2;
+    const halfPitch = pitch / 2;
     // yaw about +Y, then pitch about the foot's own left axis (+X): toes down as the heel comes up.
     const turnX = Math.cos(halfYaw) * Math.sin(halfPitch);
     const turnY = Math.sin(halfYaw) * Math.cos(halfPitch);
@@ -662,6 +839,49 @@
     if (plan.subtreeEnd[foot] > foot + 1) Kit.body.worldTransforms(plan, pose, world, motion.x, motion.y, motion.z, motion.heading, foot + 1, plan.subtreeEnd[foot]);
   };
 
+  /**
+   * Solves one leg so its ankle is at a world point: exactly for a leg of three bones (the knee hinted to the
+   * side its limits bend to, turned by the body's heading), as a chain for a longer one. The foot's own
+   * rotation is left to `levelFoot`. Usable by any stage that puts a foot somewhere (a kick, a crouch).
+   * @param {Object} motion a `MotionState` whose world transforms are current down to the hip
+   * @param {LegRig} rig from `Kit.gait.legs`
+   * @param {number} leg index in the rig's gait order
+   * @param {number} targetX where the ankle should be, world metres
+   * @param {number} targetY
+   * @param {number} targetZ
+   * @returns {void}
+   * @complexity O(leg bones), no allocation
+   * @example Kit.gait.reachLeg(motion, rig, 0, footX, groundY + rig.sole[0], footZ);
+   */
+  const reachLeg = (motion, rig, leg, targetX, targetY, targetZ) => {
+    const { plan, world } = motion;
+    const chain = rig.longChains[leg];
+    if (chain) {
+      Kit.reach.chain(plan.parent, motion.pose, world, chain, targetX, targetY, targetZ);
+      return;
+    }
+    const sine = Math.sin(motion.heading);
+    const cosine = Math.cos(motion.heading);
+    const hip = rig.upper[leg] * VECTOR_STRIDE;
+    const bendX = rig.bendX[leg] * cosine + rig.bendZ[leg] * sine;
+    const bendZ = -rig.bendX[leg] * sine + rig.bendZ[leg] * cosine;
+    const reach = rig.length[leg];
+    Kit.reach.twoBone(
+      plan.parent,
+      motion.pose,
+      world,
+      rig.upper[leg],
+      rig.middle[leg],
+      rig.end[leg],
+      targetX,
+      targetY,
+      targetZ,
+      (world.translation[hip] + targetX) / 2 + bendX * reach,
+      (world.translation[hip + 1] + targetY) / 2,
+      (world.translation[hip + 2] + targetZ) / 2 + bendZ * reach
+    );
+  };
+
   /** This frame's pose at full detail: the body set where its legs can carry it, then every leg solved to its foot. */
   const poseFeet = (motion, plan, dt) => {
     const clock = clockOf(motion);
@@ -681,7 +901,8 @@
     feet.shift.target = plantedCount ? (supportLeft / plantedCount) * STANCE.shiftShare : 0;
     const left = Kit.dynamics.stepSpring(feet.shift, dt);
     const runShare = clamp((clock.froude - STANCE.runCrouchFrom) / (STANCE.runCrouchFull - STANCE.runCrouchFrom), 0, 1);
-    const up = rig.standLift - (STANCE.crouch + STANCE.runCrouch * runShare) * rig.legLength + Kit.dynamics.stepSpring(feet.bob, dt);
+    const up = rig.standLift - (STANCE.crouch + STANCE.runCrouch * runShare) * rig.legLength + Kit.dynamics.stepSpring(feet.bob, dt) + feet.air;
+    poseTorso(motion, clock);
     shiftCarrierPose(motion, rig, left, up);
     motion.isWorldCurrent = false;
     const world = refreshWorld(motion);
@@ -705,30 +926,8 @@
       feet.targetX[leg] = targetX;
       feet.targetY[leg] = targetY;
       feet.targetZ[leg] = targetZ;
-      const chain = rig.longChains[leg];
-      if (chain) Kit.reach.chain(plan.parent, motion.pose, world, chain, targetX, targetY, targetZ);
-      else {
-        // The knee is hinted to the side its limits bend to (in the world: the body-frame direction turned by the heading).
-        const hip = rig.upper[leg] * VECTOR_STRIDE;
-        const bendX = rig.bendX[leg] * cosine + rig.bendZ[leg] * sine;
-        const bendZ = -rig.bendX[leg] * sine + rig.bendZ[leg] * cosine;
-        const reach = rig.length[leg];
-        Kit.reach.twoBone(
-          plan.parent,
-          motion.pose,
-          world,
-          rig.upper[leg],
-          rig.middle[leg],
-          rig.end[leg],
-          targetX,
-          targetY,
-          targetZ,
-          (world.translation[hip] + targetX) / 2 + bendX * reach,
-          (world.translation[hip + 1] + targetY) / 2,
-          (world.translation[hip + 2] + targetZ) / 2 + bendZ * reach
-        );
-      }
-      levelFoot(motion, rig, feet, leg);
+      reachLeg(motion, rig, leg, targetX, targetY, targetZ);
+      levelFoot(motion, rig, leg, feet.footHeading[leg], feet.pitch[leg] + feet.strike[leg]);
     }
   };
 
@@ -785,13 +984,14 @@
     if (!clock) return;
     const { rig } = clock;
     const { rotation } = motion.pose;
-    const size = Math.min(1, clock.halfStance / rig.legLength);
-    const carry = ARMS.elbowRest + ARMS.elbowPerFroude * Math.min(clock.froude, ARMS.mostElbowFroude);
+    // An arm swings as far as the leg it balances strides: twice as far at a run as at a walk.
+    const reach = clock.isMoving ? Math.min(ARMS.mostSwing, (ARMS.swingPerStride * clock.stride) / rig.legLength) : 0;
+    const carry = ARMS.elbowRest + (ARMS.elbowRun - ARMS.elbowRest) * clock.runShare;
     for (let arm = 0; arm < rig.armCount; arm++) {
       // +1 while the leg this arm swings with is out in front: the arm is forward with it.
-      const forward = footOffset(fraction(motion.phase + clock.offsets[rig.armLeg[arm]] + rig.armShift[arm]), clock.duty) * size;
-      Kit.rig.turn(rotation, rotation, rig.armUpper[arm], AXES.x, -ARMS.swing * forward);
-      if (rig.armElbow[arm] >= 0) Kit.rig.turn(rotation, rotation, rig.armElbow[arm], AXES.x, rig.elbowSign[arm] * (carry + ARMS.elbowSwing * Math.max(0, forward)));
+      const forward = footOffset(fraction(motion.phase + clock.offsets[rig.armLeg[arm]] + rig.armShift[arm]), clock.duty);
+      Kit.rig.turn(rotation, rotation, rig.armUpper[arm], AXES.x, -reach * forward);
+      if (rig.armElbow[arm] >= 0) Kit.rig.turn(rotation, rotation, rig.armElbow[arm], AXES.x, rig.elbowSign[arm] * (carry + ARMS.elbowSwing * Math.max(0, forward) * Math.min(1, reach / ARMS.swingPerStride)));
     }
     motion.isWorldCurrent = false;
   };
@@ -807,22 +1007,34 @@
   const arms = () => Kit.motion.stage({ name: 'gait.arms', pose: poseArms });
 
   /**
-   * Walking, ready made: lean, arms, planted feet and trailing tails and wings at full detail; clock-driven
-   * swing at level of detail 1; nothing beyond. The same stage walks any plan with two or more legs.
+   * Walking, ready made: lean, arms, planted feet, and tails, wings and everything loose trailing at full
+   * detail; clock-driven swing at level of detail 1; nothing beyond. The same stage walks any plan with two or
+   * more legs. Other stages join it at the two places where order matters: `before` the legs are solved
+   * (whatever moves the body over its feet: breathing, a weight shift) and `after` (whatever poses the upper
+   * body over the walk: a performance, a gaze), both ahead of the trailing chains.
+   * @param {{before?: Array<Object|Function>, after?: Array<Object|Function>}} [options] stages of kit/motion.js
    * @returns {Object} a `Stage`
    * @complexity see `plant` (detail 0) and `swing` (detail 1)
    * @example
    * const motion = Kit.motion.state(bake, Kit.gait.walk());
    * Kit.motion.advance(motion, dt, x, 0, z, heading);
    */
-  const walk = () =>
+  /** Turns `lean`'s forward tilt per metre per second into one per unit of Froude number, for an upright body only. */
+  const leanPerSpeed = (motion, plan) => {
+    const rig = legs(plan, motion.rest);
+    return (rig.upright * Math.abs(motion.forwardSpeed)) / (GRAVITY * rig.legLength);
+  };
+  const walk = ({ before = [], after = [] } = {}) =>
     Kit.motion.byDetail([
       Kit.motion.sequence(
-        Kit.motion.lean({ pitchPerSpeed: RUN_LEAN, pitchWeight: (motion, plan) => legs(plan, motion.rest).upright }),
+        Kit.motion.lean({ pitchPerSpeed: TORSO.lean, pitchWeight: leanPerSpeed }),
+        ...before,
         arms(),
         plant(),
+        ...after,
         Kit.motion.trail(),
-        Kit.motion.trail({ roles: ['wing'], gravity: [0, -GRAVITY / 4, 0] })
+        Kit.motion.trail({ roles: ['wing'], gravity: [0, -GRAVITY / 4, 0] }),
+        Kit.motion.loose()
       ),
       Kit.motion.sequence(swing(), arms()),
     ]);
@@ -891,5 +1103,5 @@
     return out;
   };
 
-  Kit.gait = { STRIDE, GAITS, GAIT_NAMES, CLOCK, SWING, STANCE, SWING_ONLY, ARMS, WALK_NEEDS, froude, strideLength, footOffset, legs, plant, swing, arms, walk, feet, support };
+  Kit.gait = { STRIDE, GAITS, GAIT_NAMES, CLOCK, SWING, STANCE, SWING_ONLY, SWING_PATH, ARMS, RUN, TORSO, FLIGHT_BOOST, WALK_NEEDS, froude, strideLength, footOffset, legs, reachLeg, levelFoot, plant, swing, arms, walk, feet, support };
 })();

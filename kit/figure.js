@@ -218,6 +218,10 @@
    * @property {Object} measured the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
    * @property {function(): void} rest copies the bake's rest pose into `local`
    * @property {function(): void} pose forward kinematics over `local` and a matrix write per mesh; no allocation
+   * @property {function(Object<string, number>): void} face shows the face of a state: per set of
+   *   `Kit.body.FRAME_SETS` an index into its frames ({ blink: 2 } is eyes closed; zeros are the rest face).
+   *   A motion state chooses it: `figure.face(Kit.act.face(motion))`. O(1) when the state has not changed;
+   *   the first time a state is shown its stamps are built
    * @property {function(Object, Object=): Object} setBake draws another bake with the fewest changes; returns the plan carried out
    * @property {function(number): Object} frame a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
    * @property {function(): {meshes: number, materialsCreated: number, geometriesCreated: number}} counters
@@ -268,7 +272,41 @@
       materialsCreated += MATERIALS_PER_DRESS;
       entries.push({ piece, mesh, dressed });
     };
+    /** The face meshes made so far, by entry: one per face state that has been shown (`figure.face`). */
+    const faceMeshes = new Map();
+    /** The face state shown now ({ blink, talk }: indices into `Kit.body.FRAME_SETS`); all zeros is the rest face. */
+    const shownFace = {};
+    /** The face meshes visible now, each with the rest mesh whose matrix it copies: what `pose` writes besides the entries. */
+    let facesShown = [];
+    const dropFaces = (entry) => {
+      facesShown = facesShown.filter((shown) => shown.source !== entry.mesh);
+      (faceMeshes.get(entry) || []).forEach((made) => {
+        root.remove(made.mesh);
+        view.shading.undress(made.dressed);
+        cache.release(made.piece.key);
+      });
+      faceMeshes.delete(entry);
+      entry.mesh.visible = true;
+    };
+    const isFace = (state, wanted) => Object.keys(state).every((set) => state[set] === (wanted[set] || 0));
+    /** The mesh of an entry's stamps in a face state, made the first time that state is shown. */
+    const faceMesh = (entry, face) => {
+      const made = faceMeshes.get(entry) || [];
+      faceMeshes.set(entry, made);
+      const known = made.find((candidate) => candidate.face === face);
+      if (known) return known;
+      const piece = { ...entry.piece, shape: face.shape, key: Kit.figure.shapeKey(face.shape, shownLayout.level) };
+      const mesh = new THREE.Mesh(cache.acquire(piece));
+      mesh.matrixAutoUpdate = false;
+      mesh.name = `${piece.id}@face`;
+      root.add(mesh);
+      const fresh = { face, piece, mesh, dressed: view.shading.dress(mesh, { ...lookPartOf(piece, block, textures), anchor }) };
+      materialsCreated += MATERIALS_PER_DRESS;
+      made.push(fresh);
+      return fresh;
+    };
     const removeEntry = (entry) => {
+      dropFaces(entry);
       root.remove(entry.mesh);
       view.shading.undress(entry.dressed);
       cache.release(entry.piece.key);
@@ -301,8 +339,31 @@
         Kit.body.worldTransforms(shown.plan, figure.local, figure.world, offset.x, offset.y, offset.z);
         // Per-frame hot path: an index loop and a direct write into each matrix, no allocation.
         for (let index = 0; index < entries.length; index++) Kit.figure.writeBoneMatrix(figure.world, entries[index].piece.bone, entries[index].mesh.matrix.elements);
+        // A face shown in place of the rest one rides on the same bone.
+        for (let index = 0; index < facesShown.length; index++) facesShown[index].mesh.matrix.copy(facesShown[index].source.matrix);
+      },
+      face(state) {
+        const wanted = state || {};
+        const sets = Object.keys(wanted);
+        if (sets.every((set) => (shownFace[set] || 0) === (wanted[set] || 0))) return;
+        sets.forEach((set) => (shownFace[set] = wanted[set] || 0));
+        facesShown = [];
+        entries.forEach((entry) => {
+          if (!entry.piece.faces) return;
+          const face = entry.piece.faces.find((candidate) => isFace(candidate.state, shownFace));
+          (faceMeshes.get(entry) || []).forEach((made) => (made.mesh.visible = false));
+          entry.mesh.visible = !face;
+          if (!face) return;
+          const made = faceMesh(entry, face);
+          made.mesh.visible = true;
+          made.mesh.matrix.copy(entry.mesh.matrix);
+          facesShown.push({ mesh: made.mesh, source: entry.mesh });
+        });
       },
       setBake(next, changes) {
+        // Faces are made again on demand for the new bake: its stamps may have moved.
+        entries.forEach(dropFaces);
+        Object.keys(shownFace).forEach((set) => (shownFace[set] = 0));
         const previousPlan = shown.plan;
         const nextLayout = Kit.figure.layout(next, layoutOptions);
         const update = Kit.figure.planUpdate(shownLayout, nextLayout, changes);

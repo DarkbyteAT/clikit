@@ -105,12 +105,12 @@ const loadScript = (file) => {
 
 async function commandPlay({ positionals, flags }) {
   const { parseScript, runSteps, STEPS } = require('./dev/play');
-  const { openArcade, parseSize } = require('./dev/browser');
+  const { openArcade, parseSize, parseDensity } = require('./dev/browser');
   const [id, ...inlineSteps] = positionals;
   if (!id) throw new Error(`which game? Usage: node tools/dev.js play <id> --script <file>   or   play <id> "tap center" "wait 2" "shot start"\nSteps:\n${Object.keys(STEPS).map((verb) => `  ${STEPS[verb].usage.padEnd(42)} ${STEPS[verb].about}`).join('\n')}`);
   const source = flags.script ? loadScript(flags.script) : flags.do || inlineSteps;
   const script = parseScript(source);
-  const session = await openArcade({ landscape: Boolean(flags.landscape) || script.landscape, touch: Boolean(flags.touch) || script.touch, size: flags.size ? parseSize(flags.size) : undefined });
+  const session = await openArcade({ landscape: Boolean(flags.landscape) || script.landscape, touch: Boolean(flags.touch) || script.touch, size: flags.size ? parseSize(flags.size) : undefined, density: flags.dpr ? parseDensity(flags.dpr) : undefined });
   try {
     session.outDir = path.resolve(flags.out || path.join(ROOT, 'scratch', id));
     await session.launchGame(id, flags.skin || script.skin);
@@ -134,8 +134,8 @@ async function commandSheet({ positionals, flags }, skinsOf) {
 
 async function commandProof({ positionals, flags }) {
   const { makeProof } = require('./dev/proof');
-  if (!positionals.length) throw new Error('which suites? Usage: node tools/dev.js proof turn rolls options extremes acts heads faces [--catalog wardrobe|samples] [--preset toon|pixel|soft] [--species person,stout] [--pages 2] [--count 64]');
-  const { files, problems } = await makeProof({ suites: positionals, catalog: flags.catalog, preset: flags.preset, species: flags.species ? String(flags.species).split(',') : [], out: flags.out ? path.resolve(flags.out) : undefined, pages: flags.pages ? Number(flags.pages) : undefined, count: flags.count ? Number(flags.count) : undefined });
+  if (!positionals.length) throw new Error('which suites? Usage: node tools/dev.js proof turn rolls options extremes acts heads faces [--catalog wardrobe|samples] [--preset toon|pixel|soft] [--species person,stout] [--acts walk,wave] [--pages 2] [--count 64]');
+  const { files, problems } = await makeProof({ suites: positionals, catalog: flags.catalog, preset: flags.preset, species: flags.species ? String(flags.species).split(',') : [], acts: flags.acts ? String(flags.acts).split(',') : undefined, out: flags.out ? path.resolve(flags.out) : undefined, pages: flags.pages ? Number(flags.pages) : undefined, count: flags.count ? Number(flags.count) : undefined });
   files.forEach((file) => console.log(`proof: ${path.relative(ROOT, file)}`));
   problems.forEach((problem) => console.log(`  ${problem}`));
   return problems.some((problem) => problem.startsWith('ERROR')) ? 1 : 0;
@@ -289,9 +289,9 @@ const COMMANDS = {
   new: { usage: 'new game <id> [--skin s] | new module <name>', about: 'scaffold a game or a kit module that already meets the standard, with its script tag', example: 'node tools/dev.js new game sky-garden --skin paper', run: commandNew },
   remove: { usage: 'remove game <id> | remove module <name>', about: 'undo a scaffold that was never made real (file, tag, test stub)', example: 'node tools/dev.js remove game sky-garden', run: commandRemove },
   check: { usage: 'check [id...] [--fast] [--secs n]', about: 'tests, tags, lint, Biome, types, smoke and frame budgets as one pass / fail table', example: 'node tools/dev.js check miner', run: commandCheck },
-  play: { usage: 'play <id> --script <file> [--landscape | --size WxH] [--skin s] [--touch] [--out dir] | play <id> "step" ...', about: 'scripted playtest (tap, drag, press, choose, wait, until, assert, shot); `play` alone lists the steps', example: 'node tools/dev.js play miner "tap center x5" "wait 2" "assert hud.Depth >= 1" "shot dug"', run: commandPlay },
+  play: { usage: 'play <id> --script <file> [--landscape | --size WxH] [--dpr n] [--skin s] [--touch] [--out dir] | play <id> "step" ...', about: 'scripted playtest (tap, drag, press, choose, wait, until, assert, shot); `play` alone lists the steps', example: 'node tools/dev.js play miner "tap center x5" "wait 2" "assert hud.Depth >= 1" "shot dug"', run: commandPlay },
   sheet: { usage: 'sheet [id...] [--landscape]', about: 'contact sheet of every game into shots/sheet.png', example: 'node tools/dev.js sheet', run: (parsed) => commandSheet(parsed, false) },
-  proof: { usage: 'proof <suite...> [--catalog c] [--preset p] [--species a,b] [--pages n] [--count n]', about: 'coverage sheets of the body system (turn, heads, rolls, faces, options, extremes, acts) into shots/proof/', example: 'node tools/dev.js proof turn acts --catalog samples', run: commandProof },
+  proof: { usage: 'proof <suite...> [--catalog c] [--preset p] [--species a,b] [--acts a,b] [--pages n] [--count n]', about: 'coverage sheets of the body system (turn, heads, rolls, faces, options, extremes, acts) into shots/proof/', example: 'node tools/dev.js proof turn acts --catalog samples', run: commandProof },
   skins: { usage: 'skins <id>', about: 'one game under every kit skin into shots/skins-<id>.png', example: 'node tools/dev.js skins miner', run: (parsed) => commandSheet(parsed, true) },
   lint: { usage: 'lint [paths] [--summary] | lint rules', about: 'the mechanical parts of the code standard: file:line, rule, fix', example: 'node tools/dev.js lint games/miner.js', run: commandLint },
   docs: { usage: 'docs', about: 'regenerate kit/API.md from the JSDoc in kit/*.js', example: 'node tools/dev.js docs', run: commandDocs },
