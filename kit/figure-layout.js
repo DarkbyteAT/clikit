@@ -117,6 +117,9 @@
    * @property {boolean} [stamps] the shape is of kind 'stamps' (flat polygons that carry their own paint): it is
    *   drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
    * @property {boolean} [outlined] false: the piece gets no hull outline of its own (a nose inside a face)
+   * @property {boolean} [carve] the solid is pressed into the bone's surface when the body is sculpted (an eye
+   *   socket); it is never drawn as a piece
+   * @property {number} [blend] metres: the fillet that joins the solid to its bone's surface when sculpted
    */
 
   /**
@@ -223,6 +226,7 @@
   const featurePiece = (feature, id, base, boneGroup, level) => ({
     ...base,
     id,
+    isFeature: true,
     shape: feature.shape,
     key: Kit.figure.shapeKey(feature.shape, level),
     ramp: feature.ramp === undefined ? base.ramp : feature.ramp,
@@ -234,6 +238,9 @@
     regions: feature.stamps ? base.regions : undefined,
     ...(feature.stamps ? { stamps: true } : {}),
     ...(feature.outlined === false ? { outlined: false } : {}),
+    // A relief mark's own numbers (kit/sculpt-relief.js): how it is modelled out of its bone when the body is sculpted.
+    ...(feature.carve ? { carve: true } : {}),
+    ...(feature.blend === undefined ? {} : { blend: feature.blend }),
   });
 
   /** The body system's hooks, when it is loaded and the bake carries a surface; else none. */
@@ -294,7 +301,7 @@
 
   /** What makes a drawn piece the same piece: its identity, its surface and everything its material reads. */
   const pieceSignature = (piece) =>
-    [piece.id, piece.key, piece.ramp, piece.inkGroup, piece.shiny ? 1 : 0, piece.emissive ? 1 : 0, piece.tone === undefined ? '' : piece.tone, piece.regions ? piece.regions.key : '', piece.shell || 0, piece.outlined === false ? 0 : 1].join('|');
+    [piece.id, piece.key, piece.ramp, piece.inkGroup, piece.shiny ? 1 : 0, piece.emissive ? 1 : 0, piece.tone === undefined ? '' : piece.tone, piece.regions ? piece.regions.key : '', piece.shell || 0, piece.outlined === false ? 0 : 1, piece.carve ? 1 : 0].join('|');
 
   /**
    * @typedef {Object} FigureUpdate

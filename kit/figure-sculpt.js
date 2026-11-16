@@ -248,6 +248,25 @@
   /** The pieces of worn objects the sculpt takes, by the wear of their bones. */
   const wornPieces = (figureLayout, wears) => figureLayout.pieces.filter((piece) => piece.isProp && wears[piece.bone] && isSolidPiece(piece));
 
+  /**
+   * The relief marks among a body's sculpted pieces, by the piece they are modelled out of: a feature's solid
+   * (`isFeature`) on a bone that has a surface of its own, painted as that surface or pressed into it (`carve`).
+   * A feature of another paint (a moustache on a face) is no mark: it stays a solid of its own.
+   * @param {Object[]} pieces the layout pieces that can be sculpted
+   * @param {Object} plan the bake's plan
+   * @returns {Map<Object, Object[]>} host piece -> its marks, in layout order
+   */
+  const marksByHost = (pieces, plan) => {
+    const hosts = new Map();
+    pieces.forEach((piece) => !piece.isFeature && piece.id === plan.boneNames[piece.bone] && hosts.set(piece.bone, piece));
+    const marks = new Map();
+    pieces.forEach((piece) => {
+      const host = piece.isFeature ? hosts.get(piece.bone) : null;
+      if (host && (piece.carve || piece.ramp === host.ramp)) marks.set(host, [...(marks.get(host) || []), piece]);
+    });
+    return marks;
+  };
+
   /** Steps of correction when points are carried between poses (`carry`): the error shrinks about fivefold a step. */
   const CARRY_STEPS = 4;
 
@@ -485,7 +504,7 @@
   const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
     const { wears, hangs } = wearOf(bake.plan);
     const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) =>
-      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone]].join('~')
+      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone], piece.carve ? 'carve' : '', piece.blend === undefined ? '' : piece.blend].join('~')
     );
     const rest = bake.rest || Kit.body.createPose(bake.plan);
     const pose = [rest.translation, rest.rotation, rest.scale].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
@@ -596,8 +615,24 @@
           detail
         )
       : 0;
-    const meshed = candidates.map((piece) => ({ piece, part: fittedSolid(piece, matrices, limbLead, cell) })).filter(({ part }) => part);
+    // A feature's solid painted as its bone (a nose, a brow ridge) or pressed into it (an eye socket) is not a
+    // solid beside the bone but a mark modelled out of it (kit/sculpt-relief.js): one surface, one fillet each.
+    const marks = marksByHost(candidates, plan);
+    const marked = new Set([...marks.values()].flat());
+    const meshed = candidates
+      .filter((piece) => !marked.has(piece) && !piece.carve)
+      .map((piece) => ({ piece, part: fittedSolid(piece, matrices, limbLead, cell) }))
+      .filter(({ part }) => part);
     const replaced = new Set(meshed.map(({ piece }) => piece.id));
+    meshed.forEach((entry) => {
+      const own = marks.get(entry.piece);
+      if (!own) return;
+      entry.part = Kit.sculpt.relief(
+        entry.part,
+        own.map((piece) => ({ solid: solidOf(piece, matrices, limbLead), blend: piece.blend, carve: piece.carve }))
+      );
+      own.forEach((piece) => replaced.add(piece.id));
+    });
     // The shells the layout made for raised regions are replaced along with the surfaces they were copies of.
     figureLayout.pieces.filter((piece) => piece.shell && replaced.has(piece.id.split('~')[0])).forEach((piece) => replaced.add(piece.id));
     /** Body solids by ramp: each paint of the body is one blended skin. */

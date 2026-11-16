@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const FILES = ['sculpt', 'figure-sculpt'];
+const FILES = ['sculpt', 'sculpt-relief', 'figure-sculpt'];
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const VECTOR = 3;
 const OWNERS = 4;

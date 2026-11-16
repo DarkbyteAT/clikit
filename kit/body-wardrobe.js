@@ -22,6 +22,7 @@
 (() => {
   const { ellipse } = Kit.surface;
   const { ramp } = Kit.palette;
+  const { face } = Kit.body;
 
   // ---- small builders, so the tables below read as content ------------------------------------------------------------
 
@@ -296,6 +297,9 @@
         ...SIDES.flatMap(arm),
         ...SIDES.flatMap(leg),
       ],
+      // Where this head keeps its features, and the relief every individual has: a brow ridge, cheeks and a chin.
+      anchors: face.anchors('head'),
+      features: [...face.browRidge({ scale: HEAD_SCALE_UP }), ...face.cheeks({ scale: HEAD_SCALE_UP }), ...face.chin({ scale: HEAD_SCALE_UP })],
       sockets: [
         ...FACE_SOCKETS.map((name) => ({ name, bone: 'head', type: name, at: [0, HEAD_LENGTH / 2, 0], required: REQUIRED_FACE.includes(name) })),
         { name: 'hair', bone: 'head', type: 'hair', at: atHead([0, 0.115, 0]) },
@@ -320,7 +324,7 @@
    * A part with every length scaled by `factor` (bone offsets and ends, girths, shape sizes, feature sizes and
    * lifts; never angles or regions): how parts drawn for one head or body size are fitted to another.
    */
-  const LENGTH_FIELDS = ['at', 'tail', 'end', 'radius', 'size', 'profile', 'outline', 'depth', 'girth', 'lift'];
+  const LENGTH_FIELDS = ['at', 'tail', 'end', 'radius', 'size', 'profile', 'outline', 'depth', 'girth', 'lift', 'blend'];
   const scaleNumbers = (value, factor) => (Array.isArray(value) ? value.map((inner) => scaleNumbers(inner, factor)) : typeof value === 'number' ? value * factor : value);
   const scaledRow = (row, factor) =>
     Object.fromEntries(Object.keys(row).map((key) => [key, LENGTH_FIELDS.includes(key) ? scaleNumbers(row[key], factor) : key === 'shape' && row.shape ? scaledRow(row.shape, factor) : row[key]]));
@@ -370,7 +374,8 @@
     fits: ['eyes'],
     label,
     bones: [],
-    features: [{ id: 'eye', azimuth: 0, elevation: -3, spacing: 50, size, frames: eyeFrames(white, irisRadius), rest: 'open', glow: true, ...extra }],
+    // The stamp lies in a shallow socket pressed into the head under it.
+    features: [{ id: 'eye', anchor: 'eye', size, frames: eyeFrames(white, irisRadius), rest: 'open', glow: true, ...extra }, ...face.eyeSockets(size)],
   });
   const ALMOND = lens(0.62, 0.45);
 
@@ -379,17 +384,11 @@
     fits: ['brows'],
     label,
     bones: [],
-    features: [{ id: 'brow', azimuth: 0, elevation: 17, spacing: 52, size, rotation: 0, frames: { rest: [layer(outline, 'hair', 1, { least: 1.2 })] }, ...extra }],
+    features: [{ id: 'brow', anchor: 'brow', size, rotation: 0, frames: { rest: [layer(outline, 'hair', 1, { least: 1.2 })] }, ...extra }],
   });
 
-  /** Noses: a solid each (feature frame: +Y up the face, +Z out), with a shadow stamp under the tip. */
-  const nosePart = (label, shape, size = [0.03, 0.036]) => ({
-    fits: ['nose'],
-    label,
-    bones: [],
-    // No outline of its own: a ring round a nose inside the face reads as a blotch. It shades, and shows in profile.
-    features: [{ id: 'nose', azimuth: 0, elevation: -13, size, lift: 0.002, shape, paint: 'skin', outlined: false, frames: { rest: [layer(ellipse(0, -0.8, 0.42, 0.1, 8), 'skin', 1)] } }],
-  });
+  /** Noses: a style of `Kit.body.face.NOSES` each (a bridge, a tip, wings), modelled out of the face. It shades, and shows in profile. */
+  const nosePart = (label, style) => ({ fits: ['nose'], label, bones: [], features: face.nose(style) });
 
   /** Mouths: rest, smile and open frames for talking, painted with the lips channel. */
   const mouthFrames = (restLips, smileLift = 0.35) => ({
@@ -401,16 +400,12 @@
     fits: ['mouth'],
     label,
     bones: [],
-    features: [{ id: 'mouth', azimuth: 0, elevation: -30, size, frames: mouthFrames(restLips), rest: 'rest', ...extra }],
+    // The stamp lies on a pair of lips modelled out of the face, as wide as it is.
+    features: [{ id: 'mouth', anchor: 'mouth', size, frames: mouthFrames(restLips), rest: 'rest', ...extra }, ...face.lips(size)],
   });
 
-  /** Ears: a mirrored pair of solids at the sides of the head. */
-  const earsPart = (label, shape, size, extra = {}) => ({
-    fits: ['ears'],
-    label,
-    bones: [],
-    features: [{ id: 'ear', azimuth: 0, elevation: -6, spacing: 176, size, lift: 0.002, shape, paint: 'skin', ...extra }],
-  });
+  /** Ears: a style of `Kit.body.face.EARS` each (a plate standing off the head, hollowed, with a lobe or a point), as a mirrored pair. */
+  const earsPart = (label, style, extra = {}) => ({ fits: ['ears'], label, bones: [], features: face.ears(style).map((feature) => ({ ...feature, ...extra })) });
 
   /** Marks on the skin: freckles, blush, a scar, a mole, painted stripes, star-spots. */
   const FRECKLE_DOTS = [
@@ -615,23 +610,12 @@
       [0.04, 0.014]
     ),
     browsFine: browsPart('Fine', arcBand(-0.6, 1.2, 0.22), [0.038, 0.009]),
-    // Noses (5): different solids: a ball, a ridge, a cone, a wide ball, a hooked ridge.
-    noseButton: nosePart('Button', { kind: 'sphere', radius: 0.011, scale: [1.15, 0.9, 0.85] }),
-    noseStraight: nosePart('Straight', { kind: 'capsule', end: [0, -0.034, 0.012], radius: 0.006, taper: 1.6 }),
-    nosePointed: nosePart('Pointed', {
-      kind: 'lathe',
-      end: [0, -0.036, 0],
-      profile: [
-        [0.005, 0],
-        [0.01, 0.024],
-        [0.011, 0.03],
-        [0, 0.036],
-      ],
-      scale: [1, 1, 0.9],
-      at: [0, 0.004, 0.004],
-    }),
-    noseBroad: nosePart('Broad', { kind: 'sphere', radius: 0.012, scale: [1.75, 0.95, 0.85] }, [0.036, 0.03]),
-    noseHooked: nosePart('Hooked', { kind: 'capsule', end: [0, -0.036, 0.004], radius: 0.006, taper: 1.9, at: [0, 0.004, 0.008] }),
+    // Noses (5): a button, a straight ridge, a fine point, a broad one, a hooked one.
+    noseButton: nosePart('Button', 'button'),
+    noseStraight: nosePart('Straight', 'straight'),
+    nosePointed: nosePart('Pointed', 'pointed'),
+    noseBroad: nosePart('Broad', 'broad'),
+    noseHooked: nosePart('Hooked', 'hooked'),
     // Mouths (5): lip outlines differ at rest; each has smile and open frames for talking.
     mouthNeutral: mouthPart('Neutral', [layer(arcBand(0.72, 1.05, 0.34, 205, 335), 'lips', 0, { least: 1 })], [0.04, 0.02]),
     mouthWide: mouthPart('Wide', [layer(lens(0.18, 0.22), 'lips', 2), layer(rectangle(0.95, 0.035), 'lips', 0)], [0.058, 0.016]),
@@ -639,40 +623,11 @@
     mouthSmall: mouthPart('Small', [layer(lens(0.3, 0.32), 'lips', 2), layer(rectangle(0.8, 0.05), 'lips', 0)], [0.03, 0.014]),
     mouthSmirk: mouthPart('Smirk', [layer(slant(lens(0.2, 0.22), 0.35), 'lips', 2), layer(slant(rectangle(0.9, 0.04), 0.3), 'lips', 0)], [0.046, 0.017]),
     // Ears (5): round, small, large, pointed, long and swept back.
-    earsRound: earsPart('Round', { kind: 'sphere', radius: 0.024, scale: [0.72, 1.2, 0.4] }, [0.03, 0.05]),
-    earsSmall: earsPart('Small', { kind: 'sphere', radius: 0.018, scale: [0.7, 1.1, 0.4] }, [0.024, 0.04]),
-    earsLarge: earsPart('Large', { kind: 'sphere', radius: 0.031, scale: [0.8, 1.25, 0.45] }, [0.04, 0.066]),
-    earsPointed: earsPart(
-      'Pointed',
-      {
-        kind: 'lathe',
-        end: [0, 0.06, -0.012],
-        profile: [
-          [0.019, 0],
-          [0.014, 0.032],
-          [0, 0.06],
-        ],
-        scale: [1, 1, 0.4],
-        at: [0, -0.02, 0],
-      },
-      [0.032, 0.06]
-    ),
-    earsLong: earsPart(
-      'Long',
-      {
-        kind: 'lathe',
-        end: [0, 0.09, -0.03],
-        profile: [
-          [0.017, 0],
-          [0.012, 0.055],
-          [0, 0.095],
-        ],
-        scale: [1, 1, 0.35],
-        at: [0, -0.02, 0],
-      },
-      [0.03, 0.09],
-      { rotation: 25 }
-    ),
+    earsRound: earsPart('Round', 'round'),
+    earsSmall: earsPart('Small', 'small'),
+    earsLarge: earsPart('Large', 'large'),
+    earsPointed: earsPart('Pointed', 'pointed'),
+    earsLong: earsPart('Long', 'long', { rotation: 12 }),
     // Marks (5): where they sit and what they paint differ.
     freckles: markPart('Freckles', { id: 'freckles', azimuth: 0, elevation: -6, size: [0.075, 0.028], frames: { rest: FRECKLE_DOTS } }),
     blush: markPart('Blush', { id: 'blush', azimuth: 0, elevation: -17, spacing: 82, size: [0.034, 0.018], frames: { rest: [layer(ellipse(0, 0, 1, 1, 12), 'lips', 3)] } }),
@@ -1629,24 +1584,47 @@
     eyeHeight: offset(-6, 6, [
       { feature: 'eye', param: 'elevation' },
       { feature: 'brow', param: 'elevation', amount: 0.8 },
+      { feature: 'ridge', param: 'elevation', amount: 0.8 },
       { feature: 'lens', param: 'elevation' },
       { feature: 'bridge', param: 'elevation' },
     ]),
     eyeTilt: offset(-15, 15, [{ feature: 'eye', param: 'rotation' }]),
     browHeight: offset(-4, 6, [{ feature: 'brow', param: 'elevation' }], { sided: true }),
     browTilt: offset(-20, 20, [{ feature: 'brow', param: 'rotation' }]),
+    browDepth: offset(-0.008, 0.012, [{ feature: 'ridge', param: 'lift' }]),
+    cheekFullness: dial(0.6, 1.5, [{ feature: 'cheek', param: 'size' }]),
+    chinLength: offset(-0.008, 0.02, [{ feature: 'chin', param: 'lift' }]),
     noseSize: dial(0.7, 1.5, [{ feature: 'nose', param: 'size' }]),
     noseLength: offset(-0.003, 0.01, [{ feature: 'nose', param: 'lift' }]),
     noseHeight: offset(-5, 5, [{ feature: 'nose', param: 'elevation' }]),
+    noseWidth: dial(0.7, 1.45, [{ feature: 'nose', param: 'size.0' }]),
+    noseTip: offset(-18, 22, [{ feature: 'nose', param: 'lean.0' }]),
     mouthWidth: dial(0.75, 1.35, [{ feature: 'mouth', param: 'size.0' }]),
     lips: dial(0.7, 1.5, [{ feature: 'mouth', param: 'size.1' }]),
     mouthHeight: offset(-5, 4, [{ feature: 'mouth', param: 'elevation' }]),
-    earSize: dial(0.75, 1.4, [{ feature: 'ear', param: 'size' }], { sided: true }),
+    earSize: dial(
+      0.75,
+      1.4,
+      [
+        { feature: 'ear', param: 'size' },
+        { feature: 'earTip', param: 'size' },
+      ],
+      { sided: true }
+    ),
     earHeight: offset(-8, 8, [
       { feature: 'ear', param: 'elevation' },
+      { feature: 'earTip', param: 'elevation' },
       { feature: 'earring', param: 'elevation' },
     ]),
-    earAngle: offset(-25, 25, [{ feature: 'ear', param: 'rotation' }]),
+    earAngle: offset(-25, 25, [
+      { feature: 'ear', param: 'rotation' },
+      { feature: 'earTip', param: 'rotation' },
+    ]),
+    earFlare: offset(-22, 28, [
+      { feature: 'ear', param: 'lean.1' },
+      { feature: 'earTip', param: 'lean.1' },
+    ]),
+    earPoint: dial(0.6, 1.6, [{ feature: 'earTip', param: 'size.1' }]),
     // arms
     armLength: dial(0.9, 1.12, [{ roles: ['arm'], channel: 'length' }]),
     upperArms: dial(0.8, 1.4, LIMB_GIRTH(bothSides('upperArm'))),
@@ -1689,15 +1667,22 @@
       'eyeTilt',
       'browHeight',
       'browTilt',
+      'browDepth',
+      'cheekFullness',
+      'chinLength',
       'noseSize',
       'noseLength',
       'noseHeight',
+      'noseWidth',
+      'noseTip',
       'mouthWidth',
       'lips',
       'mouthHeight',
       'earSize',
       'earHeight',
       'earAngle',
+      'earFlare',
+      'earPoint',
     ],
     arms: ['armLength', 'upperArms', 'forearms', 'handSize'],
     legs: ['legLength', 'thighs', 'calves', 'footSize'],
@@ -1713,6 +1698,12 @@
     noseLength: 'How far the nose stands out.',
     lips: 'Fullness of the lips.',
     earAngle: 'Tilts the ears back or forward.',
+    earFlare: 'Flat to the head or standing off it.',
+    earPoint: 'Length of a pointed ear\'s tip.',
+    browDepth: 'How far the brow ridge stands over the eyes.',
+    cheekFullness: 'Hollow to full cheeks.',
+    chinLength: 'A receding to a jutting chin.',
+    noseTip: 'Turned down to turned up.',
   };
   /** Sockets as creator controls: socket -> [group, label, order within the group]. */
   const SLOTS = {

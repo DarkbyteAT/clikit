@@ -50,6 +50,7 @@ const KIT_FILES = [
   'body-surface',
   'body-recipe',
   'body-store',
+  'body-face',
   'body-samples',
 ];
 /** Timing: each sample runs the operation in batches for about this long; each benchmark takes ROUNDS rounds. */

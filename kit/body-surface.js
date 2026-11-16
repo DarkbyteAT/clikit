@@ -19,9 +19,9 @@
   const DEGREES_TO_RADIANS = Math.PI / 180;
   const VECTOR_STRIDE = 3;
   /** Feature defaults: a 3 cm stamp straight ahead, flat on the surface, turned not at all. */
-  const FEATURE_DEFAULTS = Object.freeze({ azimuth: 0, elevation: 0, size: 0.03, rotation: 0, lift: 0 });
+  const FEATURE_DEFAULTS = Object.freeze({ azimuth: 0, elevation: 0, size: 0.03, rotation: 0, lift: 0, lean: Object.freeze([0, 0]) });
   /** The numbers of a feature that dials may drive, so a misspelt `param` is caught when the bake is laid out. */
-  const FEATURE_PARAMS = Object.freeze(['azimuth', 'elevation', 'spacing', 'size', 'rotation', 'lift']);
+  const FEATURE_PARAMS = Object.freeze(['azimuth', 'elevation', 'spacing', 'size', 'rotation', 'lift', 'lean']);
   /**
    * Named frame sets an animator steps through, set -> frame names in order. A feature lists the frames it has;
    * `blink` and `talk` are the two a face needs. Adding a set means adding a row.
@@ -55,6 +55,10 @@
    * @typedef {Object} FeatureSpec
    * @property {string} id what dials and animators call it ('eye', 'mouth'); several features may share an id
    * @property {string} [bone] the bone it sits on (a part's features default to the bone of the socket it is in)
+   * @property {string} [anchor] a named place of the plan (`AnchorSpec`, `plan.spec.anchors`): the feature sits
+   *   there. Its own `azimuth` and `elevation` are then steps away from the anchor, and it takes the anchor's
+   *   `spacing` (and, on a plan, its `bone`) unless it states its own. A nose made for one head then sits right on
+   *   any head that says where its nose is
    * @property {number} [azimuth=0] degrees about the bone's +Y from its +Z (the front) towards +X (its left)
    * @property {number} [elevation=0] degrees above the middle of the bone's shape
    * @property {number} [spacing] degrees between the two copies of a mirrored pair (left at +spacing/2); omit for one copy
@@ -66,7 +70,16 @@
    * @property {Object} [shape] a solid in the feature's own frame, metres at the authored size (`Kit.body.SHAPES`
    *   row: +X across, +Y along `up`, +Z out along the normal), for a nose or an ear that has a silhouette. A
    *   capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
-   * @property {string} [paint] the colour channel of the solid (default 'skin')
+   * @property {string} [paint] the colour channel of the solid (default 'skin'). A solid painted as its bone is
+   *   modelled out of the bone's own surface (a relief mark, kit/sculpt-relief.js); one with another paint (a
+   *   moustache) is a solid of its own lying on it
+   * @property {number} [blend] metres: how wide a fillet joins the solid to the surface it is modelled out of
+   *   (default: from its thickness)
+   * @property {boolean} [carve=false] the solid is pressed in, not on: the bone's surface loses what it holds (an
+   *   eye socket, a gill line). Never drawn as a piece of its own
+   * @property {number[]} [lean=[0, 0]] degrees the solid is tipped out of the surface: [about its across axis
+   *   (a nose tip turned up is positive), about its up axis (an ear standing off the head)]. The right copy of
+   *   a pair leans the mirrored way
    * @property {boolean} [glow] draw it as a glow (eyes): a renderer leaves it out of outlines
    * @property {number} [under=0] stamps of a feature with a higher `under` are drawn beneath the others on its
    *   bone whatever order the parts were attached in: blush and freckles go under the eyes
@@ -114,6 +127,19 @@
    * @property {boolean} glow the feature asked to be drawn as a glow (eyes): never outlined
    * @property {boolean} outlined false when the solid should get no outline of its own
    * @property {number} lift metres `point` stands off the surface (already applied to it)
+   * @property {number[]} lean radians [about across, about up] the solid is tipped by
+   * @property {?number} blend metres, the solid's fillet when it is a relief mark; null: from its thickness
+   * @property {boolean} carve the solid is pressed into the bone's surface
+   */
+
+  /**
+   * @typedef {Object} AnchorSpec
+   * A named place on a plan's surface (`plan.spec.anchors[name]`): where this body keeps its nose, its ears, its
+   * brow. Features name an anchor instead of repeating angles, so one face vocabulary fits every head.
+   * @property {string} bone the bone it is on
+   * @property {number} [azimuth=0] degrees, as a feature's
+   * @property {number} [elevation=0] degrees
+   * @property {number} [spacing] degrees between the two places of a mirrored pair (ears, eyes)
    */
 
   /** The far end of a bone in its own space: its tail, else its first child's offset, else straight up its length. */
@@ -174,6 +200,31 @@
     });
   };
 
+  /**
+   * A feature spec with its anchor worked in: the anchor's angles plus the feature's own steps, the anchor's
+   * spacing and bone where the feature states none. A feature without an anchor is returned as it is.
+   * @param {FeatureSpec} spec
+   * @param {Object<string, AnchorSpec>} anchors the plan's
+   * @param {string} [where] who is asking, for the message
+   * @returns {FeatureSpec}
+   * @throws {Error} naming the feature and the plan's anchors when the anchor is unknown
+   * @complexity O(1)
+   * @example Kit.body.anchoredSpec({ id: 'nose', anchor: 'nose', elevation: 2 }, { nose: { bone: 'head', elevation: -13 } }).elevation // -11
+   */
+  const anchoredSpec = (spec, anchors, where = 'anchoredSpec') => {
+    if (spec.anchor === undefined) return spec;
+    const anchor = anchors[spec.anchor];
+    if (!anchor) fail(where, `${ownerOf('feature', spec)} sits on the anchor "${spec.anchor}", which this plan does not have. Anchors: ${Object.keys(anchors).join(', ') || '(none; add `anchors` to the plan)'}.`);
+    const spacing = spec.spacing === undefined ? anchor.spacing : spec.spacing;
+    return {
+      ...spec,
+      bone: spec.bone === undefined ? anchor.bone : spec.bone,
+      azimuth: (anchor.azimuth || 0) + (spec.azimuth || 0),
+      elevation: (anchor.elevation || 0) + (spec.elevation || 0),
+      ...(spacing === undefined ? {} : { spacing }),
+    };
+  };
+
   /** Layouts by plan: a plan is frozen, so its features and regions are checked and indexed once. */
   const layouts = new WeakMap();
 
@@ -198,7 +249,9 @@
       return plan.boneIndex(name);
     };
     checkSurface(plan.spec, where);
-    const features = (plan.spec.features || []).map((spec) => {
+    const anchors = plan.spec.anchors || {};
+    const features = (plan.spec.features || []).map((authored) => {
+      const spec = anchoredSpec(authored, anchors, where);
       const owner = ownerOf('feature', spec);
       if (spec.bone === undefined) fail(where, `${owner} names no \`bone\` to sit on.`);
       return { spec, bone: boneIndexOf(owner, spec.bone) };
@@ -255,6 +308,7 @@
       size: Array.isArray(size) ? [...size] : [size, size],
       rotation: spec.rotation === undefined ? FEATURE_DEFAULTS.rotation : spec.rotation,
       lift: spec.lift === undefined ? FEATURE_DEFAULTS.lift : spec.lift,
+      lean: [...(spec.lean || FEATURE_DEFAULTS.lean)],
     };
   };
 
@@ -348,6 +402,9 @@
             outlined: spec.outlined !== false,
             under: spec.under || 0,
             lift: numbers.lift,
+            lean: numbers.lean.map((degrees) => degrees * DEGREES_TO_RADIANS),
+            blend: spec.blend === undefined ? null : spec.blend,
+            carve: Boolean(spec.carve),
           },
         ];
       });
@@ -402,8 +459,23 @@
     };
   };
 
+  /**
+   * A feature's frame tipped out of the surface by its `lean`: about `up` first (the solid's outward axis swings
+   * towards its across axis: an ear stands off the head), then about `across` (outward swings towards up: a
+   * nose tip turns up). The right copy of a pair has its across axis mirrored, so it leans the mirrored way.
+   */
+  const leaned = (frame, lean) => {
+    if (!lean || (lean[0] === 0 && lean[1] === 0)) return frame;
+    const { mirror } = frame;
+    const turn = (first, second, angle) => [combine([0, 0, 0], [[first, Math.cos(angle)], [second, Math.sin(angle)]]), combine([0, 0, 0], [[second, Math.cos(angle)], [first, -Math.sin(angle)]])];
+    const [swungNormal, swungAcross] = turn(frame.normal, frame.across.map((value) => value * mirror), lean[1]);
+    const [normal, up] = turn(swungNormal, frame.up, lean[0]);
+    return { across: swungAcross.map((value) => value * mirror), up, normal, mirror };
+  };
+
   /** A feature's solid as a renderer shape: built along the feature's own axes, then turned onto the surface. */
-  const solidPiece = (feature, frame) => {
+  const solidPiece = (feature, flatFrame) => ({ ...solidShape(feature, leaned(flatFrame, feature.lean)), ...(feature.carve ? { carve: true } : {}), ...(feature.blend === null || feature.blend === undefined ? {} : { blend: feature.blend }) });
+  const solidShape = (feature, frame) => {
     const solid = feature.shape;
     const stretch = [feature.scale[0], feature.scale[1], feature.scale[0]];
     const { across, up, normal, mirror } = frame;
@@ -451,6 +523,32 @@
       });
   };
 
+  const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const EVERYWHERE = Object.freeze({ min: Object.freeze([-Infinity, -Infinity, -Infinity]), max: Object.freeze([Infinity, Infinity, Infinity]) });
+
+  /**
+   * Is a feature's solid a relief mark of its bone: painted as the bone is (or pressed into it), so modelled out
+   * of the bone's surface instead of lying on it as a solid of its own?
+   * @param {{ramp?: number, carve?: boolean}} piece a feature's solid piece (`solidPiece`); `ramp` undefined means the bone's own
+   * @param {number} boneRamp the ramp the bone is drawn with
+   * @returns {boolean}
+   * @complexity O(1)
+   * @example Kit.body.isReliefMark({ ramp: 2 }, 2) // true: a skin nose on a skin head
+   */
+  const isReliefMark = (piece, boneRamp) => Boolean(piece.carve) || piece.ramp === undefined || piece.ramp === boneRamp;
+
+  /**
+   * The signed distance to a bone's surface in the bone's space with its relief marks worked in (the same
+   * modelling the sculpt does, kit/sculpt-relief.js). Without the sculpt kernel loaded, the bone's own shape.
+   */
+  const modelledDistance = (bake, bone, frame, solidPieces) => {
+    const plain = (x, y, z) => Kit.surface.distance(bake.shapes[bone], frame, x, y, z);
+    if (!Kit.sculpt || !Kit.sculpt.relief || !Kit.figure || !Kit.figure.buildShape) return plain;
+    const boneRamp = Kit.figure.resolveRamps ? Kit.figure.resolveRamps(bake.plan, bake.boneRamp)[bone] : bake.boneRamp[bone];
+    const marks = solidPieces.filter((piece) => isReliefMark(piece, boneRamp)).map((piece) => ({ solid: Kit.sculpt.solid(piece.shape, IDENTITY), blend: piece.blend, carve: piece.carve }));
+    return Kit.sculpt.relief({ ...EVERYWHERE, distance: plain }, marks).distance;
+  };
+
   /** Pieces by bone for a list of placed features; kept per list, so a bake whose face did not change reuses them. */
   const piecesByFeatures = new WeakMap();
   const piecesFor = (bake) => {
@@ -461,12 +559,20 @@
     const layers = new Map();
     // Deepest first (a stable sort keeps the attach order among equals): later stamps draw over earlier ones.
     const drawOrder = [...bake.surface.features].sort((first, second) => (second.under || 0) - (first.under || 0));
+    drawOrder.forEach((feature) => {
+      if (feature.shape) solids.set(feature.bone, [...(solids.get(feature.bone) || []), solidPiece(feature, frameOf(feature))]);
+    });
+    /** Per bone: the distance to its surface with its relief marks worked in, so a stamp lies in a socket and on a lip. */
+    const distances = new Map();
+    const distanceOn = (bone) => {
+      if (!distances.has(bone)) distances.set(bone, modelledDistance(bake, bone, frames[bone], solids.get(bone) || []));
+      return distances.get(bone);
+    };
     drawOrder.forEach((feature, featureOrder) => {
-      const frame = frameOf(feature);
-      if (feature.shape) solids.set(feature.bone, [...(solids.get(feature.bone) || []), solidPiece(feature, frame)]);
       const sofar = layers.get(feature.bone) || [];
-      const surfaceDistance = (vertex) => Kit.surface.distance(bake.shapes[feature.bone], frames[feature.bone], vertex[0], vertex[1], vertex[2]);
-      layers.set(feature.bone, [...sofar, ...stampLayers(feature, frame, bake.ramps, surfaceDistance, featureOrder)]);
+      const measure = distanceOn(feature.bone);
+      const surfaceDistance = (vertex) => measure(vertex[0], vertex[1], vertex[2]);
+      layers.set(feature.bone, [...sofar, ...stampLayers(feature, frameOf(feature), bake.ramps, surfaceDistance, featureOrder)]);
     });
     const byBone = new Map();
     new Set([...solids.keys(), ...layers.keys()]).forEach((bone) => {
@@ -568,5 +674,5 @@
     };
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { checkSurface, surfaceLayout, surfaceOf, figureHooks, FIGURE_HOOKS, FRAME_SETS, FEATURE_PARAMS, FEATURE_DEFAULTS });
+  Kit.body = Object.assign(Kit.body || {}, { anchoredSpec, isReliefMark, checkSurface, surfaceLayout, surfaceOf, figureHooks, FIGURE_HOOKS, FRAME_SETS, FEATURE_PARAMS, FEATURE_DEFAULTS });
 })();
