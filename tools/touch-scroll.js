@@ -103,7 +103,7 @@ const readScroll = (selector) => ({
  * @example const report = await touchDrag(page, '.sheet-body'); // report.moved is 0 when the finger did nothing
  */
 async function touchDrag(page, selector, { distance = DRAG_DISTANCE_PX, steps = DRAG_STEPS } = {}) {
-  const plan = await page.evaluate(([query, drag]) => (0, eval)(`(${drag.planner})`)(query, drag), [selector, { distance, inset: EDGE_INSET_PX, planner: planDrag.toString() }]);
+  const plan = await page.evaluate(`(${planDrag})(${JSON.stringify(selector)}, ${JSON.stringify({ distance, inset: EDGE_INSET_PX })})`);
   if (!plan) return { found: false, room: 0, moved: 0, pageMoved: 0, travel: 0, underFinger: 'nothing', touchActions: '', prevented: false };
   const devtools = await page.context().newCDPSession(page);
   const finger = (type, y) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x: plan.x, y }] });
@@ -115,7 +115,7 @@ async function touchDrag(page, selector, { distance = DRAG_DISTANCE_PX, steps = 
   await finger('touchEnd');
   await page.waitForTimeout(SETTLE_MS);
   await devtools.detach();
-  const after = await page.evaluate(([query, reader]) => (0, eval)(`(${reader})`)(query), [selector, readScroll.toString()]);
+  const after = await page.evaluate(`(${readScroll})(${JSON.stringify(selector)})`);
   // When the element is the document's scroller its movement and the page's are the same number; count it once.
   const isPageScroller = await page.evaluate((query) => document.querySelector(query) === document.scrollingElement, selector);
   return {
