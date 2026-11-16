@@ -15,23 +15,23 @@
 (() => {
   /** The whole body in view, centred. */
   const FULL = Object.freeze({ anchor: 0.5, span: 1 });
-  /** Head and shoulders. */
-  const CLOSE = Object.freeze({ anchor: 0.9, span: 0.3 });
+  /** Head and shoulders. The wardrobe's bodies are about two and a third heads tall: the head is the top 43%. */
+  const CLOSE = Object.freeze({ anchor: 0.77, span: 0.48 });
   /**
    * The body area each editor group works on. A group the table does not name is shown whole, so a group the
    * catalogue adds later still gets a sensible view with no change here.
    * @type {Object<string, {anchor: number, span: number}>}
    */
   const GROUP_FOCUS = Object.freeze({
-    head: { anchor: 0.9, span: 0.42 },
-    face: { anchor: 0.915, span: 0.34 },
-    hair: { anchor: 0.91, span: 0.4 },
-    body: { anchor: 0.62, span: 0.62 },
-    arms: { anchor: 0.62, span: 0.66 },
-    legs: { anchor: 0.3, span: 0.62 },
-    outfit: { anchor: 0.56, span: 0.88 },
-    accessories: { anchor: 0.6, span: 0.88 },
-    traits: { anchor: 0.6, span: 0.88 },
+    head: { anchor: 0.78, span: 0.56 },
+    face: { anchor: 0.77, span: 0.5 },
+    hair: { anchor: 0.8, span: 0.56 },
+    body: { anchor: 0.42, span: 0.56 },
+    arms: { anchor: 0.42, span: 0.6 },
+    legs: { anchor: 0.2, span: 0.5 },
+    outfit: { anchor: 0.42, span: 0.9 },
+    accessories: { anchor: 0.55, span: 0.95 },
+    traits: { anchor: 0.55, span: 0.95 },
     colors: FULL,
   });
   /** The smallest share of the body's height the camera zooms in to. */

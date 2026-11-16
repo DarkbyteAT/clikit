@@ -92,7 +92,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
-- [body-portrait.js](#body-portraitjs) (3) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
+- [body-portrait.js](#body-portraitjs) (4) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
 - [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
 - [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
 - [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
@@ -7401,6 +7401,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `outline` *number[][]* - [[u, v], ...] in the stamp's own square, -1 to 1 each way (`Kit.surface.ellipse` draws one); u runs across (towards the body's left on a front-facing stamp), v up
   - `paint` *{channel: string, shade: number}* - a colour channel of the species and a shade of its ramp (0 is the darkest); the shade is clamped to the ramp
   - `[least]` *number* - the fewest target texels the layer's smaller side may cover: a renderer grows a layer that would be smaller (a glint, a pupil), so it survives a low-resolution target
+  - `[drop]` *number* - the layer is left out while its smaller side covers fewer target texels than this: detail (the white of an eye, a pupil) that would only be noise on a small sprite. Not with `least`.
   - `[fixed]` *boolean* - the layer is not mirrored on the right copy of a pair: a glint sits on the lit side of both eyes
 - **FeatureSpec**
   - `id` *string* - what dials and animators call it ('eye', 'mouth'); several features may share an id
@@ -7416,6 +7417,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[shape]` *Object* - a solid in the feature's own frame, metres at the authored size (`Kit.body.SHAPES` row: +X across, +Y along `up`, +Z out along the normal), for a nose or an ear that has a silhouette. A capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
   - `[paint]` *string* - the colour channel of the solid (default 'skin')
   - `[glow]` *boolean* - draw it as a glow (eyes): a renderer leaves it out of outlines
+  - `[under=0]` *number* - stamps of a feature with a higher `under` are drawn beneath the others on its bone whatever order the parts were attached in: blush and freckles go under the eyes
   - `[outlined=true]` *boolean* - false for a solid that should not get an outline of its own (a nose inside the face's silhouette), while still shading and inking as part of its bone
   - `[part]` *string* - set by kit/body-parts.js: the part that brought it
 - **RegionSpec**
@@ -8124,11 +8126,12 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `slot` *number* - which of the figure's ramps paints it
   - `tone` *number* - a fixed tone, 0 (darkest) .. 1 (lightest) of that ramp
   - `[least=0]` *number* - the fewest target texels its smaller side may cover: the look grows a layer that would be smaller (a glint, a pupil) so it survives a low-resolution target
+  - `[drop=0]` *number* - leave the layer out while its smaller side covers fewer target texels than this
 - **ShapeArrays** - A surface as plain arrays, ready for a BufferGeometry.
   - `positions` *Float32Array* - 3 per vertex, bone space, metres
   - `normals` *Float32Array* - 3 per vertex, unit length, outward
   - `indices` *Uint16Array\|Uint32Array* - 3 per triangle, counter-clockwise from outside
-  - `[paint]` *Float32Array* - stamps only, 3 per vertex: ramp slot, tone 0..1, least size in texels
+  - `[paint]` *Float32Array* - stamps only, 4 per vertex: ramp slot, tone 0..1, size rule in texels (positive: the least size, grow to it; negative: drop the layer below that size), order of the layer (later layers draw over earlier ones)
   - `[centres]` *Float32Array* - stamps only, 4 per vertex: its layer's centre (x, y, z) and smaller half extent, metres
 - **BoneSurface**
   - `shape` *ShapeDescriptor*
@@ -9170,8 +9173,9 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 
 ### `Kit.body.portrait.FRAMINGS`
 
-The framings, world units. `columns`: characters per row; `rows`: rows per page (0: as many as the cast
-needs); `cellWidth` / `cellHeight`: the window each character gets; `top`: how far above the crown of the
+The framings, world units. `columns`: characters per row (0: as many whole cells as the screen is wide, so
+a close-up fills a phone held upright with one face and a wide window with seven); `rows`: rows per page (0:
+as many as the cast needs); `cellWidth` / `cellHeight`: the window each character gets; `top`: how far above the crown of the
 head the window starts (room for a hat); `anchor`: what sits at a fixed height in every cell ('feet' or 'crown').
 
 ### `Kit.body.portrait.castRecipes(catalog)`
@@ -9192,7 +9196,7 @@ const recipes = castRecipes(Kit.body.catalog(Kit.body.wardrobe.CATALOG));
 
 Which page a slot is on and where in the page's grid, for a framing.
 
-- `framing` *typeof FRAMINGS[string]*
+- `framing` *{columns: number, rows: number}* - a row of `FRAMINGS` with its columns settled (`columnsFor`)
 - `slot` *number* - index among the things shown in this framing
 - `count` *number* - how many things the framing shows
 
@@ -9201,7 +9205,23 @@ Which page a slot is on and where in the page's grid, for a framing.
 **Complexity** O(1)
 
 ```js
-slotPlace(FRAMINGS.head, 7, 13) // { page: 1, column: 2, row: 0, pages: 3, rows: 1 }
+slotPlace({ columns: 5, rows: 1 }, 7, 13) // { page: 1, column: 2, row: 0, pages: 3, rows: 1 }
+```
+
+### `Kit.body.portrait.columnsFor(framing, aspect)`
+
+How many columns a framing gets in a screen area: its own count, or (for 0) as many whole cells as fit
+across when one row of cells fills the area's height.
+
+- `framing` *{columns: number, cellWidth: number, cellHeight: number}* - a row of `FRAMINGS`
+- `aspect` *number* - width / height of the area
+
+**Returns** *number* at least 1
+
+**Complexity** O(1)
+
+```js
+columnsFor(FRAMINGS.head, 2) // 2
 ```
 
 ## creator-rows.js

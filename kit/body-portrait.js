@@ -27,13 +27,14 @@
   const ATLAS_ROWS = 512;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 40 });
   /**
-   * The framings, world units. `columns`: characters per row; `rows`: rows per page (0: as many as the cast
-   * needs); `cellWidth` / `cellHeight`: the window each character gets; `top`: how far above the crown of the
+   * The framings, world units. `columns`: characters per row (0: as many whole cells as the screen is wide, so
+   * a close-up fills a phone held upright with one face and a wide window with seven); `rows`: rows per page (0:
+   * as many as the cast needs); `cellWidth` / `cellHeight`: the window each character gets; `top`: how far above the crown of the
    * head the window starts (room for a hat); `anchor`: what sits at a fixed height in every cell ('feet' or 'crown').
    */
   const FRAMINGS = Object.freeze({
     body: Object.freeze({ label: 'Full body', columns: 7, rows: 0, cellWidth: 0.92, cellHeight: 1.62, top: 0.2, anchor: 'feet' }),
-    head: Object.freeze({ label: 'Head and shoulders', columns: 5, rows: 1, cellWidth: 0.72, cellHeight: 0.8, top: 0.17, anchor: 'crown' }),
+    head: Object.freeze({ label: 'Head and shoulders', columns: 0, rows: 1, cellWidth: 0.72, cellHeight: 0.8, top: 0.17, anchor: 'crown' }),
     compare: Object.freeze({ label: 'Beside the stand-ins', columns: 4, rows: 1, cellWidth: 1.15, cellHeight: 2.5, top: 0.2, anchor: 'feet' }),
   });
   /** In `compare`: which cast members stand beside the stand-ins (the default person and one roll). */
@@ -58,12 +59,12 @@
 
   /**
    * Which page a slot is on and where in the page's grid, for a framing.
-   * @param {typeof FRAMINGS[string]} framing
+   * @param {{columns: number, rows: number}} framing a row of `FRAMINGS` with its columns settled (`columnsFor`)
    * @param {number} slot index among the things shown in this framing
    * @param {number} count how many things the framing shows
    * @returns {{page: number, column: number, row: number, pages: number, rows: number}}
    * @complexity O(1)
-   * @example slotPlace(FRAMINGS.head, 7, 13) // { page: 1, column: 2, row: 0, pages: 3, rows: 1 }
+   * @example slotPlace({ columns: 5, rows: 1 }, 7, 13) // { page: 1, column: 2, row: 0, pages: 3, rows: 1 }
    */
   const slotPlace = (framing, slot, count) => {
     const rows = framing.rows || Math.ceil(count / framing.columns);
@@ -71,6 +72,17 @@
     const within = slot % perPage;
     return { page: Math.floor(slot / perPage), column: within % framing.columns, row: Math.floor(within / framing.columns), pages: Math.ceil(count / perPage), rows };
   };
+
+  /**
+   * How many columns a framing gets in a screen area: its own count, or (for 0) as many whole cells as fit
+   * across when one row of cells fills the area's height.
+   * @param {{columns: number, cellWidth: number, cellHeight: number}} framing a row of `FRAMINGS`
+   * @param {number} aspect width / height of the area
+   * @returns {number} at least 1
+   * @complexity O(1)
+   * @example columnsFor(FRAMINGS.head, 2) // 2
+   */
+  const columnsFor = (framing, aspect) => framing.columns || Math.max(1, Math.floor((aspect * framing.cellHeight) / framing.cellWidth));
 
   Kit.register({
     id: 'portrait',
@@ -106,11 +118,17 @@
       /** The world rectangle the camera shows now: `[centerX, centerY, width, height]`. */
       const windowNow = [0, 0, 1, 1];
 
+      /** The framing in force with its columns settled for the free part of the screen. */
+      const settled = () => {
+        const framing = FRAMINGS[framingId.value];
+        const free = freeArea(size, isPanelShown.value);
+        return { ...framing, columns: columnsFor(framing, free.width / free.height) };
+      };
       /** What a framing shows, in slot order. */
       const shownIn = (id) => (id === 'compare' ? [...standIns, ...COMPARED_MEMBERS.map((index) => cast[index])] : cast);
       /** Places every root for the framing and page, hides the rest, and sets the camera's window. */
       const arrange = () => {
-        const framing = FRAMINGS[framingId.value];
+        const framing = settled();
         const shown = shownIn(framingId.value);
         const { pages, rows } = slotPlace(framing, 0, shown.length);
         page.value = Math.min(page.value, pages - 1);
@@ -162,8 +180,7 @@
         page.value = 0;
       };
       const nextPage = () => {
-        const framing = FRAMINGS[framingId.value];
-        page.value = (page.value + 1) % slotPlace(framing, 0, shownIn(framingId.value).length).pages;
+        page.value = (page.value + 1) % slotPlace(settled(), 0, shownIn(framingId.value).length).pages;
       };
       ctx.ui.mount(html`<div style="position:absolute;inset:0" onClick=${nextPage} aria-label="Characters; tap for the next page"></div>
         <${Panel} isShown=${isPanelShown} label="Portrait controls">
@@ -232,5 +249,5 @@
     },
   });
 
-  Kit.body.portrait = { FRAMINGS, castRecipes, slotPlace };
+  Kit.body.portrait = { FRAMINGS, castRecipes, slotPlace, columnsFor };
 })();
