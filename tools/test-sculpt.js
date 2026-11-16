@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const FILES = ['sculpt', 'figure-sculpt'];
+const FILES = ['sculpt', 'drape', 'figure-sculpt'];
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const VECTOR = 3;
 const OWNERS = 4;
@@ -270,7 +270,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     });
   });
 
-  test('sculpt: worn objects follow their data: a skirt is draped on the legs and hangs as authored at rest, a hat is a solid on its own bone, a sword stays rigid', () => {
+  test('sculpt: worn objects follow their data: a skirt is draped on the legs and its own bone and hangs as authored where the body is not in its way, a hat is a solid on its own bone, a sword stays rigid', () => {
     const { catalog } = catalogs[0];
     const editor = Kit.body.editor(catalog);
     const [species] = catalog.speciesIds();
@@ -284,7 +284,10 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.ok(skirt && hat, `layers: ${sculpted.layers.map((layer) => layer.id).join(' ')}`);
     assert.ok(skirt.id.endsWith('drape') && hat.id.endsWith('solid'));
     const legMask = Kit.body.roleMask(['leg']);
-    assert.ok(skirt.owners.every((owner, slot) => skirt.weights[slot] === 0 || (plan.roles[owner] & legMask) !== 0), 'every owner of the skirt is a leg bone');
+    const ownBone = plan.boneIndex('bottom/skirt');
+    assert.ok(skirt.owners.every((owner, slot) => skirt.weights[slot] === 0 || owner === ownBone || (plan.roles[owner] & legMask) !== 0), 'every owner of the skirt is a leg bone or the bone it hangs from');
+    const legShare = skirt.weights.reduce((sum, share, slot) => sum + (skirt.owners[slot] === ownBone ? 0 : share), 0) / (skirt.positions.length / 3);
+    assert.ok(legShare > 0.6 && legShare < 1, `the legs carry most of it, its own bone the rest: ${legShare}`);
     assert.ok(new Set(Array.from(skirt.owners).filter((_owner, slot) => skirt.weights[slot] > 0.5)).size >= 2, 'both legs carry it');
     assert.ok(hat.owners.every((owner, slot) => hat.weights[slot] === 0 || plan.boneNames[owner].startsWith('hat/')), 'the hat is moved by its own bones');
     // Skinned from the sculpting pose (legs spread) to rest, the skirt is the authored cone again: every vertex on its solid.
@@ -306,14 +309,19 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       }
       return out;
     };
-    let worstAtRest = 0;
-    let worstUnmoved = 0;
+    // Cloth is laid over the body (kit/drape.js): where the hips are in its way it is pushed outwards, never inwards.
+    let [worstInside, worstOutside, asAuthored, worstInsideUnmoved] = [0, 0, 0, 0];
     for (let vertex = 0; vertex < skirt.positions.length / 3; vertex++) {
-      worstAtRest = Math.max(worstAtRest, Math.abs(authored.distance(...moved(rest, skirt, vertex))));
-      worstUnmoved = Math.max(worstUnmoved, Math.abs(authored.distance(skirt.positions[vertex * 3], skirt.positions[vertex * 3 + 1], skirt.positions[vertex * 3 + 2])));
+      const atRest = authored.distance(...moved(rest, skirt, vertex));
+      worstInside = Math.max(worstInside, -atRest);
+      worstOutside = Math.max(worstOutside, atRest);
+      if (Math.abs(atRest) < 0.004) asAuthored += 1;
+      worstInsideUnmoved = Math.max(worstInsideUnmoved, -authored.distance(skirt.positions[vertex * 3], skirt.positions[vertex * 3 + 1], skirt.positions[vertex * 3 + 2]));
     }
-    assert.ok(worstAtRest < 0.012, `at rest the skirt hangs as authored (thickened to the grid): off by ${worstAtRest}`);
-    assert.ok(worstUnmoved > worstAtRest * 2, `the control: in the sculpting pose it is spread with the legs (${worstUnmoved})`);
+    assert.ok(worstInside < 0.012, `at rest no part of the skirt is inside the authored cone: ${worstInside}`);
+    assert.ok(worstOutside < Kit.drape.DRAPE.mostPush + 0.012, `and none is pushed out of it further than cloth is ever pushed: ${worstOutside}`);
+    assert.ok(asAuthored > 0, 'some of it is exactly where it was authored');
+    assert.ok(worstInsideUnmoved > Math.max(worstInside, 0.012) * 2, `the control: in the sculpting pose it is spread with the legs (${worstInsideUnmoved})`);
     // A held thing has no wear: it is the rigid piece it was.
     const armed = catalog.bakery({ capacity: 4 }).bakeRecipe(editor.setSocket({ species, seed: 1 }, 'handRight', 'shortBlade'));
     const armedLayout = figure.layout(armed, { level: 'medium' });

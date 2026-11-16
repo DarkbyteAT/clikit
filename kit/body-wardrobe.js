@@ -928,6 +928,10 @@
           turn: [-7, 0, 0],
           tail: [0, -0.85, 0],
           girth: 0.4,
+          // A panel over everything else worn: it rests on the shoulders and the seat, and hangs free of the legs on its own bone.
+          rank: 3,
+          hangs: ['spine', 'neck'],
+          clings: 0.03,
           shape: {
             kind: 'extrude',
             outline: [
@@ -1433,8 +1437,8 @@
     hat: { wear: 'solid' },
     horns: { wear: 'solid' },
     tail: { wear: 'solid' },
-    bottom: { wear: 'drape', hangs: ['leg'] },
-    outerwear: { wear: 'drape', hangs: ['spine', 'neck'] },
+    bottom: { wear: 'drape', hangs: ['leg'], rank: 1, clings: 0.25 },
+    outerwear: { wear: 'drape', hangs: ['spine', 'neck', 'leg'], rank: 2, clings: 0.05 },
   });
   Object.keys(PARTS).forEach((id) => {
     const worn = PARTS[id].fits.map((type) => WEAR_BY_FIT[type]).find(Boolean);
