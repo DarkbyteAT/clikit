@@ -41,6 +41,47 @@ const check = (name, passed, seen = '') => {
   console.log(`  ${passed ? 'ok  ' : 'FAIL'} ${name}${passed || seen === '' ? '' : ' (saw: ' + JSON.stringify(seen) + ')'}`);
 };
 
+/** The middle value of a list of numbers. */
+const median = (values) => [...values].sort((first, second) => first - second)[Math.floor(values.length / 2)];
+
+/** Adds up control kinds over groups: `{ head: { dial: 6 }, hair: { socket: 2 } }` -> `{ dial: 6, socket: 2 }`. */
+const totalKinds = (kindsByGroup) =>
+  Object.values(kindsByGroup)
+    .flatMap((counts) => Object.entries(counts))
+    .reduce((totals, [kind, count]) => Object.assign(totals, { [kind]: (totals[kind] || 0) + count }), {});
+
+/** Real finger gestures on the stage: a one-finger drag turns the character, a two-finger spread zooms in, Home resets the view. */
+async function fingerGestures({ page, press, state, settle, read }) {
+  await press('.cr-panel [role=tab]:nth-of-type(1)');
+  const yawBefore = (await state()).camera.yaw;
+  const stageBox = await read(`(() => { const rect = document.getElementById('cr-view').getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.55, w: rect.width }; })()`);
+  const devtools = await page.context().newCDPSession(page);
+  const touch = (type, points) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+  await touch('touchStart', [{ x: stageBox.x - 60, y: stageBox.y }]);
+  for (let step = 1; step <= 6; step++) {
+    await touch('touchMove', [{ x: stageBox.x - 60 + step * 20, y: stageBox.y }]);
+    await page.waitForTimeout(20);
+  }
+  await touch('touchEnd', []);
+  await settle(200);
+  const yawAfter = (await state()).camera.yaw;
+  check('touch: a one-finger drag across the stage turns the character', Math.abs(yawAfter - yawBefore) > 0.5, { yawBefore, yawAfter });
+  const spanBefore = (await state()).cameraTarget.span;
+  await touch('touchStart', [{ x: stageBox.x - 20, y: stageBox.y }, { x: stageBox.x + 20, y: stageBox.y }]);
+  for (let step = 1; step <= 6; step++) {
+    await touch('touchMove', [{ x: stageBox.x - 20 - step * 12, y: stageBox.y }, { x: stageBox.x + 20 + step * 12, y: stageBox.y }]);
+    await page.waitForTimeout(20);
+  }
+  await touch('touchEnd', []);
+  await settle(200);
+  const spanAfter = (await state()).cameraTarget.span;
+  check('touch: spreading two fingers zooms in', spanAfter < spanBefore * 0.8, { spanBefore, spanAfter });
+  await read(`document.getElementById('cr-view').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))`);
+  await settle(200);
+  check('keyboard: Home on the stage puts the view back to the whole body, facing front', (await state()).cameraTarget.span === 1);
+
+}
+
 async function main() {
   const session = await openArcade({ landscape: isLandscape });
   const { page } = session;
@@ -101,7 +142,7 @@ async function main() {
   report.nodesPerTab = nodeCounts;
   report.kindsPerTab = kinds;
   report.panelNodesTotal = Math.max(...Object.values(nodeCounts));
-  const withKinds = Object.values(kinds).reduce((all, group) => ({ dial: (all.dial || 0) + (group.dial || 0), color: (all.color || 0) + (group.color || 0), socket: (all.socket || 0) + (group.socket || 0) }), {});
+  const withKinds = totalKinds(kinds);
   check('controls: sliders, swatch rows and option strips are all generated', withKinds.dial > 20 && withKinds.color > 5 && withKinds.socket > 8, withKinds);
 
   // ---- camera follows the group ----
@@ -137,9 +178,7 @@ async function main() {
   const afterSlider = await state();
   const inputToApply = timings.map((entry) => entry.inputToApplyMs);
   const applyOnly = timings.map((entry) => entry.applyMs);
-  const afterSliderMeasurement = (entries) => entries[entries.length - 1].flushMs;
-  const median = (values) => [...values].sort((first, second) => first - second)[Math.floor(values.length / 2)];
-  report.sliderToFigure = { flushMs_last: afterSliderMeasurement(timings), inputToApplyMs_median: median(inputToApply), inputToApplyMs_max: Math.max(...inputToApply), applyMs_median: median(applyOnly), applyMs_max: Math.max(...applyOnly), inputs: LATENCY_INPUTS, wallToTwoFramesMs_median: median(timings.map((entry) => entry.wallMs)) };
+  report.sliderToFigure = { flushMs_last: timings[timings.length - 1].flushMs, inputToApplyMs_median: median(inputToApply), inputToApplyMs_max: Math.max(...inputToApply), applyMs_median: median(applyOnly), applyMs_max: Math.max(...applyOnly), inputs: LATENCY_INPUTS, wallToTwoFramesMs_median: median(timings.map((entry) => entry.wallMs)) };
   check('slider: dragging changes the recipe and the figure draws the new one', JSON.stringify(afterSlider.recipe) !== JSON.stringify(before.recipe) && afterSlider.drawnIsCurrent, { applied: afterSlider.measurement.applied });
   await press('#cr-undo');
   const undone = await state();
@@ -171,7 +210,13 @@ async function main() {
     ['pointerdown', 'pointerup', 'pointerdown', 'pointerup'].forEach(tap);
   });
   await settle(300);
-  const afterDoubleTap = await read(`(() => { const slider = Kit.currentGame.session.groups().flatMap((group) => group.rows).find((row) => row.kind === 'dial'); const value = Kit.currentGame.session.schema().dials.find((dial) => dial.id === slider.sliders[0].setId.split('@')[0]).value; return { readout: document.querySelector('#cr-pane .cr-dial output').textContent, atDefault: Math.abs(value - slider.sliders[0].default) <= slider.sliders[0].step }; })()`);
+  const afterDoubleTap = await read(`(() => {
+    const rowId = document.querySelector('#cr-pane .cr-dial').dataset.row;
+    const row = Kit.currentGame.session.groups().flatMap((group) => group.rows).find((candidate) => candidate.id === rowId);
+    const slider = row.sliders[0];
+    const value = Kit.currentGame.session.schema().dials.find((dial) => dial.key === slider.valueKey).value;
+    return { readout: document.querySelector('#cr-pane .cr-dial output').textContent, atDefault: Math.abs(value - slider.default) <= slider.step };
+  })()`);
   check('double tap: a slider that was moved goes back to its default', movedByDrag !== afterDoubleTap.readout && afterDoubleTap.atDefault, { movedByDrag, afterDoubleTap });
 
   // ---- randomise, lock, compare ----
@@ -261,34 +306,7 @@ async function main() {
   await press('#cr-code-load');
   check('share: a good code loads and closes the dialog', !(await read(`Boolean(document.querySelector('dialog[open]'))`)) && session.errors.length === 0, session.errors);
 
-  // ---- real finger gestures on the stage: a one-finger drag turns the character, a two-finger spread zooms in ----
-  await press('.cr-panel [role=tab]:nth-of-type(1)');
-  const yawBefore = (await state()).camera.yaw;
-  const stageBox = await read(`(() => { const rect = document.getElementById('cr-view').getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.55, w: rect.width }; })()`);
-  const devtools = await page.context().newCDPSession(page);
-  const touch = (type, points) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints: points });
-  await touch('touchStart', [{ x: stageBox.x - 60, y: stageBox.y }]);
-  for (let step = 1; step <= 6; step++) {
-    await touch('touchMove', [{ x: stageBox.x - 60 + step * 20, y: stageBox.y }]);
-    await page.waitForTimeout(20);
-  }
-  await touch('touchEnd', []);
-  await settle(200);
-  const yawAfter = (await state()).camera.yaw;
-  check('touch: a one-finger drag across the stage turns the character', Math.abs(yawAfter - yawBefore) > 0.5, { yawBefore, yawAfter });
-  const spanBefore = (await state()).cameraTarget.span;
-  await touch('touchStart', [{ x: stageBox.x - 20, y: stageBox.y }, { x: stageBox.x + 20, y: stageBox.y }]);
-  for (let step = 1; step <= 6; step++) {
-    await touch('touchMove', [{ x: stageBox.x - 20 - step * 12, y: stageBox.y }, { x: stageBox.x + 20 + step * 12, y: stageBox.y }]);
-    await page.waitForTimeout(20);
-  }
-  await touch('touchEnd', []);
-  await settle(200);
-  const spanAfter = (await state()).cameraTarget.span;
-  check('touch: spreading two fingers zooms in', spanAfter < spanBefore * 0.8, { spanBefore, spanAfter });
-  await read(`document.getElementById('cr-view').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))`);
-  await settle(200);
-  check('keyboard: Home on the stage puts the view back to the whole body, facing front', (await state()).cameraTarget.span === 1);
+  await fingerGestures({ page, press, state, settle, read });
 
   // ---- keyboard ----
   await press('.cr-panel [role=tab]:nth-of-type(3)');

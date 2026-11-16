@@ -668,3 +668,52 @@ machine at load 20 to 40, so only the ratios mean anything.
   transform (`scaledPart`) rather than retyped, so the next proportion change is one number.
 - **Revisit if** a slider drag of a face dial shows in a profile: a bake places every feature copy again
   (0.66 ms per step for the wardrobe person); cache placements by (shape, numbers).
+
+## Character creator (kit/creator-*.js, the `creator` screen)
+
+- **Controls generated or written.** Options: a component per body part; one component per control kind fed by
+  `editor.schema`. **Chosen:** rows from the schema (`Kit.creator.rows.groupsOf`: dial, colour, socket) and a
+  kind -> view table (`ROW_VIEWS`). Cost: a control that is neither (a future field kind) needs a view row.
+  Bought: a dial or part added to a catalogue appears with no creator change (a test extends the wardrobe with a
+  dial and a part and finds both). A sided pair is one row (one slider while linked, two while not).
+- **Re-render or signals.** Options: rebuild the pane from the schema on every edit; one signal per field.
+  **Chosen:** signals (`controlHost`: a signal per field key and per lock) plus a `structureKey` signal for the
+  row set. A drag updates one slider and one readout; the pane redraws only when the structure changes (a part
+  with sockets, a pair unlinked, a body type).
+- **When a slider reaches the figure.** Options: on each input event; queued and applied once per frame in
+  `render()`. **Chosen:** queued, so a 120 Hz touch stream makes one edit and one bake per frame and the figure
+  update is in the same frame as the edit. Cost: up to one frame of wait (the reported latency includes it).
+- **Undo.** Options: a history step per input event; a step per pointer release; `Kit.history` with a merge key
+  and a 700 ms window. **Chosen:** the last, plus `endGesture` on pointer release. A drag and a held arrow key
+  are each one step; a pause or another control starts a new one. A lock or an unlink is not an undo step (no
+  value changed).
+- **Randomise this group.** Options: add `randomizeGroup` to the editor; use `randomize(seed, { locked })` with
+  every control outside the group locked. **Chosen:** the second, in the session: no change to a shared file, and
+  user locks inside the group still hold.
+- **Switching body type.** Options: re-roll from the seed; carry every override and let the catalogue clamp;
+  carry what `catalog.validate` accepts and report the rest. **Chosen:** the third. Dials outside the new range
+  are clamped by the catalogue (kept, not dropped); an override the species cannot hold is dropped and named in
+  a notice.
+- **Share code.** Reused `catalog.encode` + `Kit.pack.toText` unchanged (no checksum: a typo that keeps the code
+  decodable gives another character, which the person sees at once; a checksum would have made codes differ from
+  every other use of the format). Failures are mapped from the library's messages to sentences by a table, tested
+  so no sentence leaks library text.
+- **Saved characters.** Slots hold share codes, not recipes, so a saved character survives catalogue changes the
+  way a shared one does (it opens, or says why not). **Thumbnails:** colour chips from the character's own
+  ramps, not a live render: a render per slot needs a palette block each and the atlas cannot free one (see the
+  figure friction row), so it is not cheap yet.
+- **Camera.** A table group id -> (anchor, span) as shares of the body's height, eased with a frame-rate
+  independent exponential; an unknown group shows the whole body. Rejected: framing from the bones a group edits
+  (right in principle, but needs the plan's roles per group and breaks when proportions change). Orthographic
+  bounds are offset so the body stands in the stage element's box while the canvas fills the page.
+- **Layout.** One CSS grid (stage above panel; beside it in landscape) and the camera fitted to the stage
+  element's measured box. `Kit.look.panel.Panel` was not used (fixed 46% share, one scroller, no tabs); its
+  `LookControls` and `lookControls` were.
+- **Faces and the renderer.** `Kit.figure.build` binds `featuresOf` to the first bake, so the screen passes a
+  wrapper over the hooks of the bake being drawn. If the figure takes the hooks per `setBake`, the wrapper goes.
+- **Walking preview.** The motion state's pose is body-relative, so copying it into `figure.local` each frame
+  walks the figure on the spot (a treadmill) with no change to the figure or the gait. The state is made again
+  when the bake changes.
+- **Revisit if** the panel's node count (591 at most, the Face tab) shows in a profile on a phone (swatch
+  grids and option strips are the bulk: virtualise the strips); a part gets an icon in the catalogue (cards fall
+  back to the group's icon until then); the character art lands and the camera table needs retuning.
