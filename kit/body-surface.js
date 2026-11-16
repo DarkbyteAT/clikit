@@ -434,9 +434,9 @@
    * is then walked back onto the bone's surface along the feature's normal (a few steps of the signed distance),
    * so a wide stamp (blush, freckles) hugs the curve of whatever head the dials have made.
    */
-  const stampLayers = (feature, frame, ramps, surfaceDistance, featureOrder) => {
+  const stampLayers = (feature, frame, ramps, surfaceDistance, featureOrder, frameName = feature.rest) => {
     const { across, up, normal, mirror } = frame;
-    return (feature.frames[feature.rest] || [])
+    return (feature.frames[frameName] || [])
       .slice(0, MOST_STAMP_LAYERS)
       .filter((layer) => layer.ramp >= 0)
       .map((layer, index) => {
@@ -458,23 +458,46 @@
     if (known) return known;
     const frames = surfaceLayout(bake.plan).frames;
     const solids = new Map();
-    const layers = new Map();
     // Deepest first (a stable sort keeps the attach order among equals): later stamps draw over earlier ones.
     const drawOrder = [...bake.surface.features].sort((first, second) => (second.under || 0) - (first.under || 0));
-    drawOrder.forEach((feature, featureOrder) => {
-      const frame = frameOf(feature);
-      if (feature.shape) solids.set(feature.bone, [...(solids.get(feature.bone) || []), solidPiece(feature, frame)]);
-      const sofar = layers.get(feature.bone) || [];
-      const surfaceDistance = (vertex) => Kit.surface.distance(bake.shapes[feature.bone], frames[feature.bone], vertex[0], vertex[1], vertex[2]);
-      layers.set(feature.bone, [...sofar, ...stampLayers(feature, frame, bake.ramps, surfaceDistance, featureOrder)]);
+    /** Every stamp layer of a bone with its features showing a face state (the rest frames when none is given). */
+    const layersOf = (bone, state) =>
+      drawOrder.flatMap((feature, featureOrder) => {
+        if (feature.bone !== bone) return [];
+        const surfaceDistance = (vertex) => Kit.surface.distance(bake.shapes[bone], frames[bone], vertex[0], vertex[1], vertex[2]);
+        return stampLayers(feature, frameOf(feature), bake.ramps, surfaceDistance, featureOrder, state ? frameShown(feature, state) : feature.rest);
+      });
+    drawOrder.forEach((feature) => {
+      if (feature.shape) solids.set(feature.bone, [...(solids.get(feature.bone) || []), solidPiece(feature, frameOf(feature))]);
     });
     const byBone = new Map();
-    new Set([...solids.keys(), ...layers.keys()]).forEach((bone) => {
-      const stamps = (layers.get(bone) || []).length ? [{ shape: freezeDeep({ kind: 'stamps', layers: layers.get(bone), at: [0, 0, 0] }), stamps: true, glow: true }] : [];
+    new Set(drawOrder.map((feature) => feature.bone)).forEach((bone) => {
+      const layers = layersOf(bone, null);
+      // The other faces of the bone (a blink, an open mouth) ride on its stamps piece, for a renderer that can swap them in.
+      const faces = faceStates(drawOrder.filter((feature) => feature.bone === bone)).map((state) => ({ state, shape: freezeDeep({ kind: 'stamps', layers: layersOf(bone, state), at: [0, 0, 0] }) }));
+      const stamps = layers.length ? [{ shape: freezeDeep({ kind: 'stamps', layers, at: [0, 0, 0] }), stamps: true, glow: true, ...(faces.length ? { faces: Object.freeze(faces) } : {}) }] : [];
       byBone.set(bone, Object.freeze([...(solids.get(bone) || []), ...stamps]));
     });
     piecesByFeatures.set(bake.surface.features, byBone);
     return byBone;
+  };
+
+  /** The frame set that animates a feature: the one whose first frame is the feature's rest frame, when it has another frame of it. */
+  const frameSetOf = (feature) => Object.keys(FRAME_SETS).find((set) => FRAME_SETS[set][0] === feature.rest && FRAME_SETS[set].some((name, index) => index > 0 && (feature.frames || {})[name])) || null;
+
+  /** The frame a feature shows in a face state ({ set: index into `FRAME_SETS[set]` }): its set's frame when it has it, else its rest. */
+  const frameShown = (feature, state) => {
+    const set = frameSetOf(feature);
+    const name = set ? FRAME_SETS[set][state[set] || 0] : feature.rest;
+    return (feature.frames || {})[name] ? name : feature.rest;
+  };
+
+  /** Every face state but the rest one that some of the features can show: the product of the frames each set has here. */
+  const faceStates = (features) => {
+    const sets = Object.keys(FRAME_SETS);
+    const shownBy = sets.map((set) => FRAME_SETS[set].map((name, index) => index).filter((index) => index === 0 || features.some((feature) => frameSetOf(feature) === set && feature.frames[FRAME_SETS[set][index]])));
+    const product = shownBy.reduce((states, indices, at) => states.flatMap((state) => indices.map((index) => ({ ...state, [sets[at]]: index }))), [{}]);
+    return product.filter((state) => sets.some((set) => state[set] > 0));
   };
   const freezeDeep = (value) => {
     if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -486,8 +509,11 @@
   /**
    * The figure renderer's features hook: the placed features of a bone as `FeaturePiece`s in bone space. A
    * solid stays a solid, turned onto the surface (`basis`); every stamp layer of the bone becomes one polygon
-   * of a single `stamps` piece, so a whole face is one draw call. Works for any bake of any catalogue: the
-   * renderer hands over the bake it is laying out.
+   * of a single `stamps` piece, so a whole face is one draw call. When features of the bone have other frames
+   * of a `FRAME_SETS` set (eyes that blink, a mouth that opens), the stamps piece carries `faces`: the same
+   * face in every other state, `[{ state: { blink, talk }, shape }]`, each an index into its set; a renderer
+   * that can swap them in (`figure.face`) shows one instead of the rest face. Works for any bake of any
+   * catalogue: the renderer hands over the bake it is laying out.
    * @param {Object} _plan the bake's plan (unused: the bake says it all)
    * @param {number} bone
    * @param {?Object} _shape the bone's own surface (unused)
