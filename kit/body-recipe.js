@@ -761,7 +761,7 @@
      * plus worn parts), the dial set compiled against it and the proportioned rest pose. Five hundred instances
      * of twenty looks bake twenty times.
      * @param {{capacity?: number}} [options] bakes kept before the oldest is dropped (default 512)
-     * @returns {{bake: function(Individual): Bake, bakeRecipe: function(Recipe): Bake, stats: function(): {bakes: number, hits: number, size: number, outfits: number}, clear: function(): void}}
+     * @returns {{bake: function(Individual): Bake, bakeRecipe: function(Recipe): Bake, stats: function(): {bakes: number, hits: number, size: number, outfits: number}, skeletons: function(): number, clear: function(): void}}
      *   `bake` returns the cached bake for the individual's hash or builds it; `bakeRecipe` resolves first;
      *   `stats` counts bakes built, cache hits, bakes held and distinct outfits (assembled plans) held
      * @complexity a hit is O(fields) (the hash); a miss is O(bones + dial operations), plus O(bones x dials) the
@@ -778,13 +778,30 @@
       const outfits = new Map();
       let built = 0;
       let hits = 0;
+      /** @type {Map<string, Object>} species + the fills that bring bones -> the skeleton every face and print on it shares */
+      const skeletons = new Map();
+      const keyOf = (kind, fills, paths) => `${kind.id}|${paths.map((path) => `${path}=${fills[path]}`).join(',')}`;
+      const pick = (fills, paths) => Object.fromEntries(paths.map((path) => [path, fills[path]]));
+      /**
+       * The skeleton key is the outfit key without the parts that are only surface (eyes, a mouth, a printed
+       * shirt): trying on a face part compiles no bones, it lays new features and regions on the skeleton it shares.
+       */
+      const skeletonOf = (kind, fills, paths) => {
+        const key = keyOf(kind, fills, paths);
+        const known = skeletons.get(key);
+        if (known) return known;
+        const plan = Kit.body.assemble(kind.plan, pick(fills, paths), compiledParts);
+        skeletons.set(key, plan);
+        return plan;
+      };
       const outfitOf = (kind, fills) => {
-        const key = `${kind.id}|${Object.keys(fills)
-          .map((path) => `${path}=${fills[path]}`)
-          .join(',')}`;
+        const paths = Object.keys(fills);
+        const key = keyOf(kind, fills, paths);
         const known = outfits.get(key);
         if (known) return known;
-        const plan = Kit.body.assemble(kind.plan, fills, compiledParts);
+        const isSurface = (path) => fills[path] !== null && fills[path] !== undefined && compiledParts[fills[path]] && !compiledParts[fills[path]].spec.bones.length;
+        const skeleton = skeletonOf(kind, fills, paths.filter((path) => !isSurface(path)));
+        const plan = Kit.body.assemble(skeleton, pick(fills, paths.filter(isSurface)), compiledParts);
         const outfit = { plan, dialSet: Kit.body.dials(plan, kind.dialRows) };
         outfits.set(key, outfit);
         return outfit;
@@ -823,9 +840,12 @@
         bake,
         bakeRecipe: (recipe) => bake(resolve(recipe)),
         stats: () => ({ bakes: built, hits, size: bakes.size, outfits: outfits.size }),
+        /** How many distinct skeletons the outfits held share: outfits that differ only in surface parts (a face, a print) count once. */
+        skeletons: () => skeletons.size,
         clear() {
           bakes.clear();
           outfits.clear();
+          skeletons.clear();
         },
       };
     };
