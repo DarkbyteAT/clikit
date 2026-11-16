@@ -79,6 +79,22 @@
   const anchorForSpan = (span) => lerp(CLOSE.anchor, FULL.anchor, clamp((span - CLOSE.span) / (FULL.span - CLOSE.span), 0, 1));
 
   /**
+   * The orthographic camera bounds that put a window's centre in the middle of a screen area, so the character
+   * can stand in the free part of the screen (above a panel, beside it) while the canvas fills the whole page.
+   * @param {{centerX: number, centerY: number, halfWidth: number, halfHeight: number}} window from `windowFor`
+   * @param {{left: number, top: number, width: number, height: number}} area the free area, CSS pixels from the screen's top left
+   * @param {{w: number, h: number}} size the whole screen, CSS pixels
+   * @returns {{left: number, right: number, top: number, bottom: number}} world units about the camera's axis
+   * @example Object.assign(camera, Kit.creator.camera.boundsFor(window, area, ctx.size)); camera.updateProjectionMatrix();
+   */
+  const boundsFor = (window, area, size) => {
+    const worldPerPixel = (2 * window.halfHeight) / area.height;
+    const centerX = area.left + area.width / 2;
+    const centerY = area.top + area.height / 2;
+    return { left: -centerX * worldPerPixel, right: (size.w - centerX) * worldPerPixel, top: centerY * worldPerPixel, bottom: -(size.h - centerY) * worldPerPixel };
+  };
+
+  /**
    * @typedef {Object} CameraDirector
    * @property {function(string): void} focus aim at the body area of an editor group (an unknown group aims at the whole body)
    * @property {function(number): void} zoomBy multiply the span (below 1 zooms in); the anchor follows unless a group fixed it
@@ -150,5 +166,5 @@
     return self;
   };
 
-  Kit.creator = Object.assign(Kit.creator || {}, { camera: { director, pinchFactor, yawFromDrag, GROUP_FOCUS, FULL, CLOSE, MIN_SPAN, MAX_SPAN, ZOOM_STEP, TURN_STEP } });
+  Kit.creator = Object.assign(Kit.creator || {}, { camera: { director, boundsFor, pinchFactor, yawFromDrag, GROUP_FOCUS, FULL, CLOSE, MIN_SPAN, MAX_SPAN, ZOOM_STEP, TURN_STEP } });
 })();

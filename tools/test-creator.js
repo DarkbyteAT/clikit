@@ -447,4 +447,20 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const wide = director().windowFor({ lowestY: 0, highestY: 1.8, reach: 2 }, 0.5);
     assert.ok(wide.halfWidth >= 2, 'control: a body with a long reach widens the whole-body view');
   });
+  test('creator camera: bounds put the body in the middle of the free area, at a scale that fills it', () => {
+    const { director, boundsFor } = Kit.creator.camera;
+    const measured = { lowestY: 0, highestY: 1.8, reach: 0.5 };
+    const area = { left: 0, top: 52, width: 390, height: 330 };
+    const size = { w: 390, h: 780 };
+    const window = director().windowFor(measured, area.width / area.height);
+    const bounds = boundsFor(window, area, size);
+    const screenX = (worldX) => ((worldX - bounds.left) / (bounds.right - bounds.left)) * size.w;
+    const screenY = (worldY) => ((bounds.top - worldY) / (bounds.top - bounds.bottom)) * size.h;
+    close(screenX(0), area.left + area.width / 2, 1e-6, 'the axis lands in the middle of the area, sideways');
+    close(screenY(0), area.top + area.height / 2, 1e-6, 'the window centre lands in the middle of the area, vertically');
+    close(screenY(-window.halfHeight) - screenY(window.halfHeight), area.height, 1e-6, 'and the window fills the area top to bottom');
+    close(screenX(window.halfWidth) - screenX(-window.halfWidth), area.width, 1e-6, 'and edge to edge');
+    const moved = boundsFor(window, { ...area, top: 200 }, size);
+    assert.ok(moved.top > bounds.top, 'control: an area lower on the screen moves the bounds');
+  });
 };

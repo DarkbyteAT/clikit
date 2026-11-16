@@ -175,10 +175,13 @@
    * A string that is equal for two row sets exactly when a view built from one is right for the other: the same
    * rows, in the same order, with the same sliders and the same choices. Values are not part of it.
    * @param {RowGroup[]} groups
+   * @param {string} [salt] anything else that changes what a row shows without changing its id (the body type: ranges, defaults and ramps differ)
    * @returns {string}
    * @complexity O(rows)
    */
-  const structureKey = (groups) =>
+  const structureKey = (groups, salt = '') =>
+    salt +
+    '|' +
     groups
       .map((group) => `${group.id}[${group.rows.map((row) => `${row.id}${row.sliders ? `:${row.sliders.map((slider) => slider.setId).join('+')}` : ''}${row.choices ? `:${row.choices.length}` : ''}`).join(',')}]`)
       .join(';');
