@@ -33,6 +33,13 @@
   const DISPLAY_GAMMA = 2.2;
   /** A stamp layer smaller than its least size is grown towards it, by at most this factor (a glint may double, a face may not balloon). */
   const STAMP_MOST_GROWTH = 2.5;
+  /**
+   * How far each later layer of a stamp is pulled toward the camera, in normalised device depth (the whole depth
+   * range is 2). Layers lie on a curved surface as flat polygons a fraction of a millimetre apart, so a large
+   * one sags under a small one's corners; the pull settles their order. Sixteen layers stay within a centimetre
+   * under the kit's orthographic cameras (40 m deep).
+   */
+  const STAMP_DEPTH_STEP = 0.00002;
   /** A region line never reaches further than this share of the map from its fragment (near a pole the angle's gradient is unbounded). */
   const REGION_LINE_MOST_REACH = 0.06;
   /** Line classes pack into the tone byte of the index target above the tone: tone + CLASS_STEP x class. */
@@ -59,7 +66,10 @@
       transformed = stampCentre.xyz + (transformed - stampCentre.xyz) * stampGrowth();
     #endif
     #include <skinning_vertex>
-    #include <project_vertex>`;
+    #include <project_vertex>
+    #ifdef LOOK_STAMP
+      gl_Position.z -= stampPaint.w * ${STAMP_DEPTH_STEP.toFixed(6)} * gl_Position.w;
+    #endif`;
 
   /**
    * 4 x 4 ordered dither without a texture or bit operations. bayer2 is the 2 x 2 matrix [[0, 2], [3, 1]] / 4
@@ -213,15 +223,19 @@
       attribute float instanceRamp;
     #endif
     #ifdef LOOK_STAMP
-      // A stamp vertex carries its layer's paint (ramp slot, tone 0..1, least size in texels) and its layer's
-      // centre with the layer's smaller half extent. A layer whose smaller side would cover fewer target texels
-      // than its least size is grown about its centre until it does: a glint survives a 100-texel-tall sprite.
-      attribute vec3 stampPaint;
+      // A stamp vertex carries its layer's paint (ramp slot, tone 0..1, size rule in texels, order) and its
+      // layer's centre with the layer's smaller half extent. A positive size rule is a least size: a layer whose
+      // smaller side would cover fewer target texels is grown about its centre until it does (a glint survives a
+      // 100-texel-tall sprite). A negative one drops the layer below that size (it collapses to its centre):
+      // the white of an eye three texels wide is noise, and the iris alone reads better.
+      attribute vec4 stampPaint;
       attribute vec4 stampCentre;
       uniform float uTexelWorld;   // world size of one target texel; 0 when unknown (a perspective camera)
       varying vec3 vStampPaint;
       float stampGrowth() {
-        return clamp(stampPaint.z * uTexelWorld / max(2.0 * stampCentre.w, 1e-5), 1.0, ${STAMP_MOST_GROWTH.toFixed(1)});
+        float texels = 2.0 * stampCentre.w / max(uTexelWorld, 1e-9);   // the smaller side, in target texels
+        if (stampPaint.z < 0.0) return uTexelWorld > 0.0 && texels < -stampPaint.z ? 0.0 : 1.0;
+        return clamp(stampPaint.z / max(texels, 1e-5), 1.0, ${STAMP_MOST_GROWTH.toFixed(1)});
       }
     #endif
     varying vec3 vViewNormal;
@@ -238,7 +252,7 @@
         vRampOffset = instanceRamp;
       #endif
       #ifdef LOOK_STAMP
-        vStampPaint = stampPaint;
+        vStampPaint = stampPaint.xyz;
       #endif
     }`;
 

@@ -43,6 +43,8 @@
    *   (0 is the darkest); the shade is clamped to the ramp
    * @property {number} [least] the fewest target texels the layer's smaller side may cover: a renderer grows a
    *   layer that would be smaller (a glint, a pupil), so it survives a low-resolution target
+   * @property {number} [drop] the layer is left out while its smaller side covers fewer target texels than this:
+   *   detail (the white of an eye, a pupil) that would only be noise on a small sprite. Not with `least`.
    * @property {boolean} [fixed] the layer is not mirrored on the right copy of a pair: a glint sits on the lit
    *   side of both eyes
    */
@@ -64,6 +66,8 @@
    *   capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
    * @property {string} [paint] the colour channel of the solid (default 'skin')
    * @property {boolean} [glow] draw it as a glow (eyes): a renderer leaves it out of outlines
+   * @property {number} [under=0] stamps of a feature with a higher `under` are drawn beneath the others on its
+   *   bone whatever order the parts were attached in: blush and freckles go under the eyes
    * @property {boolean} [outlined=true] false for a solid that should not get an outline of its own (a nose
    *   inside the face's silhouette), while still shading and inking as part of its bone
    * @property {string} [part] set by kit/body-parts.js: the part that brought it
@@ -311,7 +315,7 @@
     const features = placedBefore || layout.features.flatMap(({ spec, bone }) => {
       const sides = spec.spacing === undefined ? [null] : SIDES;
       const resolvedFrames = Object.fromEntries(
-        Object.keys(spec.frames || {}).map((frame) => [frame, spec.frames[frame].map((layer) => ({ outline: layer.outline, ...paintOf(layer.paint), ...(layer.least ? { least: layer.least } : {}), ...(layer.fixed ? { fixed: true } : {}) }))])
+        Object.keys(spec.frames || {}).map((frame) => [frame, spec.frames[frame].map((layer) => ({ outline: layer.outline, ...paintOf(layer.paint), ...(layer.least ? { least: layer.least } : {}), ...(layer.drop ? { drop: layer.drop } : {}), ...(layer.fixed ? { fixed: true } : {}) }))])
       );
       return sides.flatMap((side) => {
         const numbers = applyFeatureDials(featureNumbers(spec), spec.id, side, dialSet, values);
@@ -340,6 +344,7 @@
             part: spec.part || null,
             glow: Boolean(spec.glow),
             outlined: spec.outlined !== false,
+            under: spec.under || 0,
             lift: numbers.lift,
           },
         ];
@@ -440,7 +445,7 @@
           for (let step = 0; step < STAMP.settleSteps; step++) vertex = combine(vertex, [[normal, -surfaceDistance(vertex)]]);
           return combine(vertex, [[normal, lift]]);
         });
-        return { points, normal: normal.slice(), slot: layer.ramp, tone: shades > 0 ? layer.shade / shades : 0, least: layer.least || 0 };
+        return { points, normal: normal.slice(), slot: layer.ramp, tone: shades > 0 ? layer.shade / shades : 0, least: layer.least || 0, drop: layer.drop || 0 };
       });
   };
 
@@ -452,7 +457,9 @@
     const frames = surfaceLayout(bake.plan).frames;
     const solids = new Map();
     const layers = new Map();
-    bake.surface.features.forEach((feature, featureOrder) => {
+    // Deepest first (a stable sort keeps the attach order among equals): later stamps draw over earlier ones.
+    const drawOrder = [...bake.surface.features].sort((first, second) => (second.under || 0) - (first.under || 0));
+    drawOrder.forEach((feature, featureOrder) => {
       const frame = frameOf(feature);
       if (feature.shape) solids.set(feature.bone, [...(solids.get(feature.bone) || []), solidPiece(feature, frame)]);
       const sofar = layers.get(feature.bone) || [];

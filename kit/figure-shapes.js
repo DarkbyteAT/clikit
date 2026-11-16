@@ -36,7 +36,7 @@
     medium: Object.freeze({ edge: 0.045, minAround: 6, maxAround: 14, minRings: 2, smoothSteps: 2 }),
     low: Object.freeze({ edge: 0.09, minAround: 5, maxAround: 8, minRings: 1, smoothSteps: 1 }),
   });
-  /** Floats per vertex of a stamp's paint (slot, tone, least size in texels) and of its centre (x, y, z, half extent). */
+  /** Floats per vertex of a stamp's paint (slot, tone, size rule, order) and of its centre (x, y, z, half extent). */
   const PAINT = 3;
   const CENTRE = 4;
   const DEFAULT_LEVEL = 'high';
@@ -102,6 +102,7 @@
    * @property {number} tone a fixed tone, 0 (darkest) .. 1 (lightest) of that ramp
    * @property {number} [least=0] the fewest target texels its smaller side may cover: the look grows a layer
    *   that would be smaller (a glint, a pupil) so it survives a low-resolution target
+   * @property {number} [drop=0] leave the layer out while its smaller side covers fewer target texels than this
    */
 
   /**
@@ -110,7 +111,7 @@
    * @property {Float32Array} positions 3 per vertex, bone space, metres
    * @property {Float32Array} normals 3 per vertex, unit length, outward
    * @property {Uint16Array|Uint32Array} indices 3 per triangle, counter-clockwise from outside
-   * @property {Float32Array} [paint] stamps only, 3 per vertex: ramp slot, tone 0..1, least size in texels
+   * @property {Float32Array} [paint] stamps only, 4 per vertex: ramp slot, tone 0..1, size rule in texels (positive: the least size, grow to it; negative: drop the layer below that size), order of the layer (later layers draw over earlier ones)
    * @property {Float32Array} [centres] stamps only, 4 per vertex: its layer's centre (x, y, z) and smaller half extent, metres
    */
 
@@ -347,6 +348,9 @@
     return curve.map(([radius, height]) => [Math.max(0, radius), height]);
   };
 
+  /** Directions (over half a turn) a stamp layer's width is measured in to find its smaller side. */
+  const WIDTH_DIRECTIONS = 8;
+
   /**
    * Flat polygons on a bone's surface (`StampLayer`s), as one surface: each layer triangulated by ear clipping,
    * its vertices carrying the layer's paint and centre so one draw call paints a whole face.
@@ -359,7 +363,7 @@
     const paint = [];
     const centres = [];
     const indices = [];
-    shape.layers.forEach((layer) => {
+    shape.layers.forEach((layer, order) => {
       const base = positions.length / VECTOR;
       const count = layer.points.length / VECTOR;
       const axes = [0, 1, 2].map((axis) => Array.from({ length: count }, (_unused, vertex) => layer.points[vertex * VECTOR + axis]));
@@ -367,11 +371,19 @@
       // The two tangent axes of the layer's plane, to flatten it for triangulation and to measure its smaller side.
       const [across, , out] = frameAlong(layer.normal);
       const flat = Array.from({ length: count }, (_unused, vertex) => [0, 1, 2].reduce((sums, axis) => [sums[0] + (axes[axis][vertex] - centre[axis]) * out[axis], sums[1] + (axes[axis][vertex] - centre[axis]) * across[axis]], [0, 0]));
-      const halfExtent = Math.min(...[0, 1].map((coordinate) => (Math.max(...flat.map((point) => point[coordinate])) - Math.min(...flat.map((point) => point[coordinate]))) / 2));
+      // The smaller side is the narrowest width over a few directions: the plane's two axes are arbitrary, and
+      // a thin shape lying diagonally in them would measure as wide as it is long.
+      const halfExtent = Math.min(
+        ...Array.from({ length: WIDTH_DIRECTIONS }, (_unused, step) => {
+          const [cosine, sine] = [Math.cos((step * Math.PI) / WIDTH_DIRECTIONS), Math.sin((step * Math.PI) / WIDTH_DIRECTIONS)];
+          const reaches = flat.map((point) => point[0] * cosine + point[1] * sine);
+          return (Math.max(...reaches) - Math.min(...reaches)) / 2;
+        })
+      );
       for (let vertex = 0; vertex < count; vertex++) {
         positions.push(layer.points[vertex * VECTOR] + shape.at[0], layer.points[vertex * VECTOR + 1] + shape.at[1], layer.points[vertex * VECTOR + 2] + shape.at[2]);
         normals.push(...layer.normal);
-        paint.push(layer.slot, layer.tone, layer.least || 0);
+        paint.push(layer.slot, layer.tone, layer.drop ? -layer.drop : layer.least || 0, order);
         centres.push(centre[0] + shape.at[0], centre[1] + shape.at[1], centre[2] + shape.at[2], halfExtent);
       }
       // `triangulate` returns counter-clockwise triangles in the flattened plane, whose axes (out x across = normal) keep that winding in space.

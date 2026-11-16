@@ -336,9 +336,15 @@
   /**
    * Eyes: the white, a large dark iris, the pupil, two glints on the lit side and a lid line, with half-shut and
    * shut frames for blinking. `white` is the open outline; the frames are derived from it so every style blinks.
-   * The `least` sizes are what keep an eye an eye on a low-resolution target: the white stays three texels, the
-   * iris two, the glint one and a half.
+   * `EYE_DETAIL` is what keeps an eye an eye on a low-resolution target.
    */
+  /**
+   * Target texels (of a layer's smaller side) at which an eye changes: the pupil and the glint never get smaller
+   * than theirs (`least`); the white, iris, lid and second glint are left out below theirs (`drop`), so a head
+   * twenty texels wide gets a dark two-texel eye with one bright texel (the pixel-art eye) instead of six layers
+   * fighting over four texels.
+   */
+  const EYE_DETAIL = Object.freeze({ white: 3.2, iris: 3, pupil: 2, lid: 0.7, glint: 1, spark: 1.2 });
   const eyeFrames = (white, irisRadius) => {
     const top = Math.max(...white.map(([, up]) => up));
     const iris = ellipse(0, -0.06, irisRadius, irisRadius * 1.12, 14);
@@ -349,12 +355,12 @@
     const lid = arcBand(0, top + 0.1, 0.2);
     return {
       open: [
-        layer(white, 'sclera', 4, { least: 3 }),
-        layer(iris, 'eyes', 1, { least: 2 }),
-        layer(pupil, 'eyes', 0),
-        layer(lid, 'eyes', 0),
-        layer(glint, 'sclera', 4, { least: 1.5, fixed: true }),
-        layer(spark, 'sclera', 4, { fixed: true }),
+        layer(white, 'sclera', 4, { drop: EYE_DETAIL.white }),
+        layer(iris, 'eyes', 1, { drop: EYE_DETAIL.iris }),
+        layer(pupil, 'eyes', 0, { least: EYE_DETAIL.pupil }),
+        layer(lid, 'eyes', 0, { drop: EYE_DETAIL.lid }),
+        layer(glint, 'sclera', 4, { least: EYE_DETAIL.glint, fixed: true }),
+        layer(spark, 'sclera', 4, { drop: EYE_DETAIL.spark, fixed: true }),
       ],
       half: [layer(squash(white, 0.45, -0.15), 'sclera', 4), layer(squash(iris, 0.45, -0.15), 'eyes', 1), layer(squash(lid, 0.5, -0.12), 'eyes', 0)],
       closed: [layer(arcBand(-0.1, 0.25, 0.12, 180, 360), 'eyes', 0)],
@@ -419,7 +425,8 @@
     [-0.65, 0.45],
     [0.65, -0.45],
   ].map(([across, up]) => layer(ellipse(across, up, 0.06, 0.12, 6), 'marks', 1));
-  const markPart = (label, feature) => ({ fits: ['marks'], label, bones: [], features: [{ frames: { rest: [] }, ...feature }] });
+  /** A mark on the skin (blush, freckles, a scar): drawn under every other feature, so it never covers an eye. */
+  const markPart = (label, feature) => ({ fits: ['marks'], label, bones: [], features: [{ frames: { rest: [] }, under: 1, ...feature }] });
 
   // ---- hair, facial hair -------------------------------------------------------------------------------------------------
 
@@ -448,8 +455,8 @@
     }));
 
   /** Stubble and beard areas: the lower face, front and sides (head s from the chin). */
-  // Below a line that is low under the nose and climbs to the sideburns. Painted flush, so the mouth still shows on it.
-  const LOWER_FACE = { intersect: [{ edge: { front: 0.31, back: 0.56, below: true } }, { band: { angle: [-112, 112] } }] };
+  // Below a line that runs under the mouth and climbs to the sideburns: the mouth stays on skin, where it reads.
+  const LOWER_FACE = { intersect: [{ edge: { front: 0.2, back: 0.54, below: true } }, { band: { angle: [-112, 112] } }] };
   // Coarse enough that a dot is a few texels at a close-up and the pattern reads as stubble, not noise.
   const STIPPLE = { checker: { s: 24, angle: 40 } };
 
@@ -668,7 +675,7 @@
     ),
     // Marks (5): where they sit and what they paint differ.
     freckles: markPart('Freckles', { id: 'freckles', azimuth: 0, elevation: -6, size: [0.075, 0.028], frames: { rest: FRECKLE_DOTS } }),
-    blush: markPart('Blush', { id: 'blush', azimuth: 0, elevation: -13, spacing: 72, size: [0.036, 0.02], frames: { rest: [layer(ellipse(0, 0, 1, 1, 12), 'lips', 3)] } }),
+    blush: markPart('Blush', { id: 'blush', azimuth: 0, elevation: -17, spacing: 82, size: [0.034, 0.018], frames: { rest: [layer(ellipse(0, 0, 1, 1, 12), 'lips', 3)] } }),
     scar: markPart('Scar', {
       id: 'scar',
       azimuth: 26,

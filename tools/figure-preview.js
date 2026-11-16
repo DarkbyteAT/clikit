@@ -67,12 +67,10 @@ const EMPTY = -1;
 
 /** Loads the pure kit files into one sandbox, as tools/test-kit.js does, and returns its `Kit`. */
 function loadKit() {
-  const sandbox = { console };
-  sandbox.window = sandbox;
-  vm.createContext(sandbox);
-  vm.runInContext('var Kit = {};', sandbox);
-  KIT_FILES.forEach((name) => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', `${name}.js`), 'utf8'), sandbox, { filename: `${name}.js` }));
-  return sandbox.Kit;
+  // Into this context, not a vm sandbox: a sandbox routes every global read through an interceptor, about ten times slower (see tools/bench-body.js).
+  global.window = global;
+  KIT_FILES.forEach((name) => vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'kit', `${name}.js`), 'utf8'), { filename: `${name}.js` }));
+  return global.Kit;
 }
 
 // ---- PNG -------------------------------------------------------------------------------------------------------------
@@ -183,8 +181,10 @@ function drawFigure(Kit, cell, bake, { framing, yaw, preset, figureIndex }) {
     for (let vertex = 0; vertex < count; vertex++) {
       let [x, y, z] = [arrays.positions[vertex * 3], arrays.positions[vertex * 3 + 1], arrays.positions[vertex * 3 + 2]];
       if (arrays.paint) {
-        // A stamp layer smaller than its least size in texels is grown about its centre (the shader's stampGrowth).
-        const growth = Math.min(STAMP_MOST_GROWTH, Math.max(1, (arrays.paint[vertex * 3 + 2] * texelWorld) / Math.max(2 * arrays.centres[vertex * 4 + 3], 1e-5)));
+        // A stamp layer smaller than its least size in texels is grown about its centre or dropped below its drop size (the shader's stampGrowth).
+        const rule = arrays.paint[vertex * 4 + 2];
+        const texels = (2 * arrays.centres[vertex * 4 + 3]) / texelWorld;
+        const growth = rule < 0 ? (texels < -rule ? 0 : 1) : Math.min(STAMP_MOST_GROWTH, Math.max(1, rule / Math.max(texels, 1e-5)));
         const centre = [arrays.centres[vertex * 4], arrays.centres[vertex * 4 + 1], arrays.centres[vertex * 4 + 2]];
         [x, y, z] = [centre[0] + (x - centre[0]) * growth, centre[1] + (y - centre[1]) * growth, centre[2] + (z - centre[2]) * growth];
       }
@@ -244,8 +244,8 @@ function drawFigure(Kit, cell, bake, { framing, yaw, preset, figureIndex }) {
           if (piece.emissive) tone = lightest;
           if (fixedTone >= 0) tone = fixedTone;
           if (piece.stamps) {
-            slot = mix(arrays.paint, 3, 0) | 0;
-            tone = Math.floor(mix(arrays.paint, 3, 1) * lightest + 0.5);
+            slot = mix(arrays.paint, 4, 0) | 0;
+            tone = Math.floor(mix(arrays.paint, 4, 1) * lightest + 0.5);
           }
           cell.depth[at] = depth;
           cell.row[at] = figureIndex * 16 + slot;

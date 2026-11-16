@@ -30,7 +30,7 @@
   const VECTOR = 3;
   const MATRIX = 16;
   /** Floats per vertex of a stamp's paint and of its centre (kit/figure-shapes.js `stamps`). */
-  const STAMP_PAINT = 3;
+  const STAMP_PAINT = 4;
   const STAMP_CENTRE = 4;
   /** A crowd member's place: x, y, z, heading. */
   const PLACE = 4;
