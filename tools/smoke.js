@@ -164,7 +164,13 @@ async function run(browser, base, id) {
         };
         await press('#back');
         await page.waitForTimeout(200);
-        await press('#card-' + id);
+        // A workbench screen has no menu card: reopen it the way it was opened.
+        const reopened = await page.evaluate((gameId) => {
+          const card = document.getElementById('card-' + gameId);
+          if (card) card.click();
+          return card ? true : Kit.play(gameId);
+        }, id);
+        if (!reopened) errors.push(`could not reopen "${id}" after going back`);
         await page.waitForTimeout(500);
         await press('#restart');
         await page.waitForTimeout(300);
