@@ -223,4 +223,106 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const fine = body.dials(biped, [{ id: 'headRound', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'radius' }] }]);
     same([fine.shapeOps.length, fine.unused], [1, []], 'control: a sphere radius is a number');
   });
+
+  // ---- sided dials, the symmetry lock and mirror ----
+  const SIDED = sampleVariant((spec) => {
+    spec.nodes.humanoid.set.dials.handSize = { sided: true, min: 0.8, max: 1.3, affects: [{ roles: ['hand'], channel: 'size' }] };
+    // Wings that carry a charm socket on each wing bone: sided sockets inside a part that sits in the middle.
+    spec.parts.wings.sockets = [
+      { name: 'charmLeft', bone: 'wingLeftTip', type: 'charm' },
+      { name: 'charmRight', bone: 'wingRightTip', type: 'charm' },
+    ];
+    spec.parts.charm = { fits: ['charm'], bones: [{ name: 'bead', roles: ['root'], shape: { kind: 'sphere', radius: 0.02 } }] };
+    spec.nodes.humanoid.set.fills.back = { wings: 1, none: 1 };
+  });
+
+  test('sided dials: one field draws both sides (linked); a side set alone unlinks; link joins them again', () => {
+    const sided = body.catalog(SIDED);
+    const editor = body.editor(sided);
+    const kind = sided.species('human');
+    const [left, right] = ['handSize@left', 'handSize@right'].map((id) => kind.dialIds.indexOf(id));
+    assert.ok(left >= 0 && right >= 0, 'two dials, one per side');
+    for (let seed = 0; seed < 30; seed++) {
+      const rolled = sided.resolve({ species: 'human', seed });
+      assert.strictEqual(rolled.dials[left], rolled.dials[right], `seed ${seed}: a roll is symmetric`);
+    }
+    const start = { species: 'human', seed: 4 };
+    const controls = editor.schema(start).dials.filter((dial) => dial.base === 'handSize');
+    same(
+      controls.map((dial) => [dial.key, dial.side, dial.linked, dial.mirror]),
+      [
+        ['dial:handSize@left', 'left', true, 'dial:handSize@right'],
+        ['dial:handSize@right', 'right', true, 'dial:handSize@left'],
+      ]
+    );
+    const both = editor.setDial(start, 'handSize', 1.3);
+    same([both.overrides['dial:handSize@left'], both.overrides['dial:handSize@right']], [1.3, 1.3], 'the base id moves both sides');
+    const unlinked = editor.setDial(both, 'handSize@left', 0.8);
+    same(
+      editor
+        .schema(unlinked)
+        .dials.filter((dial) => dial.base === 'handSize')
+        .map((dial) => [Math.round(dial.value * 100) / 100, dial.linked]),
+      [
+        [0.8, false],
+        [1.3, false],
+      ],
+      'one side alone'
+    );
+    const bakery = sided.bakery();
+    const bake = bakery.bakeRecipe(unlinked);
+    const [handLeft, handRight] = ['handLeft', 'handRight'].map((name) => bake.plan.boneIndex(name));
+    same(
+      [bake.rest.uniform[handLeft], bake.rest.uniform[handRight]].map((value) => Math.round(value * 100) / 100),
+      [0.8, 1.3],
+      'only the left hand shrank'
+    );
+    same(
+      editor.changes(bakery.bakeRecipe(both), bake).bones.map((bone) => bake.plan.boneNames[bone]),
+      ['handLeft'],
+      'control: the right hand did not change'
+    );
+    const relinked = editor.link(unlinked, 'handSize', 'right');
+    same([relinked.overrides['dial:handSize@left'], relinked.overrides['dial:handSize@right']], [1.3, 1.3], 'link copies the chosen side');
+    same(sided.decode(sided.encode(unlinked)), sided.normalize(unlinked), 'sided overrides survive encode and decode');
+    throwsWith(() => editor.link(start, 'height'), /\[unknown-field\] "human" has no sided dial "height". Sided dials: handSize/);
+  });
+  test('sided dials: mistakes are named (a sided effect by bone name, an id with @)', () => {
+    throwsWith(() => body.sidedDials([{ id: 'grip', sided: true, min: 0.5, max: 2, affects: [{ bones: ['handLeft'], channel: 'size' }] }]), /picks bones by name or part/);
+    throwsWith(() => body.sidedDials([{ id: 'grip@left', min: 0.5, max: 2, affects: [] }]), /contains '@'/);
+    same(
+      body.sidedDials([{ id: 'plain', min: 0.5, max: 2, affects: [] }]).map((row) => row.id),
+      ['plain'],
+      'control: an unsided row passes through'
+    );
+  });
+  test('mirror: the target side ends up exactly the mirror of the source, nested and inside a centred part', () => {
+    const sided = body.catalog(SIDED);
+    const editor = body.editor(sided);
+    const fillsOf = (recipe) => sided.resolve(recipe).fills;
+    const winged = { species: 'human', seed: 4, overrides: { 'fill:back': 'wings', 'fill:back/charmRight': 'charm', 'fill:back/charmLeft': null } };
+    same(
+      editor
+        .schema(winged)
+        .sockets.filter((socket) => socket.path.startsWith('back/'))
+        .map((socket) => [socket.path, socket.side, socket.mirror]),
+      [
+        ['back/charmLeft', 'left', 'fill:back/charmRight'],
+        ['back/charmRight', 'right', 'fill:back/charmLeft'],
+      ],
+      'sockets inside the wings know their side'
+    );
+    assert.strictEqual(fillsOf(editor.mirror(winged, 'left'))['back/charmRight'], undefined, 'the right charm is cleared: the left has none');
+    assert.strictEqual(fillsOf(editor.mirror(winged, 'right'))['back/charmLeft'], 'charm', 'control: mirroring the other way copies it');
+    const armed = { species: 'human', seed: 7, overrides: { 'fill:handRight': 'sword', 'fill:handRight/gem': 'ruby', 'fill:handLeft': null } };
+    const mirrored = editor.mirror(armed, 'left');
+    same(fillsOf(mirrored), {}, 'an empty left hand empties the right hand and its gem');
+    same(
+      Object.keys(mirrored.overrides).filter((key) => key.startsWith('fill:')),
+      ['fill:handLeft', 'fill:handRight'],
+      'no override is left for a socket that no longer exists'
+    );
+    const handSizes = editor.mirror(editor.setDial({ species: 'human', seed: 4 }, 'handSize@left', 0.8), 'left');
+    same([handSizes.overrides['dial:handSize@left'], handSizes.overrides['dial:handSize@right']], [0.8, 0.8], 'sided dials mirror too');
+  });
 };

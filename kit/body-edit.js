@@ -50,6 +50,10 @@
    *   per bone channel, per shape path (`channel: 'shape'`, `param`) or per feature parameter (`channel: 'feature'`,
    *   `feature`, `param`), with the bones of the bare plan it touches
    * @property {?string} mirror the key of the dial that does the same on the other side, when there is one
+   * @property {?string} side 'left' or 'right' for a sided dial, else null
+   * @property {?string} base for a dial made by `sided: true`, the id both sides share ('eyeSize'); `setDial`
+   *   with it moves both
+   * @property {?boolean} linked for such a dial: do both sides hold the same value (show one slider)?
    */
 
   /**
@@ -73,6 +77,7 @@
    * @property {string[]} options ids of every catalogue part that fits
    * @property {boolean} allowsEmpty false for a required socket
    * @property {?string} mirror the key of the same socket on the other side, when there is one
+   * @property {?string} side 'left' or 'right' for a sided socket (its own bone's side, or its parent socket's)
    */
 
   /**
@@ -113,12 +118,16 @@
       dialSet.featureOps.forEach((operation) => addAffect(operation.dial, 'feature', -1, { feature: operation.feature, param: operation.path.join('.') }));
       // A dial is sided when every effect names a side role; its mirror is the dial with the same effects on the other side.
       const signature = (row, swap) => JSON.stringify((row.affects || []).map((effect) => ({ ...effect, roles: (effect.roles || []).map((role) => (swap && OPPOSITE_SIDE[role]) || role).sort() })));
-      const sides = kind.dialRows.map((row) => Object.keys(OPPOSITE_SIDE).find((side) => (row.affects || []).length > 0 && row.affects.every((effect) => (effect.roles || []).includes(side))) || null);
+      // A sided row says its side; an older pair of rows is sided when every effect names a side role.
+      const sides = kind.dialRows.map(
+        (row) => row.side || Object.keys(OPPOSITE_SIDE).find((side) => (row.affects || []).length > 0 && row.affects.every((effect) => (effect.roles || []).includes(side))) || null
+      );
       const facts = {
         affects,
         groups: kind.dialRows.map((row, dial) => row.group || (firstBone[dial] < 0 ? Kit.body.groupOf(0) : Kit.body.groupOf(kind.plan.roles[firstBone[dial]]))),
         sides,
         mirrors: kind.dialRows.map((row, dial) => {
+          if (row.twin) return `${DIAL_KEY}${row.twin}`;
           const other = sides[dial] ? kind.dialRows.find((candidate) => candidate !== row && signature(candidate, false) === signature(row, true)) : null;
           return other ? `${DIAL_KEY}${other.id}` : null;
         }),
@@ -133,15 +142,42 @@
       return { roles, side: Object.keys(OPPOSITE_SIDE).find((side) => roles & Kit.body.roleMask([side])) || null, group: Kit.body.groupOf(roles) };
     };
 
-    /** The path of the same socket on the other side of the body, or null: same type, same roles but for the side. */
-    const mirrorPathOf = (kind, path) => {
-      const [top, ...nested] = path.split(Kit.body.SOCKET_PATH_SEPARATOR);
-      const { roles, side } = socketPlacement(kind, top);
-      if (!side) return null;
-      const wanted = (roles ^ Kit.body.roleMask([side, OPPOSITE_SIDE[side]])) >>> 0;
-      const type = kind.plan.socketType[kind.plan.socketIndex(top)];
-      const other = kind.plan.socketNames.find((_name, index) => kind.plan.socketType[index] === type && kind.plan.roles[kind.plan.socketBone[index]] === wanted);
-      return other ? [other, ...nested].join(Kit.body.SOCKET_PATH_SEPARATOR) : null;
+    const sideOfRoles = (roles) => Object.keys(OPPOSITE_SIDE).find((side) => roles & Kit.body.roleMask([side])) || null;
+    /** The roles with their side swapped: what the bone of the mirrored socket carries. */
+    const swappedRoles = (roles, side) => (roles ^ Kit.body.roleMask([side, OPPOSITE_SIDE[side]])) >>> 0;
+
+    /**
+     * The side of a socket and the path of its mirror, or nulls. A top-level socket is sided by its bone; a
+     * nested one inherits its parent socket's side (the gem of the left hand's sword), or, under a part that sits
+     * in the middle (a pair of wings on the back), is sided by the part's own bone and mirrors to the sibling
+     * socket of the same type whose bone carries the other side.
+     */
+    const mirrorOf = (kind, fills, path) => {
+      const cut = path.lastIndexOf(Kit.body.SOCKET_PATH_SEPARATOR);
+      if (cut < 0) {
+        const { roles, side } = socketPlacement(kind, path);
+        if (!side) return { side: null, path: null };
+        const type = kind.plan.socketType[kind.plan.socketIndex(path)];
+        const other = kind.plan.socketNames.find((_name, index) => kind.plan.socketType[index] === type && kind.plan.roles[kind.plan.socketBone[index]] === swappedRoles(roles, side));
+        return { side, path: other || null };
+      }
+      const parentPath = path.slice(0, cut);
+      const name = path.slice(cut + 1);
+      const parent = mirrorOf(kind, fills, parentPath);
+      if (parent.side) return { side: parent.side, path: parent.path && `${parent.path}${Kit.body.SOCKET_PATH_SEPARATOR}${name}` };
+      const part = catalog.parts[fills[parentPath]];
+      const sockets = (part && part.spec.sockets) || [];
+      const boneRoles = (socketName) => {
+        const socket = sockets.find((candidate) => candidate.name === socketName);
+        const bone = socket && part.spec.bones.find((candidate) => candidate.name === socket.bone);
+        return bone ? Kit.body.roleMask(bone.roles || []) : 0;
+      };
+      const roles = boneRoles(name);
+      const side = sideOfRoles(roles);
+      if (!side) return { side: null, path: null };
+      const type = sockets.find((candidate) => candidate.name === name).type;
+      const sibling = sockets.find((candidate) => candidate.type === type && boneRoles(candidate.name) === swappedRoles(roles, side));
+      return { side, path: sibling ? `${parentPath}${Kit.body.SOCKET_PATH_SEPARATOR}${sibling.name}` : null };
     };
 
     /**
@@ -172,6 +208,10 @@
           value: individual.dials[dial],
           affects: facts.affects[dial],
           mirror: facts.mirrors[dial],
+          side: facts.sides[dial],
+          base: row.base || null,
+          // A sided pair is linked while both sides hold the same value: one slider moves both.
+          linked: row.twin ? individual.dials[dial] === individual.dials[kind.dialIds.indexOf(row.twin)] : null,
         })),
         colors: kind.colorIds.map((channel, index) => ({
           key: `${COLOR_KEY}${channel}`,
@@ -182,7 +222,7 @@
           value: individual.colors[index],
         })),
         sockets: catalog.socketsOf(individual).map((socket) => {
-          const mirrorPath = mirrorPathOf(kind, socket.path);
+          const { side, path: mirrorPath } = mirrorOf(kind, individual.fills, socket.path);
           return {
             key: `${FILL_KEY}${socket.path}`,
             path: socket.path,
@@ -193,6 +233,7 @@
             options: socket.fits,
             allowsEmpty: !socket.required,
             mirror: mirrorPath ? `${FILL_KEY}${mirrorPath}` : null,
+            side,
           };
         }),
       };
@@ -210,7 +251,8 @@
 
     /**
      * Sets a dial. The value is clamped to the dial's range and snapped to its steps, so it is safe to call
-     * with a raw slider value on every drag event.
+     * with a raw slider value on every drag event. For a sided dial, the base id ('eyeSize') sets both sides
+     * (linked) and a side's own id ('eyeSize@left') sets that side alone (unlinked).
      * @param {Object} recipe
      * @param {string} dialId
      * @param {number} value
@@ -219,7 +261,42 @@
      * @complexity O(fields of the species + overrides log overrides): a few microseconds
      * @example recipe = editor.setDial(recipe, 'legLength', 1.15);
      */
-    const setDial = (recipe, dialId, value) => withOverrides(recipe, { [`${DIAL_KEY}${dialId}`]: value });
+    const setDial = (recipe, dialId, value) => {
+      const kind = catalog.species(recipe.species);
+      // The base id of a sided pair is the linked slider: it moves both sides.
+      if (!kind.dialIds.includes(dialId) && kind.dialIds.includes(`${dialId}${Kit.body.SIDE_SEPARATOR}left`))
+        return withOverrides(recipe, Object.fromEntries(['left', 'right'].map((side) => [`${DIAL_KEY}${dialId}${Kit.body.SIDE_SEPARATOR}${side}`, value])));
+      return withOverrides(recipe, { [`${DIAL_KEY}${dialId}`]: value });
+    };
+
+    /**
+     * Links a sided pair again: the other side takes this side's value, so the two move together from now on.
+     * (Unlinking needs no call: set one side by its own id, 'eyeSize@left'.)
+     * @param {Object} recipe
+     * @param {string} baseId the pair's id without a side ('eyeSize')
+     * @param {('left'|'right')} [from='left'] the side whose value both keep
+     * @returns {Object} a new, normalised recipe
+     * @throws {Error} '[unknown-field] ...' when the species has no such sided dial
+     * @complexity as `setDial`
+     * @example recipe = editor.link(recipe, 'eyeSize', 'right');
+     */
+    const link = (recipe, baseId, from = 'left') => {
+      if (!OPPOSITE_SIDE[from]) fail('link', `the side to copy from is 'left' or 'right', got ${JSON.stringify(from)}.`);
+      const individual = catalog.resolve(recipe);
+      const kind = catalog.species(individual.species);
+      const source = kind.dialIds.indexOf(`${baseId}${Kit.body.SIDE_SEPARATOR}${from}`);
+      if (source < 0)
+        fail(
+          'link',
+          `[unknown-field] "${kind.id}" has no sided dial "${baseId}". Sided dials: ${
+            kind.dialRows
+              .filter((row) => row.side === 'left')
+              .map((row) => row.base)
+              .join(', ') || '(none)'
+          }.`
+        );
+      return setDial(recipe, baseId, individual.dials[source]);
+    };
 
     /**
      * Sets a colour channel to a ramp of its palette.
@@ -287,7 +364,9 @@
 
     /**
      * Copies one side of the body onto the other: every sided dial and every sided socket (with what hangs from
-     * it) that has a counterpart, as listed by the `mirror` fields of `schema`.
+     * it) that has a counterpart, as listed by the `mirror` fields of `schema`, including sided sockets inside a
+     * part that sits in the middle (a charm on each wing). Afterwards the target side holds exactly the mirror of
+     * the source side: anything filled there without a counterpart is emptied.
      * @param {Object} recipe
      * @param {('left'|'right')} [from='left'] the side to copy from
      * @returns {Object} a new, normalised recipe; unchanged in meaning when the species has nothing sided
@@ -297,19 +376,23 @@
      */
     const mirror = (recipe, from = 'left') => {
       if (!OPPOSITE_SIDE[from]) fail('mirror', `the side to copy from is 'left' or 'right', got ${JSON.stringify(from)}.`);
-      const individual = catalog.resolve(recipe);
-      const kind = catalog.species(individual.species);
-      const { sides } = dialFactsOf(kind);
       const controls = schema(recipe);
       const copies = {};
-      controls.dials.forEach((dial, index) => {
-        if (dial.mirror && sides[index] === from) copies[dial.mirror] = dial.value;
+      controls.dials.forEach((dial) => {
+        if (dial.mirror && dial.side === from) copies[dial.mirror] = dial.value;
       });
       controls.sockets.forEach((socket) => {
-        const top = socket.path.split(Kit.body.SOCKET_PATH_SEPARATOR)[0];
-        if (socket.mirror && socketPlacement(kind, top).side === from) copies[socket.mirror] = socket.part;
+        if (socket.mirror && socket.side === from) copies[socket.mirror] = socket.part;
       });
-      return keepWhatFits({ species: recipe.species, seed: recipe.seed, overrides: { ...(recipe.overrides || {}), ...copies } });
+      // Clear what the target side holds that the source side does not: a filled socket on the other side whose
+      // counterpart is not being copied (its source socket is empty or does not exist) is emptied.
+      controls.sockets.forEach((socket) => {
+        if (socket.side === OPPOSITE_SIDE[from] && socket.part && !(socket.key in copies)) copies[socket.key] = null;
+      });
+      const mirrored = keepWhatFits({ species: recipe.species, seed: recipe.seed, overrides: { ...(recipe.overrides || {}), ...copies } });
+      // An emptied socket under a part that was swapped away no longer exists; its null override says nothing.
+      const existing = new Set(catalog.socketsOf(catalog.resolve(mirrored)).map((socket) => `${FILL_KEY}${socket.path}`));
+      return withOverrides(mirrored, {}, (key) => key.startsWith(FILL_KEY) && mirrored.overrides[key] === null && !existing.has(key));
     };
 
     /**
@@ -355,7 +438,7 @@
       };
     };
 
-    return { schema, setDial, setColor, setSocket, randomize, mirror, changes };
+    return { schema, setDial, setColor, setSocket, randomize, mirror, link, changes };
   };
 
   Kit.body = Object.assign(Kit.body || {}, { editor });

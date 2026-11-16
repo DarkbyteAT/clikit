@@ -171,6 +171,9 @@
     offset: (current, value, preset, amount) => current + (value - preset) * amount,
   });
   const DEFAULT_PARAM_MODE = 'scale';
+  /** Joins a sided dial's id and its side: 'eyeSize@left'. */
+  const SIDE_SEPARATOR = '@';
+  const SIDES = Object.freeze(['left', 'right']);
   /** Separates the steps of a shape or feature parameter path: 'profile.2.0' is point 2's radius. */
   const PARAM_PATH_SEPARATOR = '.';
   const { AXES, VECTOR_STRIDE, QUATERNION_STRIDE } = Kit.rig;
@@ -867,6 +870,12 @@
    * @property {DialEffect[]} affects what the dial does
    * @property {string} [label] what an editor calls it (default: worked out from the id)
    * @property {string} [group] the editor group it is listed under (default: from the roles it affects)
+   * @property {boolean} [sided] true for a dial that may differ left and right (an eye, an ear): `sidedDials`
+   *   turns it into one dial per side, '<id>@left' and '<id>@right'
+   * @property {string} [base] set by `sidedDials`: the id both sides share (they are drawn from it, so a rolled
+   *   body is symmetric until someone unlinks it)
+   * @property {('left'|'right')} [side] set by `sidedDials`
+   * @property {string} [twin] set by `sidedDials`: the id of the other side
    */
 
   /**
@@ -1007,6 +1016,35 @@
     return out;
   };
 
+  /**
+   * Splits every `sided` dial row into a left and a right row, '<id>@left' and '<id>@right': role effects gain the
+   * side's role, feature effects gain `side`. Other rows pass through unchanged. Compile the result with `dials`.
+   * @param {DialRow[]} rows
+   * @returns {DialRow[]} sided rows carry `base`, `side` and `twin`
+   * @throws {Error} for an id containing '@', or a sided effect that selects bones by name or by part (a side
+   *   cannot be added to a name; use roles)
+   * @complexity O(rows x effects)
+   * @example Kit.body.sidedDials([{ id: 'earSize', sided: true, min: 0.8, max: 1.3, affects: [{ feature: 'ear', param: 'size' }] }]).map((row) => row.id) // ['earSize@left', 'earSize@right']
+   */
+  const sidedDials = (rows) =>
+    rows.flatMap((row) => {
+      if (String(row.id).includes(SIDE_SEPARATOR)) fail('sidedDials', `the dial id "${row.id}" contains '${SIDE_SEPARATOR}', which joins a sided dial and its side. Rename it.`);
+      if (!row.sided) return [row];
+      return SIDES.map((side, index) => ({
+        ...row,
+        id: `${row.id}${SIDE_SEPARATOR}${side}`,
+        base: row.id,
+        side,
+        twin: `${row.id}${SIDE_SEPARATOR}${SIDES[1 - index]}`,
+        affects: (row.affects || []).map((effect) => {
+          if (effect.feature !== undefined) return { ...effect, side };
+          if (effect.bones || effect.part || !effect.roles)
+            fail('sidedDials', `the sided dial "${row.id}" has an effect that picks bones by name or part; a sided effect picks them by \`roles\` (the side role is added) or drives a \`feature\`.`);
+          return { ...effect, roles: [...effect.roles, side] };
+        }),
+      }));
+    });
+
   /** 'profile.2.0' -> ['profile', 2, 0]: array steps become numbers so a copy can tell lists from objects. */
   const parseParamPath = (text) =>
     String(text)
@@ -1098,6 +1136,8 @@
     dials,
     applyDials,
     shapesWithDials,
+    sidedDials,
+    SIDE_SEPARATOR,
     PARAM_MODES,
     parseParamPath,
     numberAtPath,

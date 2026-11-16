@@ -247,8 +247,9 @@
       const definition = lineage.resolve(id).values;
       const plan = compiledPlans[definition.plan];
       if (!plan) fail(where, `names the plan ${JSON.stringify(definition.plan)}, which is not in \`plans\`. Plans: ${Object.keys(compiledPlans).join(', ')}.`);
-      const dialIds = Object.keys(definition.dials || {});
-      const dialRows = dialIds.map((dialId) => ({ ...definition.dials[dialId], id: dialId }));
+      // A sided dial becomes two, '<id>@left' and '<id>@right', drawn from one field so a roll is symmetric.
+      const dialRows = Kit.body.sidedDials(Object.keys(definition.dials || {}).map((dialId) => ({ ...definition.dials[dialId], id: dialId })));
+      const dialIds = dialRows.map((row) => row.id);
       const dialSet = Kit.body.dials(plan, dialRows);
       const colorIds = Object.keys(definition.colors || {});
       const paletteNames = colorIds.map((channel) => definition.colors[channel]);
@@ -278,7 +279,7 @@
         /** @type {number[]} per dial: the step its default falls on, which decodes to the default exactly */
         dialDefaultSteps: [],
         // One seeded field per dial and per colour channel: seed in, a number in [0, 1) out.
-        dialDraws: dialRows.map((row) => Kit.seeded.field(`${KINDS.dial}${KEY_SEPARATOR}${row.id}`, row.shape === undefined ? DEFAULT_SHAPE : row.shape)),
+        dialDraws: dialRows.map((row) => Kit.seeded.field(`${KINDS.dial}${KEY_SEPARATOR}${row.base || row.id}`, row.shape === undefined ? DEFAULT_SHAPE : row.shape)),
         unusedDials: dialSet.unused,
         colorIds,
         paletteNames,
