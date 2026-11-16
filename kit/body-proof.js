@@ -17,6 +17,8 @@
   const DIRECTIONS = Object.freeze([0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]);
   /** The three directions that between them show a front, a side and a back. */
   const THREE_VIEWS = Object.freeze([0.07, 0.3, 0.55]);
+  /** The sockets the `worn` suite turns all the way round unless told others: garments that hang, and what is carried behind. */
+  const WORN_SOCKETS = Object.freeze(['bottom', 'outerwear', 'back']);
   const PHASES = 8;
   const TURN = Math.PI * 2;
   const ROLL_SEED = 20261116;
@@ -78,6 +80,21 @@
         )
       ),
     }),
+    /**
+     * Every choice of the sockets worn round the body (`options.sockets`, default `WORN_SOCKETS`), through eight
+     * directions: what hangs behind a figure, or shows through from behind, is not judged from three views.
+     */
+    worn: (_catalog, editor, { species, sockets = WORN_SOCKETS }) => ({
+      title: 'Worn, all round',
+      columns: DIRECTIONS.length,
+      framing: 'body',
+      cells: species.flatMap((id) =>
+        editor
+          .schema(subjectOf(id))
+          .sockets.filter((socket) => sockets.includes(socket.path))
+          .flatMap((socket) => socket.choices.filter((choice) => choice.id).flatMap((choice) => turned(`${id} ${socket.path}: ${choice.id}`, editor.setSocket(subjectOf(id), socket.path, choice.id))))
+      ),
+    }),
     /** Every dial of each species' subject at its least and its most. */
     extremes: (_catalog, editor, { species }) => ({
       title: 'Dial extremes',
@@ -114,7 +131,8 @@
    * The cells of a suite for a catalogue.
    * @param {string} name a key of `SUITES`
    * @param {Object} catalog from `Kit.body.catalog`
-   * @param {{species?: string[], count?: number, acts?: string[]}} [options] `species`: which (default all)
+   * @param {{species?: string[], count?: number, acts?: string[], sockets?: string[]}} [options] `species`: which (default all);
+   *   `sockets`: which socket paths the `worn` suite turns round
    * @returns {ProofSheet}
    * @throws {Error} for an unknown suite or species
    * @complexity O(cells); the options and extremes suites call `editor.schema` once per species
@@ -192,7 +210,7 @@
     samples: () => Kit.body.samples.CATALOG,
   };
 
-  Kit.body.proof = { DIRECTIONS, THREE_VIEWS, PHASES, SUITES, ACTS, CATALOGS, suite, perform };
+  Kit.body.proof = { DIRECTIONS, THREE_VIEWS, WORN_SOCKETS, PHASES, SUITES, ACTS, CATALOGS, suite, perform };
 
   // ---- the screen -------------------------------------------------------------------------------------------------------
 
@@ -237,7 +255,7 @@
 
       /**
        * Draws one page of a sheet.
-       * @param {{catalog?: string, suite?: string, cells?: ProofCell[], species?: string[], columns?: number, framing?: string, preset?: string, page?: number, rows?: number, rigid?: boolean, level?: string, cellPixels?: number}} job
+       * @param {{catalog?: string, suite?: string, cells?: ProofCell[], species?: string[], sockets?: string[], columns?: number, framing?: string, preset?: string, page?: number, rows?: number, rigid?: boolean, level?: string, cellPixels?: number}} job
        *   `rigid`: draw one rigid piece per bone shape instead of sculpted surfaces (the before of a before / after pair);
        *   `level`: a level of detail, else chosen from `cellPixels` (a cell's width in target pixels) by `Kit.figure.levelFor`
        *   `suite` (with `catalog`) or explicit `cells`; `rows` per page (default 4)

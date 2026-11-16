@@ -42,13 +42,14 @@ async function stack(session, strips, file) {
 
 /**
  * Photographs suites.
- * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number, count?: number, rigid?: boolean, level?: string}} options `count`: how many
+ * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number, count?: number, rigid?: boolean, level?: string, sockets?: string[]}} options `sockets`: the
+ *   socket paths the worn suite turns round (its default when left out); `count`: how many
  *   individuals the rolls and faces suites roll (their default when left out); `rigid`: the rigid path (files are
  *   named `-rigid`), for a before / after pair; `level`: a level of detail instead of the one the cell size asks for
  * @returns {Promise<{files: string[], problems: string[]}>}
  * @example await makeProof({ suites: ['turn', 'rolls'], catalog: 'wardrobe', preset: 'pixel' });
  */
-async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages, count, rigid = false, level }) {
+async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages, count, rigid = false, level, sockets }) {
   const session = await openArcade({ size: { width: PAGE.cellWidth * 8, height: 1200 } });
   const files = [];
   const problems = [];
@@ -67,7 +68,7 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         strips = [];
       };
       /** What every page of the suite is drawn with; `rigid` and `level` are the screen's own switches. */
-      const job = { suite, catalog, preset, species, count, rigid, level, cellPixels: PAGE.cellWidth };
+      const job = { suite, catalog, preset, species, count, rigid, level, sockets, cellPixels: PAGE.cellWidth };
       // One row is drawn once to learn the suite's framing; every page after that is drawn exactly once.
       const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { ...job, page: 0, rows: 1 });
       const rows = probe.framing === 'head' ? 1 : PAGE.rows;
