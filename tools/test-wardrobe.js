@@ -14,7 +14,7 @@ const path = require('path');
 const vm = require('vm');
 
 /** Kit files these tests add to the sandbox, in load order; those that do not exist yet are skipped. */
-const FILES = [];
+const FILES = ['body-wardrobe'];
 
 module.exports = ({ Kit, sandbox, test, assert }) => {
   FILES.forEach((name) => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', `${name}.js`), 'utf8'), sandbox, { filename: `${name}.js` }));
@@ -621,5 +621,82 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       /groups.shape sets "colour"/
     );
     body.editor(body.catalog(LABELLED)); // control
+  });
+
+  // ---- the wardrobe catalogue ----
+  const wardrobe = body.catalog(body.wardrobe.CATALOG);
+
+  test('wardrobe: four species load; every part is offered somewhere; variants hold their ranges (control: the base is wider)', () => {
+    same(wardrobe.speciesIds(), ['person', 'stout', 'lanky', 'hornkin']);
+    const offered = new Set(wardrobe.speciesIds().flatMap((id) => wardrobe.species(id).fillFields.flatMap((field) => field.options.map((option) => option.part))));
+    // Flames are filled through the lantern's required socket; wings are a trait no shipped species uses yet.
+    const unoffered = Object.keys(body.wardrobe.PARTS).filter((id) => !offered.has(id));
+    same(unoffered, ['candle', 'glowstone', 'featherWings'], 'every other part can be rolled');
+    const heights = (species) => Array.from({ length: 80 }, (_unused, seed) => wardrobe.describe(wardrobe.resolve({ species, seed })).dials.height);
+    assert.ok(
+      heights('stout').every((height) => height >= 0.82 && height <= 0.95),
+      'stout stays short'
+    );
+    assert.ok(
+      heights('lanky').every((height) => height >= 1.05),
+      'lanky stays tall'
+    );
+    assert.ok(heights('person').some((height) => height < 0.95) && heights('person').some((height) => height > 1.05), 'control: the base species spans both');
+    const traits = (species) => Array.from({ length: 40 }, (_unused, seed) => wardrobe.resolve({ species, seed }).fills);
+    assert.ok(
+      traits('hornkin').every((fills) => fills.horns && fills.tail && ['earsPointed', 'earsLong'].includes(fills.ears)),
+      'every hornkin has horns, a tail and pointed or long ears'
+    );
+    assert.ok(
+      traits('person').every((fills) => !fills.horns && !fills.tail),
+      'control: people have neither'
+    );
+    throwsWith(
+      () => body.catalog(sampleVariant((spec) => (spec.nodes.lanky.set.dials.legLength = { min: 1.1, max: 1.3, default: 1.2 }), body.wardrobe.CATALOG)),
+      /"lanky" has dials.legLength.max = 1.3, outside the limit \[0.85, 1.2\] owned by "humanoid"/
+    );
+  });
+  test('wardrobe: every roll is valid, with eyes, a nose, a mouth and ears placed; a face blinks and talks', () => {
+    const bakery = wardrobe.bakery();
+    const table = wardrobe.table(wardrobe.speciesIds().map((species) => ({ species })));
+    for (let index = 0; index < 60; index++) {
+      const recipe = table.roll(11, index);
+      same(wardrobe.validate(recipe), [], `roll ${index}`);
+      const ids = bakery.bakeRecipe(recipe).surface.features.map((feature) => feature.id);
+      ['eye', 'nose', 'mouth', 'ear'].forEach((id) => assert.ok(ids.includes(id), `roll ${index} has a placed ${id}`));
+    }
+    const face = bakery.bakeRecipe({ species: 'person', seed: 5 }).surface.features;
+    same(Object.keys(face.find((feature) => feature.id === 'eye').frames), body.FRAME_SETS.blink);
+    same(Object.keys(face.find((feature) => feature.id === 'mouth').frames), body.FRAME_SETS.talk);
+  });
+  test('wardrobe: editor round trip (schema -> edits -> encode -> decode -> equal), and the look survives it', () => {
+    const editor = body.editor(wardrobe);
+    let recipe = { species: 'hornkin', seed: 99 };
+    const controls = editor.schema(recipe);
+    same(
+      controls.groups.map((group) => group.id),
+      ['head', 'face', 'body', 'arms', 'legs', 'hair', 'outfit', 'accessories', 'traits', 'colors']
+    );
+    // One edit of each kind, driven only by what the schema says.
+    controls.dials.forEach((dial, index) => {
+      if (index % 3 === 0) recipe = editor.setDial(recipe, dial.id, dial.min + ((dial.max - dial.min) * (index % 7)) / 6);
+    });
+    recipe = editor.setDial(recipe, 'eyeSize@left', 1.3);
+    recipe = editor.setColor(recipe, 'skin', controls.colors.find((color) => color.id === 'skin').ramps.length - 1);
+    recipe = editor.setSocket(recipe, 'handLeft', 'lantern');
+    recipe = editor.setSocket(recipe, 'handLeft/flame', 'glowstone');
+    recipe = editor.setSocket(recipe, 'hat', 'circlet');
+    recipe = editor.mirror(recipe, 'left');
+    const decoded = wardrobe.decode(wardrobe.encode(recipe));
+    same(decoded, wardrobe.normalize(recipe), 'decode(encode(recipe)) equals the normalised recipe');
+    same(wardrobe.describe(wardrobe.resolve(decoded)), wardrobe.describe(wardrobe.resolve(recipe)), 'every field equal');
+    assert.strictEqual(wardrobe.hash(wardrobe.resolve(decoded)), wardrobe.hash(wardrobe.resolve(recipe)), 'same look');
+    const described = wardrobe.describe(wardrobe.resolve(decoded));
+    same(
+      [described.fills.handRight, described.fills['handRight/flame'], described.dials['eyeSize@right']],
+      ['lantern', 'glowstone', described.dials['eyeSize@left']],
+      'mirror copied the lantern, its flame and the eye'
+    );
+    assert.ok(wardrobe.encode(recipe).length < 200, `a heavily edited character is still small: ${wardrobe.encode(recipe).length} bytes`);
   });
 };
