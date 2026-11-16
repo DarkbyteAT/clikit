@@ -818,9 +818,11 @@ machine at load 20 to 40, so only the ratios mean anything.
   stopped 0.8 of a reach short along the line, which leaves a bent arm beside the head, and because a chibi's
   arm (0.22 m) is shorter than its head is wide (0.40 m). Now: the dive stops 0.95 of a reach short (arms
   long); while a hand is pulled to a point, the trunk tips up and back off the line about the middle of the
-  shoulders until the head is behind the hand (`leadHands`, at most 1.2 rad), and the body then closes
-  whatever the arm still cannot reach (`closeHands`, at most 0.6 arm lengths). A long-armed body is not
-  touched by either. Rejected: scaling the dive's keyed tilt per species (a special case per body); longer
+  shoulders only until the head is behind the hand or clear of the line (`leadHands`, at most 1.2 rad;
+  tipping further laid a chibi on its back in a high catch), the body backs off until the point is outside
+  the head (`clearHead`, 1.25 head radii), and the body then closes whatever the arm still cannot reach
+  (`closeHands`, at most 1.0 arm lengths; 0.6 left a short arm 0.045 m off the ball). A long-armed body
+  is not touched by any of the three. Rejected: scaling the dive's keyed tilt per species (a special case per body); longer
   arms (not this module's to change).
 - **A hanging leg is drawn up by its foot's keyed lift** (`hangTuck`): the same `up` that lifts a planted
   foot bends a knee in the air, so "upper leg bent, lower leg trailing" is two numbers in the dive's keys.

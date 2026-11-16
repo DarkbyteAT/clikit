@@ -134,7 +134,13 @@
     const tune = { ...FLUTTER_DEFAULTS, ...options };
     const PHASE_FIELD = fieldOf('flutterPhase');
     const GAP_FIELD = fieldOf('flutterGap');
-    const create = (motion) => ({ phase: Kit.seeded.unit(Kit.act.seedOf(motion), PHASE_FIELD), wait: tune.flickGap[0], flicked: tune.flickSeconds, count: 0, rig: Kit.act.rig(motion.plan, motion.rest) });
+    const create = (motion) => ({
+      phase: Kit.seeded.unit(Kit.act.seedOf(motion), PHASE_FIELD),
+      wait: tune.flickGap[0],
+      flicked: tune.flickSeconds,
+      count: 0,
+      rig: Kit.act.rig(motion.plan, motion.rest),
+    });
     return Kit.motion.stage({
       name: 'act.flutter',
       step(motion, _plan, dt) {
