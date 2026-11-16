@@ -33,8 +33,8 @@
   const MATRIX_TEXELS = 4;
   /** Bones that may move one vertex of a sculpted surface. */
   const SKIN_OWNERS = 4;
-  /** Numbers per vertex of a sculpted surface's paint (its ramp slot and its ink group). */
-  const SURFACE_PAINT = 2;
+  /** Numbers per vertex of a sculpted surface's paint (its ramp slot, its ink group, whether it glints). */
+  const SURFACE_PAINT = 3;
   const QUATERNION = 4;
   /** Floats per vertex of a stamp's paint and of its centre (kit/figure-shapes.js `stamps`). */
   const STAMP_PAINT = 4;
@@ -356,7 +356,7 @@
      * the lead bone's rotation whatever wrote the pose, so a walk swings the arms about their opened rest.
      */
     const opened = (local) => (skin ? openedInto(skin.clearance, local, skin.scratch) : local);
-    const isReplaced = (piece) => Boolean(skin && skin.replaced.has(piece.id));
+    const isReplaced = (piece) => Boolean(skin && (skin.replaced.has(piece.id) || skin.joined.has(piece.id)));
 
     const addPiece = (piece) => {
       if (isReplaced(piece)) return;
@@ -636,7 +636,7 @@
     const canSculpt = options.sculpt !== false && Boolean(Kit.figure.sculptLayers) && view.isWebGL2 === true;
     const sculpted = canSculpt ? Kit.figure.sculptLayers(bake, pieceLayout) : null;
     const meshes = pieceLayout.pieces
-      .filter((piece) => !sculpted || !sculpted.replaced.has(piece.id))
+      .filter((piece) => !sculpted || !(sculpted.replaced.has(piece.id) || sculpted.joined.has(piece.id)))
       .map((piece) => {
         const mesh = new THREE.InstancedMesh(cache.acquire(piece), undefined, count);
         // Members wander over the whole stage; the geometry's own bounds would cull them wrongly.

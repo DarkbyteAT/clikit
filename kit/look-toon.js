@@ -294,13 +294,13 @@
 
   /**
    * One mesh of several paints (the layers of a sculpted figure joined: kit/figure-sculpt.js): each vertex names
-   * its ramp slot, which is also its line class, and its ink group. No vertex is shared between two paints, so
-   * the pair is the same at a triangle's three corners and reaches a fragment unchanged.
+   * its ramp slot, which is also its line class, its ink group, and 1 if it glints like a shiny part. No vertex
+   * is shared between two paints, so the three are the same at a triangle's corners and reach a fragment unchanged.
    */
   const GLSL_VERTEX_PAINT_PARS = `
     #ifdef LOOK_VERTEX_PAINT
-      attribute vec2 vertexPaint;
-      varying vec2 vPaint;
+      attribute vec3 vertexPaint;
+      varying vec3 vPaint;
     #endif`;
 
   const TOON_VERTEX = `
@@ -385,7 +385,7 @@
       varying float vResponseShare;
     #endif
     #ifdef LOOK_VERTEX_PAINT
-      varying vec2 vPaint;
+      varying vec3 vPaint;
     #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
@@ -409,10 +409,12 @@
       float row = uRamp + vRampOffset;
       float inkClass = uInkClass;
       float inkGroup = uInkGroup;
+      bool isShiny = uPart.x > 0.5;
       #ifdef LOOK_VERTEX_PAINT
         row = uBlockRow + floor(vPaint.x + 0.5) + vRampOffset;
         inkClass = floor(vPaint.x + 0.5);
         inkGroup = floor(vPaint.y + 0.5);
+        isShiny = vPaint.z > 0.5;
       #endif
       float lineRow = -1.0;
       vec3 response = uResponse;
@@ -453,7 +455,7 @@
       // Bounce: shadowed surface that faces the back light steps up one tone, toward the ramp's own colour and never past it.
       if (uBounce > 0.5 && dot(normal, uBack.xyz) > uBack.w) tone = min(tone + 1.0, max(tone, lightest - 1.0));
       // Glint: where the normal bisects the light and the viewer (the viewer is +z in view space), a shiny part takes the lightest tone.
-      if (uPart.x > 0.5 && dot(normal, normalize(uLight + vec3(0.0, 0.0, 1.0))) > uGlintEdge) tone = lightest;
+      if (isShiny && dot(normal, normalize(uLight + vec3(0.0, 0.0, 1.0))) > uGlintEdge) tone = lightest;
       if (uPart.y > 0.5) tone = lightest;
       if (uPart.z >= 0.0) tone = fixedTone(uPart.z);
       #ifdef LOOK_STAMP
@@ -524,7 +526,7 @@
     varying float vViewDepth;
     varying vec3 vLocalPosition;
     #ifdef LOOK_VERTEX_PAINT
-      varying vec2 vPaint;
+      varying vec3 vPaint;
     #endif
     ${GLSL_PALETTE}
     ${GLSL_DEPTH_BYTE}
@@ -601,9 +603,9 @@
    * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below
    *   it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
    * @property {LookRegions} [regions] the mesh is painted from a baked region map instead of one ramp
-   * @property {boolean} [vertexPaint] the geometry has a two-number `vertexPaint` attribute: per vertex, its ramp slot
-   *   (a row from `blockRow`, and its line class) and its ink group, instead of the part's one `ramp`, `inkClass` and
-   *   `inkGroup` (several paints in one mesh, so one draw: a sculpted figure's layers)
+   * @property {boolean} [vertexPaint] the geometry has a three-number `vertexPaint` attribute: per vertex, its ramp slot
+   *   (a row from `blockRow`, and its line class), its ink group and 1 where it is shiny, instead of the part's one
+   *   `ramp`, `inkClass`, `inkGroup` and `shiny` (several paints in one mesh, so one draw: a sculpted figure's layers)
    * @property {number} [blockRow] with `regions`, `stamps` or `vertexPaint`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
    * @property {number} [shell] with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
    * @property {boolean} [stamps] the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js

@@ -391,7 +391,15 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const armed = catalog.bakery({ capacity: 4 }).bakeRecipe(editor.setSocket({ species, seed: 1 }, 'handRight', 'shortBlade'));
     const armedLayout = figure.layout(armed, { level: 'medium' });
     const blade = armedLayout.pieces.find((candidate) => armed.plan.boneNames[candidate.bone] === 'handRight/blade');
-    assert.ok(blade && !figure.sculptLayers(armed, armedLayout).replaced.has(blade.id));
+    const withBlade = figure.sculptLayers(armed, armedLayout);
+    assert.ok(blade && !withBlade.replaced.has(blade.id));
+    // It is drawn in the one surface all the same, as it is: every triangle its shape was built with, moved by its bone alone.
+    assert.ok(withBlade.joined.has(blade.id), 'the blade rides in the surface');
+    const run = withBlade.surface.ranges.find((range) => range.id === `piece:${blade.id}`);
+    assert.strictEqual(run.indexCount, figure.buildShape(blade.shape, armedLayout.level).indices.length, 'none of its triangles is simplified away');
+    for (let vertex = run.vertexStart; vertex < run.vertexStart + run.vertexCount; vertex++) {
+      if (withBlade.surface.owners[vertex * OWNERS] !== blade.bone || withBlade.surface.weights[vertex * OWNERS] !== 1) assert.fail(`vertex ${vertex} of the blade is not its bone's alone`);
+    }
   });
 
   test('sculpt: a task does the same sculpt in steps of bounded time, and shares the cache', () => {
@@ -568,7 +576,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       const { surface, layers, bytes } = figure.sculptLayers(bake, figure.layout(bake, { level }));
       const vertexCount = surface.positions.length / VECTOR;
       assert.ok(surface.indices.length / VECTOR <= sculpt.DETAIL[level].triangles, `${level}: ${surface.indices.length / VECTOR} triangles`);
-      assert.strictEqual(surface.paint.length, vertexCount * 2);
+      assert.strictEqual(surface.paint.length, vertexCount * 3);
       assert.strictEqual(surface.ranges.reduce((sum, range) => sum + range.vertexCount, 0), vertexCount, 'the runs cover every vertex');
       assert.strictEqual(surface.ranges.reduce((sum, range) => sum + range.indexCount, 0), surface.indices.length, 'and every triangle');
       layers.forEach((layer) => {
@@ -578,7 +586,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         for (let corner = 0; corner < range.indexCount; corner++) {
           const vertex = surface.indices[range.indexStart + corner];
           if (vertex - range.vertexStart !== layer.indices[corner]) assert.fail(`${level} ${layer.id}: triangle corner ${corner} names another vertex`);
-          if (surface.paint[vertex * 2] !== layer.ramp || surface.paint[vertex * 2 + 1] !== layer.inkGroup) assert.fail(`${level} ${layer.id}: vertex ${vertex} is painted as another layer`);
+          if (surface.paint[vertex * 3] !== layer.ramp || surface.paint[vertex * 3 + 1] !== layer.inkGroup) assert.fail(`${level} ${layer.id}: vertex ${vertex} is painted as another layer`);
         }
       });
       for (let slot = 0; slot < surface.weights.length; slot += OWNERS) {

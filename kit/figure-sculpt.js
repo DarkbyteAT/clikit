@@ -67,8 +67,8 @@
     kept: 24,
     keptBytes: 12e6,
   });
-  /** Numbers per vertex of a surface's `paint`: the ramp slot and the ink group. */
-  const PAINT = 2;
+  /** Numbers per vertex of a surface's `paint`: the ramp slot, the ink group, and 1 where it glints (a shiny piece). */
+  const PAINT = 3;
   /** Owners per vertex of a layer. */
   const OWNERS = 4;
   /** The largest vertex index a 16-bit index buffer can hold. */
@@ -357,6 +357,8 @@
    * @property {SculptSurface} surface every layer as one mesh: what a figure draws
    * @property {number} bytes what the arrays take, bytes
    * @property {Set<string>} replaced ids of the layout pieces the layers stand in for (do not draw them)
+   * @property {Set<string>} joined ids of the layout pieces that are drawn in the surface as they are: rigid, each moved
+   *   wholly by its own bone, with the triangles it was authored with (a sword, a pack; do not draw them either)
    * @property {Float32Array} matrices the bone matrices the layers were made in (the bind pose), 16 per bone
    * @property {{leads: Int16Array, turns: Float32Array}} clearance see `limbClearance`
    * @property {string} signature what the layers depend on (see `sculptSignature`)
@@ -372,7 +374,7 @@
    * @property {Uint16Array} owners 4 bone indices per vertex
    * @property {Float32Array} weights 4 shares per vertex
    * @property {Float32Array} faceShare per vertex, how much of it the head's bones move where its layer is a body surface, else 0
-   * @property {Uint8Array} paint 2 per vertex: its layer's ramp slot (also its line class) and ink group
+   * @property {Uint8Array} paint 3 per vertex: its layer's ramp slot (also its line class), its ink group, and 1 where it is shiny
    * @property {Array<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}>} ranges
    * @property {number} error the furthest a vertex was moved off the planes it stood for when the mesh was simplified, metres (`Kit.sculpt.simplify`'s `distance`)
    */
@@ -516,9 +518,10 @@
    */
   const sculptSignature = (bake, figureLayout, detail = figureLayout.level, options = {}) => {
     const { wears, hangs } = wearOf(bake.plan);
-    const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) =>
-      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone]].join('~')
-    );
+    // Every piece that is sculpted, worn or joined as it is: all but stamps and the like, whose looks are not the surface's.
+    const pieces = figureLayout.pieces
+      .filter((piece) => isSculpted(piece) || (piece.isProp && wears[piece.bone] && isSolidPiece(piece)) || isJoinable(piece))
+      .map((piece) => [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone], piece.shiny ? 'shiny' : ''].join('~'));
     const rest = bake.rest || Kit.body.createPose(bake.plan);
     const pose = [rest.translation, rest.rotation, rest.scale].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
     const made = `${detail}${options.cull === false ? '~whole' : ''}${options.simplify === false ? '~dense' : ''}`;
@@ -709,15 +712,70 @@
       layers.push(layer);
       pieces.forEach((piece) => replaced.add(piece.id));
     });
-    const level = Kit.sculpt.DETAIL[detail];
-    const whole = joinLayers(layers);
+    // What is left rigid and plainly shaded rides in the same mesh, so a figure is one draw and its face.
+    const rigid = figureLayout.pieces.filter((piece) => !replaced.has(piece.id) && isJoinable(piece));
+    const whole = joinLayers([...layers, ...rigid.map((piece) => rigidLayer(piece, matrices, figureLayout.level))]);
+    const sculptedCount = layers.reduce((sum, layer) => sum + layer.positions.length / VECTOR, 0);
     yield undefined;
+    const level = Kit.sculpt.DETAIL[detail];
     const tolerance = (cell || level.cell) * level.error;
-    const light = options.simplify === false ? null : yield* Kit.sculpt.simplifySteps(whole, { tolerance, most: level.triangles || 0, skin: whole });
+    // A rigid piece keeps the triangles its shape was built with: its edges are meant, not a grid's.
+    const locked = new Uint8Array(whole.positions.length / VECTOR).fill(1, sculptedCount);
+    const light = options.simplify === false ? null : yield* Kit.sculpt.simplifySteps(whole, { tolerance, most: level.triangles || 0, skin: whole, locked });
     const surface = light ? lightened(whole, light) : { ...whole, error: 0 };
     const views = layerViews(surface, layers);
-    return { layers: views, surface, bytes: bytesOf(surface, views), replaced, matrices, clearance };
+    return { layers: views, surface, bytes: bytesOf(surface, views), replaced, joined: new Set(rigid.map((piece) => piece.id)), matrices, clearance };
   }
+
+  /**
+   * Can a piece the sculpt leaves rigid be drawn in the surface: shaded from one ramp like a layer, with an
+   * outline of its own? Stamps, painted or raised pieces and fixed tones need a material of their own.
+   */
+  const isJoinable = (piece) => !piece.stamps && !piece.regions && !piece.shell && !piece.emissive && piece.tone === undefined && piece.outlined !== false && piece.inkGroup > 0;
+
+  /** Numbers along a side of a 4 x 4 matrix, and so between the rows of an affine map kept as three rows of four. */
+  const SIDE = 4;
+  /** The determinant of the 3 x 3 part of an affine map kept as three rows of four: negative when it mirrors. */
+  const determinantOf = (rows) => {
+    const [xx, xy, xz, , yx, yy, yz, , zx, zy, zz] = rows;
+    return xx * (yy * zz - yz * zy) - xy * (yx * zz - yz * zx) + xz * (yx * zy - yy * zx);
+  };
+
+  /**
+   * A rigid piece as a layer: its shape's own mesh placed by its bone in the sculpting pose and owned wholly
+   * by that bone, so the skeleton moves it exactly as it moved the piece.
+   * @complexity O(vertices of the piece)
+   */
+  const rigidLayer = (piece, matrices, level) => {
+    const built = Kit.figure.buildShape(piece.shape, level);
+    const matrix = matrices.subarray(piece.bone * MATRIX, piece.bone * MATRIX + MATRIX);
+    const inverse = Kit.sculpt.invertAffine(matrix);
+    const count = built.positions.length / VECTOR;
+    const positions = new Float32Array(count * VECTOR);
+    const normals = new Float32Array(count * VECTOR);
+    for (let at = 0; at < positions.length; at += VECTOR) {
+      const [x, y, z] = [built.positions[at], built.positions[at + 1], built.positions[at + 2]];
+      const [nx, ny, nz] = [built.normals[at], built.normals[at + 1], built.normals[at + 2]];
+      for (let axis = 0; axis < VECTOR; axis++) {
+        positions[at + axis] = matrix[axis] * x + matrix[SIDE + axis] * y + matrix[2 * SIDE + axis] * z + matrix[VECTOR * SIDE + axis];
+        // A normal is carried by the inverse's transpose, which keeps it square to the surface under a stretch.
+        normals[at + axis] = inverse[axis] * nx + inverse[SIDE + axis] * ny + inverse[2 * SIDE + axis] * nz;
+      }
+      const length = Math.hypot(normals[at], normals[at + 1], normals[at + 2]) || 1;
+      for (let axis = 0; axis < VECTOR; axis++) normals[at + axis] /= length;
+    }
+    // A bone that mirrors (a left hand made from the right) turns triangles inside out: wind them back.
+    const isMirrored = determinantOf(inverse) < 0;
+    const indices = Uint32Array.from(built.indices);
+    if (isMirrored) for (let face = 0; face < indices.length; face += VECTOR) [indices[face + 1], indices[face + 2]] = [indices[face + 2], indices[face + 1]];
+    const owners = new Uint16Array(count * OWNERS);
+    const weights = new Float32Array(count * OWNERS);
+    for (let vertex = 0; vertex < count; vertex++) {
+      owners[vertex * OWNERS] = piece.bone;
+      weights[vertex * OWNERS] = 1;
+    }
+    return { id: `piece:${piece.id}`, ramp: piece.ramp, inkGroup: piece.inkGroup, inkClass: piece.ramp, isShiny: Boolean(piece.shiny), positions, normals, indices, owners, weights };
+  };
 
   /**
    * Layers as one mesh (a `SculptSurface` before it is simplified): their arrays end to end, each triangle
@@ -748,6 +806,7 @@
       for (let vertex = vertexStart; vertex < vertexStart + count; vertex++) {
         whole.paint[vertex * PAINT] = layer.ramp;
         whole.paint[vertex * PAINT + 1] = layer.inkGroup;
+        whole.paint[vertex * PAINT + 2] = layer.isShiny ? 1 : 0;
       }
       // Hot loop over every corner: an index write each.
       for (let corner = 0; corner < layer.indices.length; corner++) whole.indices[indexStart + corner] = layer.indices[corner] + vertexStart;
@@ -799,6 +858,7 @@
    */
   const layerViews = (surface, layers) =>
     surface.ranges
+      .slice(0, layers.length)
       .map((range, index) => {
         const { vertexStart, indexStart } = range;
         const vertexEnd = vertexStart + range.vertexCount;

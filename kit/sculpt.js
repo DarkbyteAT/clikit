@@ -1422,8 +1422,16 @@
     /** Collapses between two pauses of `simplifySteps` (about a millisecond's work each hundred). */
     slice: 1200,
   });
-  /** Numbers of a quadric: the upper triangle of a symmetric 4 x 4, row by row. */
-  const QUADRIC = 10;
+  /**
+   * Where a quadric keeps each term: the upper triangle of a symmetric 4 x 4 over (x, y, z, 1), row by row.
+   * `D` is the constant's row and column (a plane's distance from the origin).
+   */
+  const QUADRIC_TERMS = Object.freeze({ XX: 0, XY: 1, XZ: 2, XD: 3, YY: 4, YZ: 5, YD: 6, ZZ: 7, ZD: 8, DD: 9 });
+  const { XX, XY, XZ, XD, YY, YZ, YD, ZZ, ZD, DD } = QUADRIC_TERMS;
+  /** Numbers of a quadric. */
+  const QUADRIC = Object.keys(QUADRIC_TERMS).length;
+  /** Neighbours of a vertex there is room for at first (the list grows for a busier one). */
+  const AROUND_START = 32;
 
   /**
    * A binary heap of (cost, item, stamp) on typed arrays, cheapest first, growing by doubling.
@@ -1517,15 +1525,16 @@
    * `skin`) leave an edge across which more than `SIMPLIFY.mostShareStep` of the ownership changes, so a knee
    * keeps the loops it bends on.
    * @param {{positions: Float32Array, normals: Float32Array, indices: ArrayLike<number>}} mesh not changed
-   * @param {{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike<number>, weights: ArrayLike<number>}}} [options]
+   * @param {{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike<number>, weights: ArrayLike<number>}, locked?: ?ArrayLike<number>}} [options]
    *   `tolerance`: collapses up to this error are always made, metres (default 0: only those that cost nothing);
    *   `most`: then the cheapest further ones until at most this many triangles are left (default 0: no such
-   *   budget), whatever they cost; `skin`: 4 owners and 4 shares per vertex
+   *   budget), whatever they cost; `skin`: 4 owners and 4 shares per vertex; `locked`: per vertex, non-zero for
+   *   one that is never removed (a hard-edged piece authored at the size it should have)
    * @returns {Generator<undefined, Simplified, undefined>} yields every `SIMPLIFY.slice` collapses; its return value is the mesh
    * @complexity O(vertices x log vertices) time (a heap entry per vertex and about ten per collapse), O(vertices + triangles) memory
    * @example const steps = Kit.sculpt.simplifySteps(mesh, { tolerance: 0.001 }); let step = steps.next(); while (!step.done) step = steps.next();
    */
-  function* simplifySteps(mesh, { tolerance = 0, most = 0, skin = null } = {}) {
+  function* simplifySteps(mesh, { tolerance = 0, most = 0, skin = null, locked = null } = {}) {
     const { positions, normals } = mesh;
     const vertexCount = positions.length / VECTOR;
     const faces = Uint32Array.from(mesh.indices);
@@ -1547,16 +1556,16 @@
     const addPlane = (vertex, nx, ny, nz, at, share) => {
       const distance = -(nx * positions[at] + ny * positions[at + 1] + nz * positions[at + 2]);
       const into = vertex * QUADRIC;
-      quadrics[into] += share * nx * nx;
-      quadrics[into + 1] += share * nx * ny;
-      quadrics[into + 2] += share * nx * nz;
-      quadrics[into + 3] += share * nx * distance;
-      quadrics[into + 4] += share * ny * ny;
-      quadrics[into + 5] += share * ny * nz;
-      quadrics[into + 6] += share * ny * distance;
-      quadrics[into + 7] += share * nz * nz;
-      quadrics[into + 8] += share * nz * distance;
-      quadrics[into + 9] += share * distance * distance;
+      quadrics[into + XX] += share * nx * nx;
+      quadrics[into + XY] += share * nx * ny;
+      quadrics[into + XZ] += share * nx * nz;
+      quadrics[into + XD] += share * nx * distance;
+      quadrics[into + YY] += share * ny * ny;
+      quadrics[into + YZ] += share * ny * nz;
+      quadrics[into + YD] += share * ny * distance;
+      quadrics[into + ZZ] += share * nz * nz;
+      quadrics[into + ZD] += share * nz * distance;
+      quadrics[into + DD] += share * distance * distance;
       weight[vertex] += share;
     };
     const normal = new Float64Array(VECTOR);
@@ -1600,11 +1609,11 @@
       const y = positions[target * VECTOR + 1];
       const z = positions[target * VECTOR + 2];
       const sum =
-        quadrics[from] * x * x +
-        quadrics[from + 4] * y * y +
-        quadrics[from + 7] * z * z +
-        2 * (quadrics[from + 1] * x * y + quadrics[from + 2] * x * z + quadrics[from + 5] * y * z + quadrics[from + 3] * x + quadrics[from + 6] * y + quadrics[from + 8] * z) +
-        quadrics[from + 9];
+        quadrics[from + XX] * x * x +
+        quadrics[from + YY] * y * y +
+        quadrics[from + ZZ] * z * z +
+        2 * (quadrics[from + XY] * x * y + quadrics[from + XZ] * x * z + quadrics[from + YZ] * y * z + quadrics[from + XD] * x + quadrics[from + YD] * y + quadrics[from + ZD] * z) +
+        quadrics[from + DD];
       return Math.max(0, sum) / (weight[vertex] || 1);
     };
     /** What moving `vertex` onto `target` costs, metres squared: `distanceAt`, and how far the normal there is from the vertex's own. */
@@ -1630,8 +1639,8 @@
     const mark = new Int32Array(vertexCount);
     let round = 0;
     /** The neighbours of the vertex last gathered, and what moving it onto each would cost. */
-    let around = new Int32Array(32);
-    let aroundCost = new Float64Array(32);
+    let around = new Int32Array(AROUND_START);
+    let aroundCost = new Float64Array(AROUND_START);
     let aroundCount = 0;
     /**
      * Gathers the vertices that share a live triangle with `vertex` into `around`; returns its live triangles.
@@ -1683,12 +1692,12 @@
           shared += 1;
           continue;
         }
-        const a = faces[base] * VECTOR;
-        const b = faces[base + 1] * VECTOR;
-        const c = faces[base + 2] * VECTOR;
-        faceNormal(positions, a, b, c, before);
-        const moved = target * VECTOR;
-        faceNormal(positions, a === vertex * VECTOR ? moved : a, b === vertex * VECTOR ? moved : b, c === vertex * VECTOR ? moved : c, after);
+        const first = faces[base] * VECTOR;
+        const second = faces[base + 1] * VECTOR;
+        const third = faces[base + 2] * VECTOR;
+        faceNormal(positions, first, second, third, before);
+        const [from, moved] = [vertex * VECTOR, target * VECTOR];
+        faceNormal(positions, first === from ? moved : first, second === from ? moved : second, third === from ? moved : third, after);
         const turn = before[0] * after[0] + before[1] * after[1] + before[2] * after[2];
         const sizes = (before[0] * before[0] + before[1] * before[1] + before[2] * before[2]) * (after[0] * after[0] + after[1] * after[1] + after[2] * after[2]);
         if (!(turn > 0 && turn * turn > SIMPLIFY.leastTurn * SIMPLIFY.leastTurn * sizes)) return false;
@@ -1752,7 +1761,7 @@
       }
       queueAt(vertex, target, cheapest);
     };
-    for (let vertex = 0; vertex < vertexCount; vertex++) if (head[vertex] >= 0) queue(vertex);
+    for (let vertex = 0; vertex < vertexCount; vertex++) if (head[vertex] >= 0 && !(locked && locked[vertex])) queue(vertex);
     yield undefined;
 
     let worst = 0;
@@ -1852,7 +1861,7 @@
   /**
    * `simplifySteps` run to its end in one go (see it for the method and the options).
    * @param {{positions: Float32Array, normals: Float32Array, indices: ArrayLike<number>}} mesh
-   * @param {{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike<number>, weights: ArrayLike<number>}}} [options]
+   * @param {{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike<number>, weights: ArrayLike<number>}, locked?: ?ArrayLike<number>}} [options]
    * @returns {Simplified}
    * @complexity as `simplifySteps`
    * @example const light = Kit.sculpt.simplify(skin, { tolerance: 0.001 }); const weights = Kit.sculpt.pick(skinWeights, 4, light.kept);
