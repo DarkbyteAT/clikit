@@ -61,7 +61,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [columns.js](#columnsjs) (1) - Kit columns: many small records as typed-array columns (a struct of arrays) with slots that are reused through a free list, so a population 
 - [seeded.js](#seededjs) (7) - Kit seeded: values that depend only on (seed, field name), not on how many values were read before them.
 - [pack.js](#packjs) (4) - Kit pack: small records as bytes, and bytes as text.
-- [palette.js](#palettejs) (14) - Kit palette: colour ramps as data.
+- [palette.js](#palettejs) (18) - Kit palette: colour ramps as data.
 - [surface.js](#surfacejs) (8) - Kit surface: where things sit on the surface of a simple solid.
 - [region.js](#regionjs) (8) - Kit region: areas of a surface as data.
 - [rig.js](#rigjs) (11) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
@@ -77,7 +77,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [body-wardrobe.js](#body-wardrobejs) (0) - Kit body wardrobe: an original, generic humanoid catalogue for a character creator, as data.
 - [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
 - [body-gallery.js](#body-galleryjs) (0) - Kit body gallery: the `bodies` screen (`Kit.play('bodies')`).
-- [look-settings.js](#look-settingsjs) (12) - Kit look settings: the look as data and small pure functions.
+- [look-settings.js](#look-settingsjs) (17) - Kit look settings: the look as data and small pure functions.
 - [look-toon.js](#look-toonjs) (0) - Kit look toon: the materials of the stylised look.
 - [look-ink.js](#look-inkjs) (0) - Kit look ink: the indexed pipeline.
 - [look-view.js](#look-viewjs) (0) - Kit look view: the thin composition that draws a scene of dressed meshes in a chosen look.
@@ -6196,7 +6196,8 @@ Kit.pack.fromText('AQID') // Uint8Array [1, 2, 3]
 >
 > Owns:  `Kit.palette.ramp` (build a ramp from a hue), `Kit.palette.shade` (the shade of a ramp for a light
 >        level) and `Kit.palette.toCss`; OKLCH conversion and `Kit.palette.tones` (2-6 perceptually even tones
->        plus an ink colour, from one base colour or from an existing ramp); named sets of ramps
+>        plus a deep and an ink colour, from one base colour or from an existing ramp, and where along a graded
+>        ramp those tones sit: `TONE_POSITIONS`, `columnAt`); named sets of ramps
 >        (`Kit.palette.set`, `Kit.palette.SETS`); and `Kit.palette.atlas`, the packed tone x ramp table that
 >        becomes the palette texture of the look shaders (kit/look-toon.js). Shading never invents RGB: a pixel
 >        is (ramp row, tone column) and colour appears only when that pair is looked up in the table.
@@ -6256,11 +6257,58 @@ Kit.palette.shade(skinRamp, 0.5) // the middle shade
 
 ### `Kit.palette.TONE_SLOTS`
 
-Width of the packed table in texels: six tone columns, one spare, and the ink column last. A power of two.
+Width of the packed table in texels: six tone columns, the deep column, and the ink column last. A power of two.
 
 ### `Kit.palette.INK_COLUMN`
 
 Column that holds a ramp's outline colour.
+
+### `Kit.palette.DEEP_COLUMN`
+
+Column that holds a ramp's deepest colour: the dark end that shading with few tones never reaches (see `TONE_POSITIONS`). Marks that
+must read on any tone of the surface under them (a pupil, a lash line, the line of a mouth) are painted with it.
+
+### `Kit.palette.TONE_POSITIONS`
+
+Where along a graded ramp (a `Ramp` of shades, 0 its darkest and 1 its lightest) each tone sits, by tone
+count, darkest first. Three rules shape the table. The second-lightest tone is always the ramp's middle,
+so a character keeps its colours when the tone count changes and a five-shade ramp's middle shade is drawn
+byte for byte. With one shadow tone the step down from it stays gentle (the reasoning of `SHADOW_REACH`: a
+face half in a deep shadow reads as half a face); each further tone reaches deeper, down to the ramp's
+darkest. The lightest tone stops short of the ramp's end, so a highlight is a colour, not chalk.
+
+### `Kit.palette.sampleRamp(shades, position)`
+
+The colour at a position along a graded ramp: 0 is its darkest shade, 1 its lightest, and a position between
+two shades blends them (channel by channel; neighbouring shades of one ramp are close enough for that to be even).
+
+- `shades` *Array\<string\|number\|number[]\>* - darkest first, 2 or more
+- `position` *number* - 0..1, clamped
+
+**Returns** *number[]* [red, green, blue], 0..255
+
+**Complexity** O(1)
+
+```js
+Kit.palette.sampleRamp(Kit.palette.ramp('moss', 0.3).shades, 0.5) // the middle shade
+```
+
+### `Kit.palette.columnAt(position, toneCount)`
+
+The column of the packed table a fixed paint reads: a mark painted at a position of its ramp (0 darkest ..
+1 lightest) takes the nearest tone the ramp has at this tone count (the darker of two equally near), and a
+position less than half way up to the darkest tone takes the deep column. The stamp shader in kit/look-toon.js computes exactly this.
+
+- `position` *number* - 0..1 along the ramp
+- `toneCount` *number* - 2..6
+
+**Returns** *number* a tone column 0..toneCount - 1, or `DEEP_COLUMN`
+
+**Complexity** O(toneCount) time, O(1) space
+
+```js
+Kit.palette.columnAt(0, 3) // 6: the deep column
+```
 
 ### `Kit.palette.TONE_SHAPE`
 
@@ -6400,6 +6448,7 @@ _Undocumented: add a JSDoc block in the source._
 - **ToneRamp**
   - `tones` *number[][]* - [red, green, blue] bytes, darkest first
   - `ink` *number[]* - [red, green, blue] bytes of the outline colour
+  - `deep` *number[]* - [red, green, blue] bytes of the ramp's deepest colour (the `DEEP_COLUMN`)
 - **PaletteSet** - A named set of ramps.
   - `name` *string*
   - `rampIds` *string[]* - ramp names, in row order
@@ -6409,7 +6458,7 @@ _Undocumented: add a JSDoc block in the source._
   - `rampIds` *string[]* - ramp names in row order
   - `rows` *Record\<string, number\>* - ramp name -> absolute row in the atlas
 - **PaletteAtlas** - The packed table: `width` tone columns by `height` ramp rows of RGBA bytes, ready to be a texture.
-  - `width` *number* - texels per row (8: tones 0..5, a spare, ink)
+  - `width` *number* - texels per row (8: tones 0..5, deep, ink)
   - `height` *number* - rows
   - `data` *Uint8Array* - RGBA bytes, row by row
   - `toneCount` *number* - tones currently written per ramp
@@ -7470,7 +7519,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > Owns:  `Kit.body.catalog(spec)` and what it returns: `resolve` (recipe -> individual), `describe`, `validate`,
 >        `normalize`, `encode` / `decode`, `hash`, `table` (weighted species -> recipes) and `bakery` (individual
->        -> assembled plan + proportioned rest pose, cached by hash).
+>        -> assembled plan + proportioned rest pose, cached by hash); the roll rules (`Kit.body.rolls`: harmony
+>        schemes, followers, contrast and rooms as pure functions) with `clashes` and `reconcile`.
 > Does not own: the inheritance fold (kit/lineage.js), the seed derivation and content hash (kit/seeded.js),
 >        the byte format's primitives (kit/pack.js), plans, dials and kinematics (kit/body-plan.js), attaching
 >        (kit/body-parts.js), instances (kit/body-store.js) or anything that moves or draws a body. This file
@@ -7480,10 +7530,21 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 > depends on how many fields were read before it: add a dial to a species next month and every existing seed
 > keeps its old values for every old field.
 >
+> Roll rules. A species may also state how its fields go together (`SpeciesDefinition.colorWeights`, `follow`,
+> `harmony`, `contrast`, `occupies`): then a field's hash is still its own, but what it chooses among is narrowed
+> by the fields rolled before it, so a seed rolls an outfit, not fourteen unrelated colours. The rules are part
+> of the catalogue: a seed gives the same individual for as long as the catalogue's tables are unchanged.
+>
 > Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
 
 ### Types
 
+- **ColorFact** - What the rules know of a ramp: its own colour (its middle shade) in OKLCH, plus the same in OKLab.
+  - `lightness` *number* - 0..1
+  - `chroma` *number* - 0..about 0.4
+  - `hue` *number* - degrees
+  - `greenRed` *number* - OKLab a
+  - `blueYellow` *number* - OKLab b
 - **Recipe**
   - `species` *string* - id of a species of the catalogue (a node with a `code`)
   - `seed` *number* - unsigned 32-bit whole number; every field not overridden is derived from it
@@ -7500,6 +7561,27 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[dials]` *Object\<string, {min: number, max: number, default?: number, shape?: string, affects: Object[]}\>* - dial id -> a `DialRow` of kit/body-plan.js without its id, plus `shape` (a `Kit.seeded.SHAPES` name, default 'bell')
   - `[colors]` *Object\<string, string\>* - colour channel -> the name of a palette of the catalogue ({ skin: 'skinTones' }); an individual stores which ramp of that palette it uses
   - `[fills]` *Object\<string, Object\<string, number\>\>* - socket path -> { part id or 'none': weight }
+  - `[colorWeights]` *Object\<string, Object\<string, number\>\>* - colour channel -> { ramp id: weight } for the ramps that are not rolled at weight 1 ({ hair: { teal: 0.3 } }); 0 keeps a ramp for editors only
+  - `[follow]` *Object\<string, FollowRule\>* - colour channel -> the channel it follows: it takes the ramp of its own palette nearest the followed colour (plus an offset), whatever sets that colour, unless overridden
+  - `[harmony]` *HarmonyRule* - the channels whose colours are drawn from one scheme per roll
+  - `[contrast]` *ContrastRule[]* - pairs of channels whose colours must stand apart
+  - `[occupies]` *Object\<string, string[]\>* - part id -> the rooms it takes up on a body ('crown', 'back'). Two parts that occupy the same room are never rolled together; an override may still combine them
+- **FollowRule**
+  - `channel` *string* - the channel followed (it may not itself follow another)
+  - `[lightness]` *number* - OKLCH lightness added to the followed colour before the nearest ramp is sought
+  - `[chroma]` *number* - OKLCH chroma added
+  - `[hue]` *number* - degrees added
+  - `[among=1]` *number* - the follower picks, by its own seeded field, among this many nearest ramps
+- **HarmonyRule**
+  - `schemes` *Object\<string, number\>* - scheme id (a key of `Kit.body.rolls.SCHEMES`) -> weight
+  - `channels` *string[]* - the channels drawn from the scheme. The first of them (in the species' channel order) to take a colour that is not a neutral sets the key hue
+  - `[tolerance=26]` *number* - degrees a colour may sit from a scheme hue
+  - `[neutralChroma=0.05]` *number* - OKLCH chroma below which a colour is a neutral
+- **ContrastRule**
+  - `between` *string[]* - two channels
+  - `[lightness]` *number* - least OKLCH lightness gap that satisfies the rule
+  - `[chroma]` *number* - least OKLCH chroma gap that satisfies it instead
+  - `[hue]` *number* - least hue gap, degrees, that satisfies it instead, between two colours that are not neutrals. State at least one of the three: garments that meet want value or saturation apart (two hues of one value vibrate), while skin against cloth may also be told apart by hue
 - **SpeciesKind** - A species compiled for fast derivation.
   - `id` *string*
   - `code` *number*
@@ -7520,8 +7602,10 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `dialDraws` *Array\<function(number): number\>* - per dial: seed -> a number in [0, 1) (`Kit.seeded.field`)
   - `colorDraws` *Array\<function(number): number\>* - per colour channel: seed -> a number in [0, 1)
   - `keyByHash` *Map\<number, string\>* - field id -> override key, for decoding
+  - `rolls` *Object* - the species' colour rules compiled (`compileColorRules`): per-channel colour facts and weights, followers, the harmony rule and the contrast rules; `active` is false when it states none
+  - `rooms` *?{flags: Object, all: number, taken: Object\<string, {requirement: Object, mask: number}\>}* - the rooms its parts occupy as a `Kit.flags` set, the mask of all of them free and, per part that occupies any, the requirement "my rooms are free" with the mask it takes; null when no part occupies a room
 - **RecipeProblem**
-  - `code` *string* - one of 'unknown-species', 'abstract-species', 'bad-seed', 'bad-overrides', 'unknown-field', 'bad-value', 'out-of-range', 'bad-color', 'unknown-part', 'no-such-socket', 'part-does-not-fit', 'socket-required'
+  - `code` *string* - one of 'unknown-species', 'abstract-species', 'bad-seed', 'bad-overrides', 'unknown-field', 'bad-value', 'out-of-range', 'bad-color', 'unknown-part', 'no-such-socket', 'part-does-not-fit', 'socket-required'; and from `clashes`: 'contrast', 'harmony', 'occupied'
   - `[field]` *string* - the override key at fault
   - `message` *string* - what is wrong and how to fix it
 - **Bake** - Everything a renderer needs for one distinct look, built once and shared by every instance that has it.
@@ -7700,9 +7784,11 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 > Kit look settings: the look as data and small pure functions. What a tone band is, how dither thresholds are
 > laid out, how a figure sits on a texel grid, and the three presets with the knobs each exposes.
 >
-> Owns:  the band lookup and ordered-dither tables the shaders mirror (`bandOf`, `edgesFor`, `bayerAt`); the grid
+> Owns:  the band lookup, the light value and the ordered-dither tables the shaders mirror (`bandOf`, `lightOf`,
+>        `edgesFor`, `bayerAt`); the grid
 >        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`);
->        and the presets and knobs (`PRESETS`, `KNOBS`, `settings`).
+>        the lights and how kinds of surface answer them (`LIGHTING`, `RESPONSES`); and the presets and knobs
+>        (`PRESETS`, `KNOBS`, `settings`).
 > Does not own: colour (kit/palette.js: ramps, tones and the packed atlas), textures, materials or passes
 >        (look-toon.js, look-ink.js), or the frame (look-view.js).
 >
@@ -7711,8 +7797,67 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 ### `Kit.look.BAND_EDGES`
 
 Band edges on the light value n.L (-1 facing away .. 1 facing the light), by tone count. A pixel's tone is
-the number of edges at or below its light. The top edge is high so the highlight stays a small accent, and
-the shadow edges sit below zero so a face turned a little from the light is not half dark.
+the number of edges at or below its light. The edges are placed by what they leave of a ball under the key
+light of `LIGHTING`: about an eighth of its disc in highlight, a fifth in shadow (a crescent, with the deeper
+tones of higher counts nested inside it) and the rest, well over half, in the ramp's own colour: two or
+three clean tones on a large form. The second-lightest band (the ramp's own colour) always contains
+`LIGHTING.fillCap`, which is what lets the fill light lift a face to its own colour and no further.
+tools/test-looks.js measures both.
+
+### `Kit.look.LIGHTING`
+
+The lights of the look, in view space (x right, y up, z toward the viewer), so they keep their place on
+screen as the camera or a figure turns: a figure is lit the same from all eight directions.
+ - `key`: from the upper left and well in front, so what faces the viewer is lit and the shadow is a
+   crescent down the right and under overhangs, never a half.
+ - `fill`: almost the viewer's own direction. It never brightens past `fillCap` (a light value inside the
+   ramp's own colour band), so it can lift a shadow off a surface but cannot add a highlight. How much of it
+   a surface takes is the surface's response (`RESPONSES`).
+ - `back`: from behind, to the right and a little below. With `bounce` on, shadowed surface that faces it
+   (the far-side silhouette) is lifted one tone, which keeps a figure's dark side off a dark backdrop.
+ - `rim`: with `rim` on, lit surface seen edge-on is lifted one tone.
+
+### `Kit.look.RESPONSES`
+
+Responses by name (`LookPart.response`). `form` is everything by default: key light only. `face` is bare
+skin that carries features: wherever it is turned toward the viewer the fill holds it at its own colour, so
+eyes, brows and a mouth always sit on a readable tone; only the last sliver before the far silhouette can
+take the shadow, which keeps the head round. A face is never dithered: a checker of two tones across a
+cheek reads as stubble.
+
+### `Kit.look.DITHER_TEXEL_FADE`
+
+How much of a look's dither a frame draws, by the world size of a texel. Dither trades resolution for an
+extra apparent tone, which pays on a figure large enough to hold the pattern; on a small sprite a 4 x 4
+checker along every band edge is speckle. It is whole while a texel is finer than `full` world units (a
+person about 140 texels tall or more) and gone at `none` (about 70 texels tall).
+
+### `Kit.look.ditherAt(dither, texelWorld)`
+
+The dither strength to draw with.
+
+- `dither` *number* - the look's dither strength (`LookSettings.dither`)
+- `texelWorld` *number* - world units one target texel covers; 0 when unknown (a perspective camera): no fade
+
+**Returns** *number* 0..dither
+
+```js
+Kit.look.ditherAt(0.07, 0.018) // 0.035: half way through the fade
+```
+
+### `Kit.look.lightOf(normal, response = RESPONSES.form)`
+
+The light value of a surface: the brighter of the key light's n.L and what the surface's response takes of
+the capped fill light. The fragment shader's `lightOf` is this function.
+
+- `normal` *number[]* - unit normal in view space [right, up, toward the viewer]
+- `[response]` *LightResponse* - a row of `RESPONSES` (default: a form)
+
+**Returns** *number* -1..1; pass it to `bandOf`
+
+```js
+Kit.look.bandOf(Kit.look.lightOf([0, 0, 1], Kit.look.RESPONSES.face), Kit.look.edgesFor(3)) // 1: a face seen head-on is its own colour
+```
 
 ### `Kit.look.BAYER_4`
 
@@ -7819,9 +7964,13 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
 
 ### Types
 
+- **LightResponse** - How a kind of surface answers the light.
+  - `fillGain` *number* - how strongly the fill light follows the surface turning to the viewer
+  - `fillBias` *number* - added to that; the fill's light value is `fillGain * (n . fill) + fillBias`, capped at `LIGHTING.fillCap`, and a fragment takes the brighter of key and fill
+  - `dither` *number* - share of the look's dither the surface takes, 0..1
 - **LookSettings** - Everything that decides how a view draws.
   - `toneCount` *number* - tones per ramp, 2..6 (the band count)
-  - `dither` *number* - strength of the ordered dither on the light value, 0 (off) .. 0.3
+  - `dither` *number* - strength of the ordered dither on the light value, 0 (off) .. 0.3; a frame draws less of it as its texels grow against the figures (`ditherAt`), and none on faces or tightly curved forms
   - `ditherSpace` *'screen'\|'anchored'\|'object'* - what the dither pattern is fixed to: the screen, the figure's snapped screen position, or the surface itself
   - `softness` *number* - half-width of the blend across a band edge, in light units; 0 is a hard edge. Only drawn at native resolution without screen-space ink (tone indices cannot be blended)
   - `outline` *'none'\|'hull'\|'ink'* - no lines, an inverted hull per mesh, or screen-space ink over an index target
@@ -7830,6 +7979,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `snap` *boolean* - move figures by whole texels when drawn below native resolution
   - `yawSteps` *number* - facings per turn a caller should round a figure's turn to (see stepYaw); 0 is continuous
   - `rim` *boolean* - lift grazing, lit edges one tone
+  - `bounce` *boolean* - lift the shadowed far-side silhouette one tone (a back light)
 - **LookKnob**
   - `id` *string* - the LookSettings field it edits
   - `label` *string*
@@ -7844,7 +7994,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
 > Kit look toon: the materials of the stylised look. A toon material turns n.L into a tone band and looks the
 > colour up in the palette texture; a hull material draws the mesh's outline in its ramp's ink colour.
 >
-> Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
+> Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, the lights, ordered dither, accents, palette
 >        lookup, hull extrusion, region maps and their boundary lines, stamps) as named strings; `Kit.look.shading`: the uniforms every material of one look
 >        shares, `dress(mesh, part)` to put a mesh in the look, and `apply(settings, frame)` to change the look
 >        of every dressed mesh at once.
@@ -7854,7 +8004,8 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
 > Why a ShaderMaterial and not a patched MeshToonMaterial: the palette contract needs the fragment's last
 > word (a tone index or a table colour, never lit RGB, never tone mapped), and the standard material's
 > lighting, fog and tone-mapping chunks would all have to be cut back out through string patches that break
-> with the next three.js release. The cost: no scene lights, shadows or fog; the look has one key light of its own.
+> with the next three.js release. The cost: no scene lights, shadows or fog; the look has its own lights (a key, a
+> capped fill and a back light: Kit.look.LIGHTING), fixed in view space.
 >
 > GLSL here is WebGL1-safe (constant loop bounds, no integer bit operations, no MRT); three.js converts it for
 > WebGL2. Skinned and instanced meshes are supported through three.js's own vertex chunks; morph targets are not.
@@ -7867,7 +8018,8 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `[inkGroup=1]` *number* - 1..255. Screen-space ink draws a line where two groups meet; 0 means the part is never outlined and never drawn over by ink (eyes, glows)
   - `[shiny]` *boolean* - takes the lightest tone where it mirrors the light (hair, metal, gems)
   - `[emissive]` *boolean* - always the lightest tone; its ink group defaults to 0
-  - `[tone]` *number* - a fixed tone, 0 (darkest) .. 1 (lightest) of the ramp, instead of shading
+  - `[tone]` *number* - a fixed position along the ramp, 0 (its deepest colour) .. 1 (lightest), instead of shading; it is drawn with the nearest tone the ramp has (`Kit.palette.columnAt`)
+  - `[response='form']` *string* - a key of `Kit.look.RESPONSES`: how the part answers the light. 'face' is for skin that carries features (a head): the fill light keeps what is turned to the viewer at the ramp's own colour, and it is never dithered. Where a region map paints over the mesh (hair on a scalp) and on its raised shells, the part answers as a form again
   - `[anchor]` *{value: THREE.Vector2}* - from `shading.follow(root)`: the figure this part's dither moves with
   - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
   - `[inkClass=0]` *number* - 0..15. Where two classes meet on one surface (a sleeve and the skin below it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one

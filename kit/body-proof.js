@@ -249,7 +249,8 @@
   const { html, signal } = Kit.ui;
 
   const BACKDROP_COLOR = 0x6a7399;
-  const ATLAS_ROWS = 1024;
+  /** Palette rows: a page of 32 figures at `Kit.figure.RAMP_SLOTS` rows each, which is also all the indexed looks address (`Kit.look.INDEXED_ROWS`). */
+  const ATLAS_ROWS = 512;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
   /** Room round a figure in its cell, as shares of the largest figure's size; `head` shows this share of the height, from the top. */
   const CELL = Object.freeze({ sideMargin: 1.15, topMargin: 1.22, headShare: 0.42, headTop: 0.12, leastWidth: 0.5 });

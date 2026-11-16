@@ -439,12 +439,15 @@
     };
 
     /**
-     * Re-rolls a recipe from a new seed, keeping the fields that are locked exactly as they are now.
+     * Re-rolls a recipe from a new seed, keeping the fields that are locked exactly as they are now. Where the
+     * species has colour rules, the colours rolled afresh are made to go with the locked ones (`catalog.reconcile`):
+     * a locked skin is contrasted against and a locked shirt sets the outfit's scheme, as if they had been rolled.
      * @param {Object} recipe
      * @param {number} seed the new seed (unsigned 32-bit)
      * @param {{locked?: string[]}} [options] field keys to keep ('dial:height', 'color:skin', 'fill:handRight');
      *   a locked nested socket is only kept while its parent socket still holds a part that has it
-     * @returns {Object} a new, normalised recipe: the new seed plus one override per locked field
+     * @returns {Object} a new, normalised recipe: the new seed plus one override per locked field, and one per
+     *   colour channel that had to change to go with a locked colour
      * @throws {Error} '[bad-seed] ...', or '[unknown-field] ...' for a locked key the species lacks
      * @complexity O(fields + locked log locked)
      * @example recipe = editor.randomize(recipe, Date.now() >>> 0, { locked: ['color:skin', 'fill:headTop'] });
@@ -459,7 +462,9 @@
           return [key, value];
         })
       );
-      return keepWhatFits({ species: recipe.species, seed, overrides: kept });
+      const rerolled = keepWhatFits({ species: recipe.species, seed, overrides: kept });
+      const settled = catalog.reconcile(rerolled, locked);
+      return Object.keys(settled).length ? catalog.normalize({ ...rerolled, overrides: { ...rerolled.overrides, ...settled } }) : rerolled;
     };
 
     /**
