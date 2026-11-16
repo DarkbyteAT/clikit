@@ -2768,4 +2768,6 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-settings
     assert.strictEqual(Kit.palette.shade(Kit.palette.ramp('moss', 0.3), 0), Kit.palette.ramp('moss', 0.3).shades[0], 'the existing shade() still works');
   });
 }
+// ---- Kit.figure: shapes, layout, update planning, grounding and framing (pure half) ----
+require('./test-figure.js')({ Kit, sandbox, test, assert });
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });
