@@ -166,6 +166,11 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
   /** A fresh, writable copy of the sample catalogue, changed by `edit`. */
   const sampleVariant = (edit, base = body.samples.CATALOG) => {
     const copy = JSON.parse(JSON.stringify(base));
+    // The sample species wear faces of their own (`PLANS.<plan>Faced`). A variant is a blank body for the feature
+    // under test, so its species stand on the bare skeletons: what a case places is then all there is to count.
+    Object.values(copy.nodes).forEach((node) => {
+      if (node.set && typeof node.set.plan === 'string') node.set.plan = node.set.plan.replace(/Faced$/, '');
+    });
     edit(copy);
     return copy;
   };
@@ -227,13 +232,16 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     body.catalog(sampleVariant((spec) => (spec.nodes.human.set.dials = { jawWidth: { max: 1.3 } }), SHAPED)); // control: inside the limit
   });
   test('shape dials: mistakes are named (no such number in the shape, a default capsule, a bad mode, a feature without param)', () => {
-    const plan = body.samples.PLANS.biped;
+    // The cases are about a ball head (a shape with a radius and no profile); the sample biped's head is now a turned profile, so the ball is stated here.
+    const plan = { ...body.samples.PLANS.biped, bones: body.samples.PLANS.biped.bones.map((bone) => (bone.name === 'head' ? { ...bone, shape: { kind: 'sphere', radius: 0.12, at: [0, 0.11, 0] } } : bone)) };
     const biped = body.plan({ ...plan, id: 'biped' });
     throwsWith(
       () => body.dials(biped, [{ id: 'jaw', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'profile.1.0' }] }]),
       /shape.profile.1.0 of bone "head", whose shape \(sphere\) has no number there/
     );
-    throwsWith(() => body.dials(biped, [{ id: 'fat', min: 0.5, max: 2, affects: [{ bones: ['waist'], shape: 'radius' }] }]), /is the default capsule; give the bone a `shape`/);
+    // The sample biped states a drawn shape for every bone, so the default capsule is tried on a copy whose waist states none.
+    const bare = body.plan({ ...plan, id: 'bareWaist', bones: plan.bones.map(({ shape, ...bone }) => (bone.name === 'waist' ? bone : { ...bone, ...(shape ? { shape } : {}) })) });
+    throwsWith(() => body.dials(bare, [{ id: 'fat', min: 0.5, max: 2, affects: [{ bones: ['waist'], shape: 'radius' }] }]), /is the default capsule; give the bone a `shape`/);
     throwsWith(() => body.dials(biped, [{ id: 'jaw', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'radius', mode: 'twist' }] }]), /has the mode "twist"/);
     throwsWith(() => body.dials(biped, [{ id: 'eyes', min: 0.5, max: 2, affects: [{ feature: 'eye' }] }]), /needs a `param`/);
     const fine = body.dials(biped, [{ id: 'headRound', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'radius' }] }]);

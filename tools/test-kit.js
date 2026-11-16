@@ -2806,6 +2806,12 @@ require('./test-figure.js')({ Kit, sandbox, test, assert });
 require('./test-gait.js')({ Kit, sandbox, test, assert });
 require('./test-act.js')({ Kit, sandbox, test, assert });
 require('./test-proof.js')({ Kit, sandbox, test, assert });
+// ---- Kit.sculpt and Kit.figure.sculptLayers: a body as blended, skinned layers ----
+require('./test-sculpt.js')({ Kit, sandbox, test, assert });
+// ---- Kit.drape: cloth laid on bodies in a declared order, thin shells, and what carries it ----
+require('./test-drape.js')({ Kit, sandbox, test, assert });
+// ---- faces and hair as data: relief, anchors, the face and hair vocabularies, their dials ----
+require('./test-faces.js')({ Kit, sandbox, test, assert });
 // ---- how characters are lit and rolled: the light model and the roll rules (harmony, followers, contrast, rooms, locks) ----
 require('./test-looks.js')({ Kit, sandbox, test, assert });
 // ---- the character creator's pure pieces (rows, session, slots, camera) over the wardrobe catalogue ----

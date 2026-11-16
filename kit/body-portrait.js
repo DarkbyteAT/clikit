@@ -101,7 +101,8 @@
       const cache = Kit.figure.geometryCache();
       const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAMERA.near, CAMERA.far);
       const cast = castRecipes(catalog).map((recipe) => {
-        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { cache });
+        // The level its size on the screen asks for: a row of small characters is not a row of close-ups.
+        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { cache, level: 'auto' });
         return { recipe, figure, root: figure.root, crown: figure.measured.highestY };
       });
       const standIns = Kit.look.standIns.FIGURES.map((row) => {

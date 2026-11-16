@@ -22,6 +22,9 @@
 (() => {
   const { ellipse } = Kit.surface;
   const { ramp } = Kit.palette;
+  const { face } = Kit.body;
+  /** The hair primitives (kit/body-hair.js) on the reference head, which head-worn parts are drawn for. */
+  const hair = Kit.body.hair.on();
 
   // ---- small builders, so the tables below read as content ------------------------------------------------------------
 
@@ -296,6 +299,9 @@
         ...SIDES.flatMap(arm),
         ...SIDES.flatMap(leg),
       ],
+      // Where this head keeps its features, and the relief every individual has: a brow ridge, cheeks and a chin.
+      anchors: face.anchors('head'),
+      features: [...face.browRidge({ scale: HEAD_SCALE_UP }), ...face.cheeks({ scale: HEAD_SCALE_UP }), ...face.chin({ scale: HEAD_SCALE_UP })],
       sockets: [
         ...FACE_SOCKETS.map((name) => ({ name, bone: 'head', type: name, at: [0, HEAD_LENGTH / 2, 0], required: REQUIRED_FACE.includes(name) })),
         { name: 'hair', bone: 'head', type: 'hair', at: atHead([0, 0.115, 0]) },
@@ -320,7 +326,7 @@
    * A part with every length scaled by `factor` (bone offsets and ends, girths, shape sizes, feature sizes and
    * lifts; never angles or regions): how parts drawn for one head or body size are fitted to another.
    */
-  const LENGTH_FIELDS = ['at', 'tail', 'end', 'radius', 'size', 'profile', 'outline', 'depth', 'girth', 'lift'];
+  const LENGTH_FIELDS = ['at', 'tail', 'end', 'radius', 'size', 'profile', 'outline', 'depth', 'girth', 'lift', 'blend'];
   const scaleNumbers = (value, factor) => (Array.isArray(value) ? value.map((inner) => scaleNumbers(inner, factor)) : typeof value === 'number' ? value * factor : value);
   const scaledRow = (row, factor) =>
     Object.fromEntries(Object.keys(row).map((key) => [key, LENGTH_FIELDS.includes(key) ? scaleNumbers(row[key], factor) : key === 'shape' && row.shape ? scaledRow(row.shape, factor) : row[key]]));
@@ -370,7 +376,8 @@
     fits: ['eyes'],
     label,
     bones: [],
-    features: [{ id: 'eye', azimuth: 0, elevation: -3, spacing: 50, size, frames: eyeFrames(white, irisRadius), rest: 'open', glow: true, ...extra }],
+    // The stamp lies in a shallow socket pressed into the head under it.
+    features: [{ id: 'eye', anchor: 'eye', size, frames: eyeFrames(white, irisRadius), rest: 'open', glow: true, ...extra }, ...face.eyeSockets(size)],
   });
   const ALMOND = lens(0.62, 0.45);
 
@@ -379,17 +386,11 @@
     fits: ['brows'],
     label,
     bones: [],
-    features: [{ id: 'brow', azimuth: 0, elevation: 17, spacing: 52, size, rotation: 0, frames: { rest: [layer(outline, 'hair', 1, { least: 1.2 })] }, ...extra }],
+    features: [{ id: 'brow', anchor: 'brow', size, rotation: 0, frames: { rest: [layer(outline, 'hair', 1, { least: 1.2 })] }, ...extra }],
   });
 
-  /** Noses: a solid each (feature frame: +Y up the face, +Z out), with a shadow stamp under the tip. */
-  const nosePart = (label, shape, size = [0.03, 0.036]) => ({
-    fits: ['nose'],
-    label,
-    bones: [],
-    // No outline of its own: a ring round a nose inside the face reads as a blotch. It shades, and shows in profile.
-    features: [{ id: 'nose', azimuth: 0, elevation: -13, size, lift: 0.002, shape, paint: 'skin', outlined: false, frames: { rest: [layer(ellipse(0, -0.8, 0.42, 0.1, 8), 'skin', 1)] } }],
-  });
+  /** Noses: a style of `Kit.body.face.NOSES` each (a bridge, a tip, wings), modelled out of the face. It shades, and shows in profile. */
+  const nosePart = (label, style) => ({ fits: ['nose'], label, bones: [], features: face.nose(style) });
 
   /** Mouths: rest, smile and open frames for talking, painted with the lips channel. */
   const mouthFrames = (restLips, smileLift = 0.35) => ({
@@ -401,16 +402,12 @@
     fits: ['mouth'],
     label,
     bones: [],
-    features: [{ id: 'mouth', azimuth: 0, elevation: -30, size, frames: mouthFrames(restLips), rest: 'rest', ...extra }],
+    // The stamp lies on a pair of lips modelled out of the face, as wide as it is.
+    features: [{ id: 'mouth', anchor: 'mouth', size, frames: mouthFrames(restLips), rest: 'rest', ...extra }, ...face.lips(size)],
   });
 
-  /** Ears: a mirrored pair of solids at the sides of the head. */
-  const earsPart = (label, shape, size, extra = {}) => ({
-    fits: ['ears'],
-    label,
-    bones: [],
-    features: [{ id: 'ear', azimuth: 0, elevation: -6, spacing: 176, size, lift: 0.002, shape, paint: 'skin', ...extra }],
-  });
+  /** Ears: a style of `Kit.body.face.EARS` each (a plate standing off the head, hollowed, with a lobe or a point), as a mirrored pair. */
+  const earsPart = (label, style, extra = {}) => ({ fits: ['ears'], label, bones: [], features: face.ears(style).map((feature) => ({ ...feature, ...extra })) });
 
   /** Marks on the skin: freckles, blush, a scar, a mole, painted stripes, star-spots. */
   const FRECKLE_DOTS = [
@@ -430,7 +427,11 @@
 
   // ---- hair, facial hair -------------------------------------------------------------------------------------------------
 
-  /** A hair part: a painted cap over the head (layer 5) and the bones of its silhouette, hanging from the head's middle. */
+  /**
+   * A hair part: a painted cap over the head (layer 5) and the solids of its style, composed from the hair
+   * primitives (masses, locks, a fringe, a parting, a bun, a tail, a braid, sideburns, a fall) and hung from the
+   * head's middle.
+   */
   const hairPart = (label, cap, bones = [], extra = {}) => ({
     fits: ['hair'],
     label,
@@ -438,7 +439,6 @@
     // The cap stands proud of the scalp and hides a brow beneath it, as hair does.
     regions: [{ id: 'hair', bones: ['@host'], where: cap, paint: 'hair', layer: 5, raise: RAISE.hair, occludes: true, ...extra }],
   });
-  const strand = (name, parent, at, tail, girth, extra = {}) => ({ name, parent, at, tail, girth, roles: parent ? [] : ['root'], soft: 'hair', paint: 'hair', ...extra });
   /** A plait or tail of three loose capsules, for one side or the back. */
   const chain = (prefix, start, steps, girths, roles = []) =>
     steps.map((step, index) => ({
@@ -457,7 +457,18 @@
   // Below a line that runs under the mouth and climbs to the sideburns: the mouth stays on skin, where it reads.
   const LOWER_FACE = { intersect: [{ edge: { front: 0.2, back: 0.54, below: true } }, { band: { angle: [-112, 112] } }] };
   // Coarse enough that a dot is a few texels at a close-up and the pattern reads as stubble, not noise.
-  const STIPPLE = { checker: { s: 24, angle: 40 } };
+  const STIPPLE = { checker: { s: 36, angle: 60 } };
+  /**
+   * Facial hair that has a shape is a feature on the face's anchors, painted with the hair: it follows the lip
+   * and the chin whatever the dials make of them, and is sculpted as a solid of its own lying on the skin.
+   */
+  const whisker = (id, anchor, extra) => ({ id, anchor, paint: 'hair', outlined: false, ...extra });
+  /** A moustache: a tapered lock each side from under the nose out over the corner of the mouth, `droop` metres down at its end. */
+  const moustache = (reach, droop, radius) => whisker('moustache', 'mouth', { elevation: 8.5, spacing: 5, size: [reach, radius * 2], lift: 0.002, shape: { kind: 'capsule', at: [-0.002, 0.001, radius * 0.25], end: [reach, -droop, -reach * 0.1], radius, taper: 0.45 } });
+  /** A mass of beard each side along the jaw, under the cheek: a pressed ball, [across, up, out] half sizes. */
+  const jawBeard = (halves) => whisker('jawBeard', 'cheek', { elevation: -24, spacing: 96, size: [halves[0] * 2, halves[1] * 2], shape: { kind: 'sphere', radius: Math.max(...halves), scale: halves.map((half) => half / Math.max(...halves)), at: [0, 0, -halves[2] * 0.3] } });
+  /** A mass of beard on the chin: a pressed ball, [across, up, out] half sizes, hung `drop` metres under the chin's anchor. */
+  const chinBeard = (halves, drop) => whisker('chinBeard', 'chin', { size: [halves[0] * 2, halves[1] * 2], shape: { kind: 'sphere', radius: Math.max(...halves), scale: halves.map((half) => half / Math.max(...halves)), at: [0, -drop, -halves[2] * 0.35] } });
 
   // ---- clothing: regions over the body, a few silhouette bones -----------------------------------------------------------
 
@@ -616,23 +627,12 @@
       [0.04, 0.014]
     ),
     browsFine: browsPart('Fine', arcBand(-0.6, 1.2, 0.22), [0.038, 0.009]),
-    // Noses (5): different solids: a ball, a ridge, a cone, a wide ball, a hooked ridge.
-    noseButton: nosePart('Button', { kind: 'sphere', radius: 0.011, scale: [1.15, 0.9, 0.85] }),
-    noseStraight: nosePart('Straight', { kind: 'capsule', end: [0, -0.034, 0.012], radius: 0.006, taper: 1.6 }),
-    nosePointed: nosePart('Pointed', {
-      kind: 'lathe',
-      end: [0, -0.036, 0],
-      profile: [
-        [0.005, 0],
-        [0.01, 0.024],
-        [0.011, 0.03],
-        [0, 0.036],
-      ],
-      scale: [1, 1, 0.9],
-      at: [0, 0.004, 0.004],
-    }),
-    noseBroad: nosePart('Broad', { kind: 'sphere', radius: 0.012, scale: [1.75, 0.95, 0.85] }, [0.036, 0.03]),
-    noseHooked: nosePart('Hooked', { kind: 'capsule', end: [0, -0.036, 0.004], radius: 0.006, taper: 1.9, at: [0, 0.004, 0.008] }),
+    // Noses (5): a button, a straight ridge, a fine point, a broad one, a hooked one.
+    noseButton: nosePart('Button', 'button'),
+    noseStraight: nosePart('Straight', 'straight'),
+    nosePointed: nosePart('Pointed', 'pointed'),
+    noseBroad: nosePart('Broad', 'broad'),
+    noseHooked: nosePart('Hooked', 'hooked'),
     // Mouths (5): lip outlines differ at rest; each has smile and open frames for talking.
     mouthNeutral: mouthPart('Neutral', [layer(arcBand(0.72, 1.05, 0.34, 205, 335), 'lips', 0, { least: 1 })], [0.04, 0.02]),
     mouthWide: mouthPart('Wide', [layer(lens(0.18, 0.22), 'lips', 2), layer(rectangle(0.95, 0.035), 'lips', 0)], [0.058, 0.016]),
@@ -640,40 +640,11 @@
     mouthSmall: mouthPart('Small', [layer(lens(0.3, 0.32), 'lips', 2), layer(rectangle(0.8, 0.05), 'lips', 0)], [0.03, 0.014]),
     mouthSmirk: mouthPart('Smirk', [layer(slant(lens(0.2, 0.22), 0.35), 'lips', 2), layer(slant(rectangle(0.9, 0.04), 0.3), 'lips', 0)], [0.046, 0.017]),
     // Ears (5): round, small, large, pointed, long and swept back.
-    earsRound: earsPart('Round', { kind: 'sphere', radius: 0.024, scale: [0.72, 1.2, 0.4] }, [0.03, 0.05]),
-    earsSmall: earsPart('Small', { kind: 'sphere', radius: 0.018, scale: [0.7, 1.1, 0.4] }, [0.024, 0.04]),
-    earsLarge: earsPart('Large', { kind: 'sphere', radius: 0.031, scale: [0.8, 1.25, 0.45] }, [0.04, 0.066]),
-    earsPointed: earsPart(
-      'Pointed',
-      {
-        kind: 'lathe',
-        end: [0, 0.06, -0.012],
-        profile: [
-          [0.019, 0],
-          [0.014, 0.032],
-          [0, 0.06],
-        ],
-        scale: [1, 1, 0.4],
-        at: [0, -0.02, 0],
-      },
-      [0.032, 0.06]
-    ),
-    earsLong: earsPart(
-      'Long',
-      {
-        kind: 'lathe',
-        end: [0, 0.09, -0.03],
-        profile: [
-          [0.017, 0],
-          [0.012, 0.055],
-          [0, 0.095],
-        ],
-        scale: [1, 1, 0.35],
-        at: [0, -0.02, 0],
-      },
-      [0.03, 0.09],
-      { rotation: 25 }
-    ),
+    earsRound: earsPart('Round', 'round'),
+    earsSmall: earsPart('Small', 'small'),
+    earsLarge: earsPart('Large', 'large'),
+    earsPointed: earsPart('Pointed', 'pointed'),
+    earsLong: earsPart('Long', 'long', { rotation: 12 }),
     // Marks (5): where they sit and what they paint differ.
     freckles: markPart('Freckles', { id: 'freckles', azimuth: 0, elevation: -6, size: [0.075, 0.028], frames: { rest: FRECKLE_DOTS } }),
     blush: markPart('Blush', { id: 'blush', azimuth: 0, elevation: -17, spacing: 82, size: [0.034, 0.018], frames: { rest: [layer(ellipse(0, 0, 1, 1, 12), 'lips', 3)] } }),
@@ -707,128 +678,98 @@
       frames: { rest: [-0.55, 0, 0.55].map((up) => layer(rectangle(1, 0.14, up), 'marks', 2)) },
     }),
 
-    // Hair (10): a hairline and, for most, a silhouette. Bald is the empty socket.
-    hairCrop: hairPart('Crop', hairline(0.74, 0.4, 0.022, 9)),
+    // Hair (10): a hairline and, for most, a style composed from the hair primitives. Bald is the empty socket.
+    hairCrop: hairPart('Crop', hairline(0.74, 0.4, 0.022, 9), [
+      ...hair.parting('top', { side: 28, lift: 0.01, apart: 0.01, down: 0.74 }),
+      ...hair.fringe('fringe', { from: -52, to: 48, count: 5, top: 0.84, bottom: 0.6, radius: 0.017, sweep: 14 }),
+      ...hair.sideburns('burn', { bottom: -0.12 }),
+    ]),
     // Stubble on the scalp: flush paint, a pattern (no line round each dot), and a brow shows through it.
     hairBuzz: hairPart('Buzz', { intersect: [hairline(0.8, 0.44), STIPPLE] }, [], { raise: 0, occludes: false, ink: false }),
     hairSwept: hairPart('Swept', { edge: { front: 0.7, back: 0.34, jag: 0.035, count: 1 } }, [
-      { name: 'fringe', roles: ['root'], at: [0.02, 0.085, 0.07], turn: [12, 0, 16], tail: [0, 0.03, 0], girth: 0.04, shape: { kind: 'box', size: [0.15, 0.034, 0.04] }, paint: 'hair' },
+      ...hair.parting('top', { side: 55, lift: 0.018, apart: 0.016 }),
+      ...hair.fringe('fringe', { from: -28, to: 56, count: 4, top: 0.9, bottom: 0.52, radius: 0.022, sweep: -34, ragged: 0.2 }),
+      ...hair.sideburns('burn'),
     ]),
-    hairBob: hairPart('Bob', hairline(0.71, 0.2, 0.012, 14), [strand('volume', undefined, [0, 0.015, -0.032], undefined, 0.2, { shape: { kind: 'sphere', radius: 0.106, scale: [1.0, 0.92, 0.96] } })]),
+    hairBob: hairPart('Bob', hairline(0.71, 0.2, 0.012, 14), [
+      ...hair.parting('top', { lift: 0.014, apart: 0.016, down: 0.86 }),
+      ...hair.mass('back', [180, -0.12, -0.02], [0.108, 0.082, 0.05]),
+      ...hair.lock('sideLeft', [80, 0.4, 0.006], [76, -0.6, 0.012], 0.034, 0.75),
+      ...hair.lock('sideRight', [-80, 0.4, 0.006], [-76, -0.6, 0.012], 0.034, 0.75),
+      ...hair.fringe('fringe', { from: -42, to: 42, count: 5, top: 0.82, bottom: 0.34, radius: 0.02 }),
+    ]),
     hairLong: hairPart('Long', hairline(0.72, 0.24), [
-      strand('crown', undefined, [0, 0.02, -0.02], undefined, 0.2, { shape: { kind: 'sphere', radius: 0.1, scale: [1.02, 0.95, 1] } }),
-      strand('fall', 'crown', [0, 0.02, -0.06], [0, -0.34, 0], 0.2, {
-        shape: {
-          kind: 'extrude',
-          outline: [
-            [-0.1, 0],
-            [0.1, 0],
-            [0.12, -0.3],
-            [0, -0.34],
-            [-0.12, -0.3],
-          ],
-          depth: 0.035,
-        },
-      }),
+      ...hair.parting('top', { side: -12, lift: 0.014, apart: 0.016, down: 0.86 }),
+      ...hair.lock('sideLeft', [84, 0.42, 0.006], [72, -0.95, 0.03], 0.03, 0.6),
+      ...hair.lock('sideRight', [-84, 0.42, 0.006], [-72, -0.95, 0.03], 0.03, 0.6),
+      ...hair.fringe('fringe', { from: -40, to: 40, count: 4, top: 0.84, bottom: 0.46, radius: 0.02, sweep: 10 }),
+      ...hair.fall('fall', { length: 0.2 }),
     ]),
-    hairPonytail: hairPart(
-      'Ponytail',
-      hairline(0.74, 0.34),
-      chain(
+    hairPonytail: hairPart('Ponytail', hairline(0.74, 0.34), [
+      ...hair.parting('top', { lift: 0.01, apart: 0.01, down: 0.74 }),
+      ...hair.fringe('fringe', { from: -36, to: 36, count: 3, top: 0.86, bottom: 0.56, radius: 0.018, sweep: 8 }),
+      ...hair.tail(
         'tie',
-        [0, 0.05, -0.095],
+        [180, 0.5, 0.004],
         [
-          [0, -0.08, -0.05],
-          [0, -0.1, -0.02],
-          [0, -0.09, 0.01],
+          [0, 0.006, -0.05],
+          [0, -0.07, -0.022],
+          [0, -0.075, 0],
         ],
-        [0.055, 0.045, 0.03]
-      )
-    ),
-    hairBun: hairPart('Bun', hairline(0.75, 0.3), [strand('bun', undefined, [0, 0.08, -0.085], undefined, 0.09, { shape: { kind: 'sphere', radius: 0.045 } })]),
-    hairCrest: hairPart('Crest', { intersect: [hairline(0.7, 0.3), { union: [{ band: { angle: [-16, 16] } }, { band: { angle: [164, -164] } }] }] }, [
-      {
-        name: 'crest',
-        roles: ['root'],
-        at: [0, 0.09, -0.01],
-        turn: [0, 90, 0],
-        tail: [0, 0.06, 0],
-        girth: 0.02,
-        shape: {
-          kind: 'extrude',
-          outline: [
-            [-0.1, 0],
-            [0.09, 0],
-            [0.06, -0.055],
-            [-0.08, -0.065],
-          ],
-          depth: 0.018,
-        },
-        paint: 'hair',
-      },
-    ]),
-    hairCurls: hairPart('Curls', hairline(0.72, 0.26, 0.02, 12), [strand('volume', undefined, [0, 0.055, -0.03], undefined, 0.25, { shape: { kind: 'sphere', radius: 0.125, scale: [1.06, 0.95, 1] } })]),
-    hairBraids: hairPart('Braids', hairline(0.74, 0.36), [
-      ...SIDES.flatMap(({ suffix, sign, role }) =>
-        chain(
-          `braid${suffix}`,
-          [0.07 * sign, -0.01, -0.05],
-          [
-            [0.01 * sign, -0.1, 0.02],
-            [0, -0.1, 0.01],
-            [0, -0.09, 0],
-          ],
-          [0.03, 0.026, 0.02],
-          [role]
-        )
+        [0.019, 0.024, 0.018]
       ),
     ]),
-    // Facial hair (4): stippled stubble, a stamped moustache, a full beard with volume, a chin tuft.
+    hairBun: hairPart('Bun', hairline(0.75, 0.3), [...hair.parting('top', { lift: 0.01, apart: 0.01, down: 0.74 }), ...hair.bun('bun', [180, 0.62, 0.002], 0.042), ...hair.sideburns('burn', { bottom: -0.05, radius: 0.011 })]),
+    // A crest: shaved sides (the hairline keeps only a strip over the middle) and a ridge of locks standing along it.
+    hairCrest: hairPart('Crest', { intersect: [hairline(0.7, 0.3), { union: [{ band: { angle: [-16, 16] } }, { band: { angle: [164, -164] } }] }] }, [
+      ...[0.72, 0.9].map((rise, index) => hair.lock(`crestFront${index + 1}`, [0, rise, -0.004], [0, rise + 0.05, 0.05 + index * 0.012], 0.019, 0.45)).flat(),
+      ...[1, 0.82, 0.62, 0.4].map((rise, index) => hair.lock(`crestBack${index + 1}`, [180, rise, -0.004], [180, rise - 0.03, 0.062 - index * 0.012], 0.019, 0.45)).flat(),
+    ]),
+    // Curls: a cloud of small masses; the creases where they meet are what reads as curl.
+    hairCurls: hairPart(
+      'Curls',
+      hairline(0.72, 0.26, 0.02, 12),
+      [
+        [0, 0.97],
+        [38, 0.72],
+        [-38, 0.72],
+        [0, 0.74],
+        [92, 0.52],
+        [-92, 0.52],
+        [140, 0.66],
+        [-140, 0.66],
+        [180, 0.86],
+        [74, 0.08],
+        [-74, 0.08],
+        [128, 0.12],
+        [-128, 0.12],
+        [180, 0.3],
+        [180, -0.2],
+      ].flatMap(([azimuth, rise], index) => hair.mass(`curl${index + 1}`, [azimuth, rise, 0.012], index % 2 ? [0.042, 0.04, 0.042] : [0.046, 0.042, 0.044]))
+    ),
+    hairBraids: hairPart('Braids', hairline(0.74, 0.36), [
+      ...hair.parting('top', { lift: 0.011, apart: 0.014 }),
+      ...hair.fringe('fringe', { from: -34, to: 34, count: 3, top: 0.86, bottom: 0.6, radius: 0.017 }),
+      ...SIDES.flatMap(({ suffix, sign, role }) => hair.braid(`braid${suffix}`, [sign * 104, -0.12, 0.004], [0.002 * sign, -0.034, 0.002], 5, 0.021, [role])),
+    ]),
+    // Facial hair (4): stippled stubble, a moustache, a full beard, a chin tuft. What has a shape follows the lip and chin.
     stubble: { fits: ['facialHair'], label: 'Stubble', bones: [], regions: [{ id: 'stubble', bones: ['@host'], where: { intersect: [LOWER_FACE, STIPPLE] }, paint: 'hair', layer: 5, ink: false }] },
-    moustache: {
-      fits: ['facialHair'],
-      label: 'Moustache',
-      bones: [],
-      features: [
-        {
-          id: 'moustache',
-          azimuth: 0,
-          elevation: -19,
-          size: [0.05, 0.014],
-          frames: {
-            rest: [
-              layer(
-                [
-                  [-1, -0.6],
-                  [-0.5, 0.3],
-                  [0, 0.5],
-                  [0.5, 0.3],
-                  [1, -0.6],
-                  [0.4, -0.1],
-                  [0, 0],
-                  [-0.4, -0.1],
-                ],
-                'hair',
-                1
-              ),
-            ],
-          },
-        },
-      ],
-    },
+    moustache: { fits: ['facialHair'], label: 'Moustache', bones: [], features: [moustache(0.026, 0.007, 0.0075)] },
+    // A full beard: the lower face painted, with masses along the jaw and on the chin and a moustache over the lip.
     beard: {
       fits: ['facialHair'],
       label: 'Full beard',
-      bones: [{ name: 'beard', roles: ['root'], at: [0, -0.015, -0.01], girth: 0.12, shape: { kind: 'sphere', radius: 0.058, scale: [1.25, 1.1, 0.85] }, paint: 'hair' }],
+      bones: [],
+      features: [moustache(0.027, 0.011, 0.0078), chinBeard([0.034, 0.026, 0.02], 0.01), jawBeard([0.03, 0.034, 0.012])],
       regions: [{ id: 'beard', bones: ['@host'], where: LOWER_FACE, paint: 'hair', layer: 5 }],
     },
     chinTuft: {
       fits: ['facialHair'],
       label: 'Chin tuft',
-      bones: [{ name: 'tuft', roles: ['root'], at: [0, -0.01, 0.004], tail: [0, -0.045, 0.012], girth: 0.03, shape: { kind: 'capsule', radius: 0.014, taper: 0.4 }, paint: 'hair' }],
+      bones: [],
+      features: [chinBeard([0.014, 0.024, 0.013], 0.014)],
       regions: [{ id: 'tuft', bones: ['@host'], where: { intersect: [{ band: { s: [0, 0.2] } }, { band: { angle: [-30, 30] } }] }, paint: 'hair', layer: 5 }],
     },
-
     // Tops (6): what they cover differs (sleeve length, neckline, hem) and two add a pattern or a silhouette.
     tee: topPart('Tee', [...torso(NECKLINE.crew, 'top', 3, RAISE.cloth), ...sleeves(0.55, 'top', 3, RAISE.cloth)]),
     longSleeve: topPart('Long sleeve', [...torso(NECKLINE.crew, 'top', 3, RAISE.cloth), ...sleeves(1.9, 'top', 3, RAISE.cloth)]),
@@ -929,7 +870,11 @@
           turn: [-7, 0, 0],
           tail: [0, -0.85, 0],
           girth: 0.4,
-          // Loose: a panel hung from the shoulders swings out behind the body, never forward through it (`Kit.motion.loose`).
+          // A panel over everything else worn: it rests on the shoulders and the seat, and hangs free of the legs on its own bone.
+          rank: 3,
+          hangs: ['spine', 'neck'],
+          clings: 0.03,
+          // That bone is loose: hung from the shoulders, it swings out behind the body, never forward through it (`Kit.motion.loose`).
           soft: 'cloak',
           shape: {
             kind: 'extrude',
@@ -1425,6 +1370,28 @@
    * look. Hats: they sit over the hair's thickness (`RAISE.hair`), not on the scalp. Glasses: they frame those eyes.
    */
   const EMPHASIS = Object.freeze({ eyes: 1.15, hat: 1.13, glasses: 1.15 });
+  /**
+   * How a worn part's bones are drawn by default, by what the part fits (kit/figure-sculpt.js `WEARS`): cloth
+   * that hangs is draped on the body bones whose roles are listed, things that grow from or sit on the body are
+   * sculpted solids, and what is made of metal, glass or wood stays a rigid piece. A bone row may state its own.
+   */
+  const WEAR_BY_FIT = Object.freeze({
+    hair: { wear: 'solid' },
+    facialHair: { wear: 'solid' },
+    hat: { wear: 'solid' },
+    horns: { wear: 'solid' },
+    tail: { wear: 'solid' },
+    bottom: { wear: 'drape', hangs: ['leg'], rank: 1, clings: 0.25 },
+    outerwear: { wear: 'drape', hangs: ['spine', 'neck', 'leg'], rank: 2, clings: 0.05 },
+    // What is slung on the back is sculpted like the body (rounded, smooth, skinned to its own bone) and worn over
+    // everything draped there (rank 4: above a cloak's 3). What is held stays the piece it was built as: a pole or
+    // a blade is thinner than the grid holds, and thickened to fit it comes out lumpy.
+    back: { wear: 'solid', rank: 4 },
+  });
+  Object.keys(PARTS).forEach((id) => {
+    const worn = PARTS[id].fits.map((type) => WEAR_BY_FIT[type]).find(Boolean);
+    if (worn && PARTS[id].bones && PARTS[id].bones.length) PARTS[id] = { ...PARTS[id], bones: PARTS[id].bones.map((bone) => ({ ...worn, ...bone })) };
+  });
   Object.keys(PARTS).forEach((id) => {
     const isHeadWorn = PARTS[id].fits.some((type) => HEAD_TYPES.includes(type));
     const emphasis = PARTS[id].fits.reduce((most, type) => Math.max(most, EMPHASIS[type] || 1), 1);
@@ -1614,24 +1581,53 @@
     eyeHeight: offset(-6, 6, [
       { feature: 'eye', param: 'elevation' },
       { feature: 'brow', param: 'elevation', amount: 0.8 },
+      { feature: 'ridge', param: 'elevation', amount: 0.8 },
       { feature: 'lens', param: 'elevation' },
       { feature: 'bridge', param: 'elevation' },
     ]),
     eyeTilt: offset(-15, 15, [{ feature: 'eye', param: 'rotation' }]),
     browHeight: offset(-4, 6, [{ feature: 'brow', param: 'elevation' }], { sided: true }),
     browTilt: offset(-20, 20, [{ feature: 'brow', param: 'rotation' }]),
+    browDepth: offset(-0.008, 0.012, [{ feature: 'ridge', param: 'lift' }]),
+    cheekFullness: dial(0.6, 1.5, [{ feature: 'cheek', param: 'size' }]),
+    chinLength: offset(-0.008, 0.02, [
+      { feature: 'chin', param: 'lift' },
+      { feature: 'chinBeard', param: 'lift' },
+    ]),
     noseSize: dial(0.7, 1.5, [{ feature: 'nose', param: 'size' }]),
     noseLength: offset(-0.003, 0.01, [{ feature: 'nose', param: 'lift' }]),
     noseHeight: offset(-5, 5, [{ feature: 'nose', param: 'elevation' }]),
+    noseWidth: dial(0.7, 1.45, [{ feature: 'nose', param: 'size.0' }]),
+    noseTip: offset(-18, 22, [{ feature: 'nose', param: 'lean.0' }]),
     mouthWidth: dial(0.75, 1.35, [{ feature: 'mouth', param: 'size.0' }]),
     lips: dial(0.7, 1.5, [{ feature: 'mouth', param: 'size.1' }]),
-    mouthHeight: offset(-5, 4, [{ feature: 'mouth', param: 'elevation' }]),
-    earSize: dial(0.75, 1.4, [{ feature: 'ear', param: 'size' }], { sided: true }),
+    mouthHeight: offset(-5, 4, [
+      { feature: 'mouth', param: 'elevation' },
+      { feature: 'moustache', param: 'elevation' },
+    ]),
+    earSize: dial(
+      0.75,
+      1.4,
+      [
+        { feature: 'ear', param: 'size' },
+        { feature: 'earTip', param: 'size' },
+      ],
+      { sided: true }
+    ),
     earHeight: offset(-8, 8, [
       { feature: 'ear', param: 'elevation' },
+      { feature: 'earTip', param: 'elevation' },
       { feature: 'earring', param: 'elevation' },
     ]),
-    earAngle: offset(-25, 25, [{ feature: 'ear', param: 'rotation' }]),
+    earAngle: offset(-25, 25, [
+      { feature: 'ear', param: 'rotation' },
+      { feature: 'earTip', param: 'rotation' },
+    ]),
+    earFlare: offset(-22, 28, [
+      { feature: 'ear', param: 'lean.1' },
+      { feature: 'earTip', param: 'lean.1' },
+    ]),
+    earPoint: dial(0.6, 1.6, [{ feature: 'earTip', param: 'size.1' }]),
     // arms
     armLength: dial(0.9, 1.12, [{ roles: ['arm'], channel: 'length' }]),
     upperArms: dial(0.8, 1.4, LIMB_GIRTH(bothSides('upperArm'))),
@@ -1674,15 +1670,22 @@
       'eyeTilt',
       'browHeight',
       'browTilt',
+      'browDepth',
+      'cheekFullness',
+      'chinLength',
       'noseSize',
       'noseLength',
       'noseHeight',
+      'noseWidth',
+      'noseTip',
       'mouthWidth',
       'lips',
       'mouthHeight',
       'earSize',
       'earHeight',
       'earAngle',
+      'earFlare',
+      'earPoint',
     ],
     arms: ['armLength', 'upperArms', 'forearms', 'handSize'],
     legs: ['legLength', 'thighs', 'calves', 'footSize'],
@@ -1698,6 +1701,12 @@
     noseLength: 'How far the nose stands out.',
     lips: 'Fullness of the lips.',
     earAngle: 'Tilts the ears back or forward.',
+    earFlare: 'Flat to the head or standing off it.',
+    earPoint: 'Length of a pointed ear\'s tip.',
+    browDepth: 'How far the brow ridge stands over the eyes.',
+    cheekFullness: 'Hollow to full cheeks.',
+    chinLength: 'A receding to a jutting chin.',
+    noseTip: 'Turned down to turned up.',
   };
   /** Sockets as creator controls: socket -> [group, label, order within the group]. */
   const SLOTS = {

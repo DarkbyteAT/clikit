@@ -69,8 +69,8 @@ const BROWSER_ARGS = ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--
 const SETTLE_MS = 400;
 const LAUNCH_MS = 600;
 const BLOOM_MS = 350;
-/** How long one screenshot may take, milliseconds. */
-const SHOT_TIMEOUT_MS = 180000;
+/** The longest a screenshot may take: a large sheet under software GL on a busy machine needs minutes, not the default half minute. */
+const SHOT_MS = Number(process.env.KIT_SHOT_MS || 240000);
 const PAGE_SHELL =
   '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style></head><body>';
 
@@ -252,7 +252,7 @@ async function openArcade({ landscape = false, touch = false, size: ownSize, den
     await page.waitForTimeout(BLOOM_MS);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // A screen full of figures can take a software renderer well over the default half minute to photograph.
-    await page.screenshot({ path: file, timeout: SHOT_TIMEOUT_MS });
+    await page.screenshot({ path: file, timeout: SHOT_MS });
     await page.evaluate((shouldResume) => {
       if (Kit.post_) Kit.post_.disable();
       if (shouldResume && Kit.current) Kit.current.paused = false;
@@ -277,4 +277,4 @@ async function openArcade({ landscape = false, touch = false, size: ownSize, den
   };
 }
 
-module.exports = { openArcade, takeBrowserSlot, parseSize, parseDensity, PORTRAIT, LANDSCAPE };
+module.exports = { SHOT_MS, openArcade, takeBrowserSlot, parseSize, parseDensity, PORTRAIT, LANDSCAPE };

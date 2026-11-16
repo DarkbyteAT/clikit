@@ -321,6 +321,9 @@
    *   elevation: `FeatureSpec` rows of kit/body-surface.js, kept as data on `spec` and laid out by that file
    * @property {Object[]} [regions] painted areas of bones (a sleeve, a hairline, stripes): `RegionSpec` rows of
    *   kit/body-surface.js, kept as data on `spec`
+   * @property {Object<string, Object>} [anchors] named places on this body's bones (an eye, a nose, an ear):
+   *   `AnchorSpec` rows of kit/body-surface.js by name, kept as data on `spec`. A feature that names an anchor
+   *   sits there, so a nose made for one head sits right on any head that says where its nose is
    */
 
   /**
@@ -1156,8 +1159,11 @@
 
   /** The bones a dial effect names: by roles, by name, and by name inside a part wherever that part is attached. */
   const bonesOfEffect = (bodyPlan, effect) => {
-    const byRole = effect.roles ? bonesWithRoles(bodyPlan, roleMask(effect.roles)) : [];
-    // A part's bones are named '<socket path>/<bone>' once attached (kit/body-parts.js).
+    // A part's bones are named '<socket path>/<bone>' once attached (kit/body-parts.js). Every part has a `root`
+    // of its own (the bone it is mounted by), which is not the body's: a dial on the body's root (its height)
+    // reaches a worn part through the bone it hangs from, once, and must not size the part a second time.
+    const asksBodyRoot = Boolean(effect.roles) && effect.roles.includes('root');
+    const byRole = effect.roles ? bonesWithRoles(bodyPlan, roleMask(effect.roles)).filter((bone) => !(asksBodyRoot && bodyPlan.boneNames[bone].includes('/'))) : [];
     const prefixes = effect.part
       ? Object.keys(bodyPlan.filled)
           .filter((path) => bodyPlan.filled[path] === effect.part)

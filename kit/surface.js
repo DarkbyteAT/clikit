@@ -58,9 +58,10 @@
 
   const axisOf = (frame) => {
     if (frame.axis !== undefined) return frame.axis;
-    const sizes = frame.end.map(Math.abs);
-    const largest = Math.max(...sizes);
-    return largest > 0 ? sizes.indexOf(largest) : 1;
+    // Asked per point by `along` (thousands of times per sculpted layer): no allocation. Ties go to the lower axis.
+    const [sizeX, sizeY, sizeZ] = [Math.abs(frame.end[0]), Math.abs(frame.end[1]), Math.abs(frame.end[2])];
+    if (sizeX === 0 && sizeY === 0 && sizeZ === 0) return 1;
+    return sizeX >= sizeY && sizeX >= sizeZ ? 0 : sizeY >= sizeZ ? 1 : 2;
   };
   /**
    * The direction a lathe's profile and an extrude's outline run along the long axis: always the positive way,
@@ -281,10 +282,13 @@
    * @example Kit.surface.along({ end: [0, -0.4, 0] }, 0.05, -0.2, 0) // [0.5, ~1.571]: half-way down, at the left side
    */
   const along = (frame, x, y, z, out = [0, 0]) => {
-    const axis = axisOf(frame);
-    const [endX, endY, endZ] = frame.end;
+    const around = AROUND[axisOf(frame)];
+    const endX = frame.end[0];
+    const endY = frame.end[1];
+    const endZ = frame.end[2];
     const lengthSquared = endX * endX + endY * endY + endZ * endZ;
-    const [front, side] = AROUND[axis];
+    const front = around[0];
+    const side = around[1];
     // Hot for a renderer that samples many points: no allocation when `out` is passed.
     out[0] = lengthSquared > 0 ? Math.max(0, Math.min(1, (x * endX + y * endY + z * endZ) / lengthSquared)) : 0;
     out[1] = Math.atan2(componentOf(side, x, y, z), componentOf(front, x, y, z));

@@ -186,7 +186,14 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
   });
 
   test('figure layout: a limb`s segments share an ink group, sides and parts do not, and a part keeps its group', () => {
-    const groupsOf = (recipe) => new Map(figure.layout(bakery.bakeRecipe(recipe)).pieces.map((piece) => [piece.id, piece.inkGroup]));
+    // The sample human has a face now: its stamps (eyes, a mouth) are glows, which is what group 0 is for.
+    const groupsOf = (recipe) =>
+      new Map(
+        figure
+          .layout(bakery.bakeRecipe(recipe))
+          .pieces.filter((piece) => !piece.stamps)
+          .map((piece) => [piece.id, piece.inkGroup])
+      );
     const bare = groupsOf({ species: 'human', seed: 4, overrides: { 'fill:headTop': 'hat', 'fill:handRight': null } });
     const armed = groupsOf({ species: 'human', seed: 4, overrides: { 'fill:headTop': 'hat', 'fill:handRight': 'sword' } });
     assert.strictEqual(bare.get('upperArmLeft'), bare.get('forearmLeft'));

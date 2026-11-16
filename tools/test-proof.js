@@ -33,6 +33,19 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       assert.strictEqual(proof.suite('options', catalog, { species: [species] }).cells.length, choices * proof.THREE_VIEWS.length, name);
     });
   });
+  test('proof: the worn suite turns every choice of the sockets worn round the body through eight directions, and only those sockets', () => {
+    const { catalog } = catalogs.find(({ name }) => name === 'wardrobe');
+    const editor = Kit.body.editor(catalog);
+    const [species] = catalog.speciesIds();
+    const sockets = editor.schema({ species, seed: 1 }).sockets;
+    const choicesOf = (paths) => sockets.filter((socket) => paths.includes(socket.path)).reduce((sum, socket) => sum + socket.choices.filter((choice) => choice.id).length, 0);
+    const sheet = proof.suite('worn', catalog, { species: [species] });
+    assert.ok(choicesOf(proof.WORN_SOCKETS) > 0, 'the wardrobe has such sockets');
+    assert.strictEqual(sheet.cells.length, choicesOf(proof.WORN_SOCKETS) * proof.DIRECTIONS.length);
+    assert.strictEqual(new Set(sheet.cells.slice(0, proof.DIRECTIONS.length).map((cell) => cell.yaw)).size, proof.DIRECTIONS.length, 'one choice, eight directions, the back among them');
+    assert.strictEqual(proof.suite('worn', catalog, { species: [species], sockets: ['outerwear'] }).cells.length, choicesOf(['outerwear']) * proof.DIRECTIONS.length, 'the sockets can be chosen');
+    assert.strictEqual(proof.suite('worn', catalog, { species: [species], sockets: ['nothing'] }).cells.length, 0, 'the control: a socket the body lacks adds no cells');
+  });
   test('proof: the extremes suite sets each dial to its least and most; rolls are the same every time', () => {
     const { catalog } = catalogs[0];
     const [species] = catalog.speciesIds();

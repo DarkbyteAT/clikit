@@ -8,14 +8,41 @@
  *        ready for `Kit.body.catalog`).
  * Does not own: any behaviour. There is no code here beyond freezing the tables.
  *
+ * A bone's `girth` is its mass data (kit/dynamics.js reads it) and is lean; what is drawn is its `shape` row, a
+ * stylised solid stated beside it (`drawn`, `flattened`, `fin` below), so every plan is presentable as it stands.
+ *
  * Conventions (kit/body-plan.js): metres, +Y up, +Z forward, +X the body's left. Every plan starts with a
  * `ground` bone at the origin, so a `size` dial on the root scales the whole body about the point it stands on.
  *
  * Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
  */
 (() => {
+  /**
+   * The point of a biped's ear: `stub` metres long on the plan (hidden inside the ear), and the range of the dial
+   * that multiplies it for the elf and its variants.
+   */
+  const EAR_POINT = Object.freeze({ stub: 0.007, least: 5, most: 9, usual: 7 });
+  /** How thick a fin is drawn, metres: a blade of flesh with a rounded edge, not a card. */
+  const FIN_DEPTH = 0.024;
   /** The role that goes with a side suffix: 'Left' -> 'left'. */
   const sideRoles = (side) => (side === 'Left' ? 'left' : 'right');
+
+  /** A drawn limb or trunk segment: a capsule of this radius (metres), narrowing to `taper` of it at a tail's end. */
+  const drawn = (radius, taper) => ({ kind: 'capsule', radius, ...(taper === undefined ? {} : { taper }) });
+  /**
+   * The same, pressed to `depth` of its width front to back (a torso) or `width` of it side to side (a fish).
+   * @param {number} radius metres
+   * @param {{width?: number, depth?: number, taper?: number}} [press]
+   * @returns {Object} a shape row
+   */
+  const flattened = (radius, { width = 1, depth = 1, taper } = {}) => ({ ...drawn(radius, taper), scale: [width, 1, depth] });
+  /** A shape turned about the bone's long axis from a rounded profile [[radius, along], ...] (a head, a muzzle, a hat). */
+  const round = (profile) => ({ kind: 'lathe', profile, smooth: true });
+  /** A fin or wing with thickness: an outline [[across, along], ...] in the plane of the bone's long axis and `across`. */
+  const fin = (outline, across, depth = FIN_DEPTH) => ({ kind: 'extrude', outline, depth, across });
+  const { face } = Kit.body;
+  /** How much larger than the face vocabulary's reference head each plan's head is. */
+  const FACE_SCALE = Object.freeze({ biped: 1.25, quadruped: 1.2, fish: 1.3 });
 
   /** The three bones of a biped arm (and, below, leg) for one side; `side` is 'Left' or 'Right', `sign` +1 or -1 on X. */
   const bipedArm = (side, sign) => [
@@ -25,6 +52,7 @@
       at: [0.2 * sign, 0.16, 0],
       roles: ['arm', 'primary', sideRoles(side)],
       girth: 0.07,
+      shape: drawn(0.062, 0.74),
       limits: [
         [-170, 60],
         [-90, 90],
@@ -39,6 +67,7 @@
       at: [0, -0.28, 0],
       roles: ['arm', 'primary', sideRoles(side)],
       girth: 0.06,
+      shape: drawn(0.05, 0.72),
       joint: 'hinge',
       limits: [
         [-150, 0],
@@ -47,7 +76,7 @@
       ],
       paint: 'skin',
     },
-    { name: `hand${side}`, parent: `forearm${side}`, at: [0, -0.26, 0], tail: [0, -0.1, 0], roles: ['arm', 'hand', 'primary', 'tip', sideRoles(side)], girth: 0.05, paint: 'skin' },
+    { name: `hand${side}`, parent: `forearm${side}`, at: [0, -0.26, 0], tail: [0, -0.1, 0], roles: ['arm', 'hand', 'primary', 'tip', sideRoles(side)], girth: 0.05, shape: { kind: 'sphere', radius: 0.066, at: [0, -0.055, 0.004], scale: [0.5, 1.2, 0.9] }, paint: 'skin' },
   ];
   const bipedLeg = (side, sign) => [
     {
@@ -56,6 +85,7 @@
       at: [0.1 * sign, -0.05, 0],
       roles: ['leg', 'primary', sideRoles(side)],
       girth: 0.1,
+      shape: drawn(0.098, 0.7),
       limits: [
         [-120, 45],
         [-40, 40],
@@ -64,7 +94,7 @@
       paint: 'cloth',
     },
     // A knee folds the shin backwards: the default hinge, 0 to 150 degrees about X.
-    { name: `shin${side}`, parent: `thigh${side}`, at: [0, -0.45, 0], roles: ['leg', 'primary', sideRoles(side)], girth: 0.08, joint: 'hinge', paint: 'cloth' },
+    { name: `shin${side}`, parent: `thigh${side}`, at: [0, -0.45, 0], roles: ['leg', 'primary', sideRoles(side)], girth: 0.08, shape: drawn(0.074, 0.62), joint: 'hinge', paint: 'cloth' },
     {
       name: `foot${side}`,
       parent: `shin${side}`,
@@ -72,7 +102,8 @@
       tail: [0, 0, 0.16],
       roles: ['leg', 'foot', 'primary', 'tip', sideRoles(side)],
       girth: 0.06,
-      shape: { kind: 'box', size: [0.09, 0.06, 0.22], at: [0, 0, 0.07] },
+      // A rounded shoe: a ball pressed flat and drawn out forwards.
+      shape: { kind: 'sphere', radius: 0.082, at: [0, 0.008, 0.062], scale: [0.72, 0.62, 1.65] },
     },
   ];
   /** A quadruped leg; `end` is 'front' or 'hind', `hip` the bone it hangs from. */
@@ -80,9 +111,9 @@
     const prefix = `${end}${side}`;
     const roles = ['leg', end, sideRoles(side), ...(end === 'hind' ? ['primary'] : [])];
     return [
-      { name: `${prefix}Upper`, parent: hip, at: [0.12 * sign, -0.06, 0], roles, girth: 0.08 },
-      { name: `${prefix}Lower`, parent: `${prefix}Upper`, at: [0, -0.27, 0], roles, girth: 0.06 },
-      { name: `${prefix}Paw`, parent: `${prefix}Lower`, at: [0, -0.25, 0], tail: [0, 0, 0.08], roles: [...roles, 'foot', 'tip'], girth: 0.05 },
+      { name: `${prefix}Upper`, parent: hip, at: [0.12 * sign, -0.06, 0], roles, girth: 0.08, shape: drawn(end === 'hind' ? 0.086 : 0.066, 0.58) },
+      { name: `${prefix}Lower`, parent: `${prefix}Upper`, at: [0, -0.27, 0], roles, girth: 0.06, shape: drawn(0.04, 0.85) },
+      { name: `${prefix}Paw`, parent: `${prefix}Lower`, at: [0, -0.25, 0], tail: [0, 0, 0.08], roles: [...roles, 'foot', 'tip'], girth: 0.05, shape: { kind: 'sphere', radius: 0.054, at: [0, -0.002, 0.036], scale: [0.92, 0.6, 1.35] } },
     ];
   };
 
@@ -90,19 +121,21 @@
    * Body plans by id, as `BodyPlanSpec` rows without their id (the catalogue adds it).
    * biped: 18 bones, hands that grip. quadruped: 23 bones, four legs, a tail, a mouth that grips. fish: 11 bones,
    * no limbs at all: a spine, fins and a tail.
-   * @type {Object<string, {bones: Object[], sockets: Object[]}>}
+   * @type {Object<string, {bones?: Object[], sockets?: Object[], extends?: string, anchors?: Object, features?: Object[]}>}
    */
   const PLANS = {
     biped: {
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
-        { name: 'pelvis', parent: 'ground', at: [0, 0.92, 0], roles: ['spine'], girth: 0.16, joint: 'free', paint: 'cloth' },
+        { name: 'pelvis', parent: 'ground', at: [0, 0.92, 0], roles: ['spine'], girth: 0.16, shape: flattened(0.162, { depth: 0.74 }), joint: 'free', paint: 'cloth' },
         {
           name: 'waist',
           parent: 'pelvis',
           at: [0, 0.18, 0],
           roles: ['spine'],
           girth: 0.15,
+          // Drawn in at the waist, between wider hips and a wider chest.
+          shape: flattened(0.128, { depth: 0.74 }),
           limits: [
             [-30, 45],
             [-30, 30],
@@ -116,6 +149,8 @@
           at: [0, 0.2, 0],
           roles: ['spine'],
           girth: 0.18,
+          // A broad ribcage: the shoulders are its links out to the arms.
+          shape: flattened(0.182, { depth: 0.66 }),
           limits: [
             [-20, 30],
             [-30, 30],
@@ -129,6 +164,7 @@
           at: [0, 0.22, 0],
           roles: ['neck'],
           girth: 0.05,
+          shape: drawn(0.052),
           limits: [
             [-40, 40],
             [-60, 60],
@@ -149,7 +185,16 @@
             [-20, 20],
           ],
           paint: 'skin',
-          shape: { kind: 'sphere', radius: 0.12, at: [0, 0.11, 0] },
+          // A skull that narrows to a jaw and sits down over the neck, turned from one rounded profile.
+          shape: round([
+            [0.062, -0.03],
+            [0.094, 0.025],
+            [0.116, 0.1],
+            [0.122, 0.165],
+            [0.104, 0.225],
+            [0.058, 0.262],
+            [0, 0.27],
+          ]),
         },
         ...bipedArm('Left', 1),
         ...bipedArm('Right', -1),
@@ -166,20 +211,32 @@
     quadruped: {
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
-        { name: 'hips', parent: 'ground', at: [0, 0.58, -0.35], roles: ['spine'], girth: 0.14, joint: 'free', paint: 'skin' },
-        { name: 'belly', parent: 'hips', at: [0, 0, 0.35], roles: ['spine'], girth: 0.17 },
-        { name: 'shoulders', parent: 'belly', at: [0, 0, 0.35], roles: ['spine'], girth: 0.16 },
-        { name: 'neck', parent: 'shoulders', at: [0, 0.14, 0.14], roles: ['neck'], girth: 0.08 },
-        { name: 'head', parent: 'neck', at: [0, 0.1, 0.14], tail: [0, 0, 0.24], roles: ['head'], girth: 0.12 },
-        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.06], tail: [0, 0, 0.16], roles: ['jaw'], girth: 0.04 },
+        { name: 'hips', parent: 'ground', at: [0, 0.58, -0.35], roles: ['spine'], girth: 0.14, shape: flattened(0.13, { width: 0.84 }), joint: 'free', paint: 'skin' },
+        { name: 'belly', parent: 'hips', at: [0, 0, 0.35], roles: ['spine'], girth: 0.17, shape: flattened(0.118, { width: 0.86 }) },
+        { name: 'shoulders', parent: 'belly', at: [0, 0, 0.35], roles: ['spine'], girth: 0.16, shape: flattened(0.158, { width: 0.76 }) },
+        { name: 'neck', parent: 'shoulders', at: [0, 0.14, 0.14], roles: ['neck'], girth: 0.08, shape: drawn(0.09, 0.82) },
+        { name: 'head', parent: 'neck', at: [0, 0.1, 0.14], tail: [0, 0, 0.24], roles: ['head'],
+          girth: 0.12,
+          // A skull that steps down to a muzzle, turned about the bone (it points forward).
+          shape: round([
+            [0.06, -0.055],
+            [0.098, 0.005],
+            [0.096, 0.07],
+            [0.064, 0.118],
+            [0.052, 0.19],
+            [0.044, 0.24],
+            [0, 0.256],
+          ]),
+        },
+        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.06], tail: [0, 0, 0.16], roles: ['jaw'], girth: 0.04, shape: drawn(0.034, 0.7) },
         ...quadrupedLeg('front', 'shoulders', 'Left', 1),
         ...quadrupedLeg('front', 'shoulders', 'Right', -1),
         ...quadrupedLeg('hind', 'hips', 'Left', 1),
         ...quadrupedLeg('hind', 'hips', 'Right', -1),
         // A tail is loose: low stiffness and under-damped, so a spring or chain driving it wags.
-        { name: 'tailBase', parent: 'hips', at: [0, 0.06, -0.1], roles: ['tail'], girth: 0.05, stiffness: 40, damping: 0.5, paint: 'skin' },
-        { name: 'tailMiddle', parent: 'tailBase', at: [0, 0.04, -0.2], roles: ['tail'], girth: 0.04, stiffness: 30, damping: 0.4, paint: 'skin' },
-        { name: 'tailEnd', parent: 'tailMiddle', at: [0, 0.03, -0.2], tail: [0, 0.02, -0.18], roles: ['tail', 'tip'], girth: 0.03, stiffness: 20, damping: 0.4, paint: 'skin' },
+        { name: 'tailBase', parent: 'hips', at: [0, 0.06, -0.1], roles: ['tail'], girth: 0.05, shape: drawn(0.036, 1.3), stiffness: 40, damping: 0.5, paint: 'skin' },
+        { name: 'tailMiddle', parent: 'tailBase', at: [0, 0.04, -0.2], roles: ['tail'], girth: 0.04, shape: drawn(0.047, 0.9), stiffness: 30, damping: 0.4, paint: 'skin' },
+        { name: 'tailEnd', parent: 'tailMiddle', at: [0, 0.03, -0.2], tail: [0, 0.02, -0.18], roles: ['tail', 'tip'], girth: 0.03, shape: drawn(0.042, 0.15), stiffness: 20, damping: 0.4, paint: 'skin' },
       ],
       sockets: [
         { name: 'headTop', bone: 'head', type: 'headTop', at: [0, 0.1, 0.06] },
@@ -190,12 +247,12 @@
     fish: {
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
-        { name: 'trunk', parent: 'ground', at: [0, 0.5, 0], roles: ['spine'], girth: 0.16, joint: 'free', paint: 'skin' },
-        { name: 'head', parent: 'trunk', at: [0, 0, 0.24], tail: [0, 0, 0.2], roles: ['head'], girth: 0.13 },
-        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.1], tail: [0, 0, 0.1], roles: ['jaw'], girth: 0.03 },
-        { name: 'rear', parent: 'trunk', at: [0, 0, -0.24], roles: ['spine'], girth: 0.12 },
-        { name: 'tailRoot', parent: 'rear', at: [0, 0, -0.2], roles: ['tail'], girth: 0.07 },
-        { name: 'tailStalk', parent: 'tailRoot', at: [0, 0, -0.16], roles: ['tail'], girth: 0.04 },
+        { name: 'trunk', parent: 'ground', at: [0, 0.5, 0], roles: ['spine'], girth: 0.16, shape: flattened(0.185, { width: 0.5 }), joint: 'free', paint: 'skin' },
+        { name: 'head', parent: 'trunk', at: [0, 0, 0.24], tail: [0, 0, 0.2], roles: ['head'], girth: 0.13, shape: flattened(0.172, { width: 0.5, taper: 0.62 }) },
+        { name: 'jaw', parent: 'head', at: [0, -0.05, 0.1], tail: [0, 0, 0.1], roles: ['jaw'], girth: 0.03, shape: drawn(0.034, 0.7) },
+        { name: 'rear', parent: 'trunk', at: [0, 0, -0.24], roles: ['spine'], girth: 0.12, shape: flattened(0.155, { width: 0.46 }) },
+        { name: 'tailRoot', parent: 'rear', at: [0, 0, -0.2], roles: ['tail'], girth: 0.07, shape: flattened(0.105, { width: 0.44 }) },
+        { name: 'tailStalk', parent: 'tailRoot', at: [0, 0, -0.16], roles: ['tail'], girth: 0.04, shape: flattened(0.055, { width: 0.5 }) },
         {
           name: 'tailFin',
           parent: 'tailStalk',
@@ -205,22 +262,167 @@
           girth: 0.2,
           shape: {
             kind: 'extrude',
+            // A forked tail: an arrowhead cut in at the back.
             outline: [
               [0, 0],
               [0.12, -0.22],
               [0, -0.16],
               [-0.12, -0.22],
             ],
-            depth: 0.01,
+            depth: FIN_DEPTH,
           },
         },
-        { name: 'dorsalFin', parent: 'trunk', at: [0, 0.14, -0.02], tail: [0, 0.16, -0.1], roles: ['fin'], girth: 0.02 },
-        { name: 'sideFinLeft', parent: 'trunk', at: [0.11, -0.04, 0.1], tail: [0.16, -0.06, -0.08], roles: ['fin', 'left', 'primary'], girth: 0.02 },
-        { name: 'sideFinRight', parent: 'trunk', at: [-0.11, -0.04, 0.1], tail: [-0.16, -0.06, -0.08], roles: ['fin', 'right', 'primary'], girth: 0.02 },
+        // Fins are flat outlines: the dorsal fin stands in the plane of the body, the side fins lie out from it.
+        {
+          name: 'dorsalFin',
+          parent: 'trunk',
+          at: [0, 0.14, -0.02],
+          tail: [0, 0.16, -0.1],
+          roles: ['fin'],
+          girth: 0.02,
+          shape: fin(
+            [
+              [0.16, -0.05],
+              [0.03, 0.19],
+              [-0.08, 0.17],
+              [-0.18, 0.1],
+              [-0.25, 0.08],
+              [-0.25, -0.05],
+            ],
+            'z'
+          ),
+        },
+        {
+          name: 'sideFinLeft',
+          parent: 'trunk',
+          at: [0.08, -0.04, 0.1],
+          tail: [0.16, -0.06, -0.08],
+          roles: ['fin', 'left', 'primary'],
+          girth: 0.02,
+          shape: fin(
+            [
+              [0.06, 0],
+              [0.01, 0.22],
+              [-0.14, 0.2],
+              [-0.06, 0],
+            ],
+            'z'
+          ),
+        },
+        {
+          name: 'sideFinRight',
+          parent: 'trunk',
+          at: [-0.08, -0.04, 0.1],
+          tail: [-0.16, -0.06, -0.08],
+          roles: ['fin', 'right', 'primary'],
+          girth: 0.02,
+          shape: fin(
+            [
+              [0.06, 0],
+              [0.01, -0.22],
+              [-0.14, -0.2],
+              [-0.06, 0],
+            ],
+            'z'
+          ),
+        },
       ],
       sockets: [{ name: 'back', bone: 'trunk', type: 'back', at: [0, 0.14, 0.06] }],
     },
   };
+
+  /**
+   * The faces of the plans, by plan: where each head keeps its features (`anchors`) and what every individual
+   * carries there, through the shared face vocabulary (kit/body-face.js). The bare plans above stay bare (they
+   * are fixtures); `PLANS.<plan>Faced` extends the same skeleton with its face, and is what the species are built on.
+   * @type {Object<string, {anchors: Object, features: Object[]}>}
+   */
+  const FACES = {
+    biped: {
+      // A face through the shared vocabulary (kit/body-face.js): where this head keeps its features, then the
+      // relief every biped has and the plainest eyes and mouth. The ear's point is a stub hidden in a round ear; the
+      // pointed-eared species draw it out with a dial (`EAR_POINT`).
+      anchors: face.anchors('head', { eye: { elevation: 3, spacing: 52 }, brow: { elevation: 20, spacing: 54 }, nose: { elevation: -14 }, mouth: { elevation: -33 }, ear: { elevation: -3, spacing: 176 }, cheek: { elevation: -22, spacing: 78 }, chin: { elevation: -53 } }),
+      features: [
+        ...face.dotEyes(0.019, { scale: FACE_SCALE.biped }),
+        ...face.eyeSockets([0.03, 0.03], { scale: FACE_SCALE.biped }),
+        ...face.lineMouth([0.036, 0.012], { scale: FACE_SCALE.biped }),
+        ...face.lips([0.036, 0.012], { scale: FACE_SCALE.biped }),
+        ...face.browRidge({ scale: FACE_SCALE.biped }),
+        ...face.cheeks({ scale: FACE_SCALE.biped }),
+        ...face.chin({ scale: FACE_SCALE.biped }),
+        ...face.nose('straight', { scale: FACE_SCALE.biped }),
+        ...face.ears({ height: 0.05, width: 0.03, point: { length: EAR_POINT.stub, back: 0.004, radius: 0.0085 } }, { scale: FACE_SCALE.biped }),
+      ],
+    },
+    quadruped: {
+      // The head points forward and its anchors are counted from the middle of its shape, which lies in the
+      // muzzle: the eyes sit on the slope where the skull drops to the muzzle, the ears behind them on the crown,
+      // the nose on the muzzle's end. The same vocabulary, other anchors.
+      anchors: face.anchors('head', { eye: { elevation: 40, spacing: 180 }, brow: { elevation: 58, spacing: 196 }, nose: { elevation: 0 }, mouth: { elevation: -18 }, ear: { elevation: 62, spacing: 250 }, cheek: { elevation: -10, spacing: 150 }, chin: { elevation: -40 } }),
+      features: [
+        ...face.dotEyes(0.02, { scale: FACE_SCALE.quadruped }),
+        ...face.eyeSockets([0.024, 0.024], { scale: FACE_SCALE.quadruped, depth: 0.002 }),
+        ...face.browRidge({ scale: FACE_SCALE.quadruped }),
+        // The end of the muzzle is the nose's shape already: a dark pad on its upper half.
+        ...face.nosePad([0.04, 0.03], { scale: FACE_SCALE.quadruped, elevation: 7 }),
+        // Pricked ears: a broad plate each, drawn to a point, standing well off the skull.
+        ...face.ears({ height: 0.06, width: 0.05, thickness: 0.014, flare: 62, lobe: false, point: { length: 0.07, back: 0.012, radius: 0.016 } }, { scale: FACE_SCALE.quadruped }),
+      ],
+    },
+    fish: {
+      // The trunk swallows the back half of the head, so the face is kept to the front of it: an eye on each
+      // side and a gill line pressed in behind each, where head meets trunk. The face vocabulary on a fish.
+      anchors: face.anchors('head', { eye: { elevation: 16, spacing: 50 }, cheek: { elevation: -4, spacing: 84 }, nose: { elevation: 0 }, mouth: { elevation: -10 }, ear: { elevation: 0, spacing: 180 }, brow: { elevation: 30, spacing: 60 }, chin: { elevation: -40 } }),
+      features: [...face.dotEyes(0.026, { scale: FACE_SCALE.fish }), { id: 'gill', anchor: 'cheek', size: [0.03, 0.2], carve: true, blend: 0.008, shape: { kind: 'sphere', radius: 0.1, scale: [0.14, 1, 0.16], at: [0, 0, 0.004] } }],
+    },
+  };
+  Object.keys(FACES).forEach((id) => {
+    PLANS[`${id}Faced`] = { extends: id, ...FACES[id] };
+  });
+
+  /** How thick a wing is drawn, metres: a mass of feathers, not a card. */
+  const WING_DEPTH = 0.046;
+  /** Where a left wing's wrist is from its shoulder, [out, up, back]: above and behind the shoulder, so a wing at rest is folded. */
+  const WING_WRIST = [0.2, 0.3, -0.06];
+  /**
+   * A left wing folded at rest, in two masses; the right wing mirrors `out`. `WING_ARM`: the arm and the short
+   * feathers under it, [up, out] from the shoulder: it rises to the wrist above the shoulder and its lower edge
+   * is cut into feather tips. `WING_HAND`: the long flight feathers, [out, up] from the wrist: they hang down the
+   * back past the hip and end in three tips.
+   */
+  const WING_ARM = [
+    [0.06, 0],
+    [0.26, 0.1],
+    [0.36, 0.2],
+    [0.3, 0.27],
+    [0.12, 0.29],
+    [-0.1, 0.27],
+    [-0.3, 0.24],
+    [-0.22, 0.2],
+    [-0.38, 0.17],
+    [-0.28, 0.12],
+    [-0.4, 0.09],
+    [-0.26, 0.04],
+    [-0.3, 0],
+    [-0.05, -0.02],
+  ];
+  const WING_HAND = [
+    [-0.06, 0.02],
+    [0.04, 0.06],
+    [0.09, -0.05],
+    [0.1, -0.4],
+    [0.08, -0.78],
+    [0.04, -0.98],
+    [0.01, -0.8],
+    [-0.02, -0.9],
+    [-0.05, -0.7],
+    [-0.08, -0.76],
+    [-0.1, -0.5],
+    [-0.1, -0.2],
+  ];
+  /** Where the flight feathers end from the wrist, [out, up, back]: the hand's long axis. */
+  const WING_TIP = [0.03, -0.95, -0.03];
 
   /**
    * Parts by id, as `PartSpec` rows without their id.
@@ -274,10 +476,13 @@
             kind: 'lathe',
             profile: [
               [0.17, 0],
-              [0.16, 0.02],
+              [0.175, 0.012],
+              [0.16, 0.024],
               [0.09, 0.04],
             ],
+            smooth: true,
           },
+          wear: 'solid',
         },
         {
           name: 'crown',
@@ -295,17 +500,20 @@
               [0.04, 0.16],
               [0, 0.16],
             ],
+            smooth: true,
           },
+          wear: 'solid',
         },
       ],
     },
     wings: {
       fits: ['back'],
       bones: [
-        { name: 'wingLeft', at: [0.06, 0, 0], roles: ['wing', 'left'], girth: 0.04 },
-        { name: 'wingLeftTip', parent: 'wingLeft', at: [0.42, 0.22, -0.06], tail: [0.3, -0.34, -0.04], roles: ['wing', 'left', 'tip'], girth: 0.03 },
-        { name: 'wingRight', at: [-0.06, 0, 0], roles: ['wing', 'right'], girth: 0.04 },
-        { name: 'wingRightTip', parent: 'wingRight', at: [-0.42, 0.22, -0.06], tail: [-0.3, -0.34, -0.04], roles: ['wing', 'right', 'tip'], girth: 0.03 },
+        // Each wing is two masses of feathers: an arm up to the wrist, and a hand whose long feathers hang down from it.
+        { name: 'wingLeft', at: [0.06, 0, 0], roles: ['wing', 'left'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, out]), 'y', WING_DEPTH), wear: 'solid' },
+        { name: 'wingLeftTip', parent: 'wingLeft', at: WING_WRIST, tail: WING_TIP, roles: ['wing', 'left', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [out, up]), 'x', WING_DEPTH), wear: 'solid' },
+        { name: 'wingRight', at: [-0.06, 0, 0], roles: ['wing', 'right'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, -out]), 'y', WING_DEPTH), wear: 'solid' },
+        { name: 'wingRightTip', parent: 'wingRight', at: [-WING_WRIST[0], WING_WRIST[1], WING_WRIST[2]], tail: [-WING_TIP[0], WING_TIP[1], WING_TIP[2]], roles: ['wing', 'right', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [-out, up]), 'x', WING_DEPTH), wear: 'solid' },
       ],
     },
   };
@@ -372,7 +580,7 @@
     humanoid: {
       parent: 'creature',
       set: {
-        plan: 'biped',
+        plan: 'bipedFaced',
         dials: { ...LIMB_DIALS, armLength: { min: 0.9, max: 1.15, affects: [{ roles: ['arm'], channel: 'length' }] } },
         colors: { cloth: 'dyes', metal: 'metals' },
         // A roll rule (kit/body-recipe.js): cloth is rolled to stand apart from the skin it lies against. These
@@ -383,14 +591,14 @@
       limits: { 'dials.height': { min: 0.6, max: 1.4 } },
     },
     human: { parent: 'humanoid', traits: ['armed'], set: { code: 1 } },
-    elf: { parent: 'humanoid', traits: ['slender'], set: { code: 2, dials: { height: { min: 1, max: 1.3 }, legLength: { min: 1, max: 1.25 } } } },
+    elf: { parent: 'humanoid', traits: ['slender'], set: { code: 2, dials: { height: { min: 1, max: 1.3 }, legLength: { min: 1, max: 1.25 }, earPoint: { min: EAR_POINT.least, max: EAR_POINT.most, default: EAR_POINT.usual, affects: [{ feature: 'earTip', param: 'size.1' }] } } } },
     seraph: { parent: 'elf', traits: ['winged'], set: { code: 3 } },
     beast: {
       parent: 'creature',
-      set: { plan: 'quadruped', dials: { ...LIMB_DIALS, tailLength: { min: 0.6, max: 1.6, shape: 'uniform', affects: [{ roles: ['tail'], channel: 'length' }] } }, colors: { skin: 'furs' } },
+      set: { plan: 'quadrupedFaced', dials: { ...LIMB_DIALS, tailLength: { min: 0.6, max: 1.6, shape: 'uniform', affects: [{ roles: ['tail'], channel: 'length' }] } }, colors: { skin: 'furs' } },
     },
     hound: { parent: 'beast', set: { code: 4, fills: { mouth: { sword: 1, none: 9 } } } },
-    swimmer: { parent: 'creature', set: { plan: 'fish', dials: { finSize: { min: 0.7, max: 1.6, affects: [{ roles: ['fin'], channel: 'size' }] } }, colors: { skin: 'scales' } } },
+    swimmer: { parent: 'creature', set: { plan: 'fishFaced', dials: { finSize: { min: 0.7, max: 1.6, affects: [{ roles: ['fin'], channel: 'size' }] } }, colors: { skin: 'scales' } } },
     carp: { parent: 'swimmer', set: { code: 5 } },
   };
 

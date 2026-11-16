@@ -56,6 +56,13 @@
   const DRAFT_KEY = 'draft';
   /** A change is written to the draft after this many seconds of quiet. */
   const DRAFT_DELAY_SECONDS = 1.5;
+  /** Seconds without an edit before the body's sculpted surfaces are made again (during a drag the skeleton bends them). */
+  const SCULPT_DELAY_SECONDS = 0.18;
+  /**
+   * Sculpting takes this share of a frame's time, within [least, most] milliseconds: 6 ms of a 16 ms frame, and
+   * more of a frame that is slow anyway (a software renderer), so the work ends in about the same wall time.
+   */
+  const SCULPT_SLICE = Object.freeze({ share: 0.4, least: 6, most: 60 });
   /** Share of the screen the panel takes: the height in portrait, the width in landscape (CSS clamp bounds). */
   const PANEL_SIZE = Object.freeze({ portraitHeight: 'clamp(300px, 50dvh, 520px)', landscapeWidth: 'clamp(320px, 44vw, 460px)' });
   const MS_PER_SECOND = 1000;
@@ -145,7 +152,7 @@
     let drawnRecipe = session.recipe();
     let bake = bakery.bakeRecipe(drawnRecipe);
     // Faces and clothes come through the figure's default hooks (`Kit.body.FIGURE_HOOKS`), which read the bake being drawn.
-    const figure = Kit.figure.build(view, bake, { cache });
+    const figure = Kit.figure.build(view, bake, { cache, sculpt: 'steps' });
 
     // ---- state the interface reads ----
     const held = signal(false);
@@ -160,10 +167,12 @@
     };
     const status = signal(statusNow());
     const latencies = [];
-    const measurement = { applyMs: 0, flushMs: 0, inputToApplyMs: 0, applied: 0 };
+    const measurement = { applyMs: 0, flushMs: 0, inputToApplyMs: 0, applied: 0, sculptMs: 0, sculpted: 0, longestSliceMs: 0 };
     let lastInputAt = 0;
     let isDraftDirty = false;
-    let quietSeconds = 0;
+    let quietSeconds = SCULPT_DELAY_SECONDS;
+    /** Time spent so far in the slices of the sculpt under way. */
+    let sculptingMs = 0;
 
     const afterEdit = () => {
       status.value = statusNow();
@@ -261,7 +270,8 @@
     const showRecipe = (recipe) => {
       const startedAt = performance.now();
       const next = bakery.bakeRecipe(recipe);
-      figure.setBake(next, editor.changes(bake, next));
+      // `settle: false`: a dial drag bends the sculpted surfaces at once; `update` sculpts them when the drag rests.
+      figure.setBake(next, editor.changes(bake, next), { settle: false });
       bake = next;
       drawnRecipe = recipe;
       const finishedAt = performance.now();
@@ -308,6 +318,19 @@
         director.step(dt, reducedMotion.matches);
         quietSeconds += dt;
         if (isDraftDirty && quietSeconds >= DRAFT_DELAY_SECONDS) saveDraft();
+        if (quietSeconds >= SCULPT_DELAY_SECONDS && !figure.isSettled()) {
+          // A slice a frame: the first sculpt of a page (cold code, about a second in all) never holds input.
+          const startedAt = performance.now();
+          const isDone = figure.settle(Math.min(SCULPT_SLICE.most, Math.max(SCULPT_SLICE.least, dt * 1000 * SCULPT_SLICE.share)));
+          const sliceMs = performance.now() - startedAt;
+          measurement.longestSliceMs = Math.max(measurement.longestSliceMs, sliceMs);
+          sculptingMs += sliceMs;
+          if (isDone) {
+            measurement.sculptMs = sculptingMs;
+            measurement.sculpted += 1;
+            sculptingMs = 0;
+          }
+        }
       },
       render() {
         watchStage();

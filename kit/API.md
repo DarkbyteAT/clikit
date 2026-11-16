@@ -73,6 +73,8 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [body-recipe.js](#body-recipejs) (0) - Kit body recipe: an individual as three small things, `{ species, seed, overrides }`, and everything needed to turn that into a body and bac
 - [body-edit.js](#body-editjs) (0) - Kit body edit: everything a character editor needs from a catalogue, with no editor in it.
 - [body-store.js](#body-storejs) (0) - Kit body store: many body instances as columns - where each is, which way it faces, how far through its movement cycle it is, how much detai
+- [body-face.js](#body-facejs) (0) - Kit body face: a face as relief, as data.
+- [body-hair.js](#body-hairjs) (0) - Kit body hair: hair as a small vocabulary of shapes, as data.
 - [body-samples.js](#body-samplesjs) (0) - Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a one-bone sword with grip and gem soc
 - [body-wardrobe.js](#body-wardrobejs) (0) - Kit body wardrobe: an original, generic humanoid catalogue for a character creator, as data.
 - [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
@@ -85,6 +87,11 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [look-show.js](#look-showjs) (0) - Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from primitives, each with its own 
 - [figure-shapes.js](#figure-shapesjs) (0) - Kit figure shapes: the surface of one bone, as plain arrays.
 - [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
+- [sculpt.js](#sculptjs) (21) - Kit sculpt: smooth surfaces from simple solids.
+- [drape.js](#drapejs) (13) - Kit drape: cloth that hangs on a body, as plain geometry.
+- [sculpt-relief.js](#sculpt-reliefjs) (0) - Kit sculpt relief: one solid modelled out of another.
+- [figure-detail.js](#figure-detailjs) (0) - Kit figure detail: which level of detail a figure needs for how large it is drawn, chosen so that nobody has to pass one.
+- [figure-sculpt.js](#figure-sculptjs) (0) - Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone.
 - [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
 - [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
 - [motion.js](#motionjs) (29) - Kit motion: movement as small stages that compose.
@@ -97,7 +104,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
 - [body-portrait.js](#body-portraitjs) (4) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
-- [body-proof.js](#body-proofjs) (11) - Kit body proof: coverage sheets for judging the body system by eye.
+- [body-proof.js](#body-proofjs) (12) - Kit body proof: coverage sheets for judging the body system by eye.
 - [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
 - [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
 - [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
@@ -7345,6 +7352,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[filled]` *Object\<string, string\>* - socket name -> part id, written by `Kit.body.assemble`
   - `[features]` *Object[]* - surface features (eyes, a nose, a scar) placed on bones by azimuth and elevation: `FeatureSpec` rows of kit/body-surface.js, kept as data on `spec` and laid out by that file
   - `[regions]` *Object[]* - painted areas of bones (a sleeve, a hairline, stripes): `RegionSpec` rows of kit/body-surface.js, kept as data on `spec`
+  - `[anchors]` *Object\<string, Object\>* - named places on this body's bones (an eye, a nose, an ear): `AnchorSpec` rows of kit/body-surface.js by name, kept as data on `spec`. A feature that names an anchor sits there, so a nose made for one head sits right on any head that says where its nose is
 - **BodyPlan**
   - `id` *string*
   - `spec` *BodyPlanSpec* - the data it was compiled from, so a plan can be extended and recompiled
@@ -7484,6 +7492,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 - **FeatureSpec**
   - `id` *string* - what dials and animators call it ('eye', 'mouth'); several features may share an id
   - `[bone]` *string* - the bone it sits on (a part's features default to the bone of the socket it is in)
+  - `[anchor]` *string* - a named place of the plan (`AnchorSpec`, `plan.spec.anchors`): the feature sits there. Its own `azimuth` and `elevation` are then steps away from the anchor, and it takes the anchor's `spacing` (and, on a plan, its `bone`) unless it states its own. A nose made for one head then sits right on any head that says where its nose is
   - `[azimuth=0]` *number* - degrees about the bone's +Y from its +Z (the front) towards +X (its left)
   - `[elevation=0]` *number* - degrees above the middle of the bone's shape
   - `[spacing]` *number* - degrees between the two copies of a mirrored pair (left at +spacing/2); omit for one copy
@@ -7493,7 +7502,10 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[frames]` *Object\<string, StampLayer[]\>* - frame name -> the stamp's layers, bottom first
   - `[rest]` *string* - the frame shown when nothing animates it (default: the first frame)
   - `[shape]` *Object* - a solid in the feature's own frame, metres at the authored size (`Kit.body.SHAPES` row: +X across, +Y along `up`, +Z out along the normal), for a nose or an ear that has a silhouette. A capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
-  - `[paint]` *string* - the colour channel of the solid (default 'skin')
+  - `[paint]` *string* - the colour channel of the solid (default 'skin'). A solid painted as its bone is modelled out of the bone's own surface (a relief mark, kit/sculpt-relief.js); one with another paint (a moustache) is a solid of its own lying on it
+  - `[blend]` *number* - metres: how wide a fillet joins the solid to the surface it is modelled out of (default: from its thickness)
+  - `[carve=false]` *boolean* - the solid is pressed in, not on: the bone's surface loses what it holds (an eye socket, a gill line). Never drawn as a piece of its own
+  - `[lean=[0, 0]` *number[]* - ] degrees the solid is tipped out of the surface: [about its across axis (a nose tip turned up is positive), about its up axis (an ear standing off the head)]. The right copy of a pair leans the mirrored way
   - `[glow]` *boolean* - draw it as a glow (eyes): a renderer leaves it out of outlines
   - `[under=0]` *number* - stamps of a feature with a higher `under` are drawn beneath the others on its bone whatever order the parts were attached in: blush and freckles go under the eyes
   - `[outlined=true]` *boolean* - false for a solid that should not get an outline of its own (a nose inside the face's silhouette), while still shading and inking as part of its bone
@@ -7529,6 +7541,14 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `glow` *boolean* - the feature asked to be drawn as a glow (eyes): never outlined
   - `outlined` *boolean* - false when the solid should get no outline of its own
   - `lift` *number* - metres `point` stands off the surface (already applied to it)
+  - `lean` *number[]* - radians [about across, about up] the solid is tipped by
+  - `blend` *?number* - metres, the solid's fillet when it is a relief mark; null: from its thickness
+  - `carve` *boolean* - the solid is pressed into the bone's surface
+- **AnchorSpec** - A named place on a plan's surface (`plan.spec.anchors[name]`): where this body keeps its nose, its ears, its brow.
+  - `bone` *string* - the bone it is on
+  - `[azimuth=0]` *number* - degrees, as a feature's
+  - `[elevation=0]` *number* - degrees
+  - `[spacing]` *number* - degrees between the two places of a mirrored pair (ears, eyes)
 
 ## body-recipe.js
 
@@ -7640,7 +7660,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `ramps` *ReadonlyArray\<Object\>* - the individual's ramps, one per colour channel of the species
   - `individual` *Individual*
 - **CatalogSpec**
-  - `plans` *Object\<string, Object\>* - plan id -> `BodyPlanSpec` without its id
+  - `plans` *Object\<string, Object\>* - plan id -> `BodyPlanSpec` without its id; a row may say `extends: '<plan id>'` and state only what it adds or replaces (the same skeleton with a face), one step deep
   - `[parts]` *Object\<string, Object\>* - part id -> `PartSpec` without its id
   - `nodes` *Object\<string, Object\>* - lineage nodes (kit/lineage.js) whose `set` follows `SpeciesDefinition`
   - `[traits]` *Object\<string, Object\>* - lineage traits; two traits of one node may not fill the same socket
@@ -7722,6 +7742,65 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
 
+## body-face.js
+
+> Kit body face: a face as relief, as data. A nose, a pair of ears, a brow ridge, cheeks, a chin, lips and eye
+> sockets are each a few small solids (`FeatureSpec` rows of kit/body-surface.js) that sit on a head's named
+> anchors and are modelled out of its surface when the body is sculpted (kit/sculpt-relief.js). A style is a
+> row of numbers (`NOSES`, `EARS`); a builder turns a row into features at any head size. A catalogue lists
+> them on a plan (a ridge, cheeks, a chin: every individual has them) or on a part (a nose to choose).
+>
+> Owns:  `Kit.body.face`: the style tables `NOSES` and `EARS`, the builders `nose`, `ears`, `browRidge`,
+>        `cheeks`, `chin`, `lips`, `eyeSockets`, `dotEyes`, `lineMouth` and `nosePad`, `anchors` (where a head of a given shape keeps
+>        its features) and `ANCHOR_NAMES`.
+> Does not own: placing features or dials (kit/body-surface.js), the modelling (kit/sculpt-relief.js), eye and
+>        mouth stamps of a full creator (kit/body-wardrobe.js), or any species (the catalogues).
+>
+> Conventions: lengths are metres on the reference head (`REFERENCE`: 0.21 m tall, a grown person's); every
+> builder takes `scale` for another size. A feature's solid is stated in its own frame: +X across (towards the
+> back of the head for an ear), +Y up the face, +Z out of the surface. Every solid is original and generic.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-faces.js.
+
+### Types
+
+- **NoseRow** - A nose as three masses: a bridge running down the face to the tip, the ball of the tip, and a wing each side.
+  - `length` *number* - metres the bridge runs up the face from the tip
+  - `out` *number* - metres the tip stands off the face
+  - `[drop=0]` *number* - metres the tip hangs below the nose's anchor (a hooked nose)
+  - `bridge` *number* - radius of the bridge where it starts, metres
+  - `tip` *number[]* - [across, up, out] half-sizes of the tip
+  - `[wings]` *?number[]* - [across, up, out] half-sizes of each wing; none for a nose too small to have them
+  - `[flare=14]` *number* - degrees between the two wings
+  - `[hump]` *?number* - metres a hump stands off the middle of the bridge
+- **EarRow** - An ear as a plate standing off the head, with an optional lobe and point.
+  - `height` *number* - metres, top to bottom
+  - `width` *number* - metres, front to back
+  - `[thickness=0.011]` *number* - metres
+  - `[flare=38]` *number* - degrees the plate stands off the head (its back edge out)
+  - `[lobe=true]` *boolean*
+  - `[point]` *?{length: number, back: number, radius: number}* - a tip drawn out of the top: metres up, metres towards the back of the head, and its radius where it leaves the plate
+
+## body-hair.js
+
+> Kit body hair: hair as a small vocabulary of shapes, as data. A style is a hairline (a painted, raised cap:
+> kit/region.js) plus a few primitives placed on the head by angle and height: a mass of volume, a lock, a
+> fringe of locks, a parting, a bun, a tail, a braid, sideburns, a fall of long hair. Each primitive is one or
+> more bone rows with a solid; a renderer that sculpts (kit/figure-sculpt.js) blends a style's solids into one
+> surface with creases between its clumps, and hangs a fall from the head, neck and spine.
+>
+> Owns:  `Kit.body.hair.on(head)` (the primitives, bound to a head's size and shape), `HEAD` (the reference
+>        head they default to) and `PRIMITIVES` (their names).
+> Does not own: hairlines (a part's region), which styles exist (a catalogue composes them: kit/body-wardrobe.js),
+>        how bones are sculpted or draped (`wear`, `hangs`: kit/figure-sculpt.js), or colours.
+>
+> Conventions: a place on the head is [azimuth, rise, out]: degrees round the head from the front towards the
+> body's left (180 is the back), `rise` from -1 (the chin) through 0 (the middle of the head) to 1 (the crown),
+> and metres out of the scalp. Rows are stated in the space of a socket at the middle of the head, in metres on
+> the reference head; a catalogue scales them with its other head-worn parts.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-faces.js.
+
 ## body-samples.js
 
 > Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a
@@ -7732,6 +7811,9 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 > Owns:  `Kit.body.samples.PLANS`, `PARTS`, `PALETTES`, `NODES`, `TRAITS` and `CATALOG` (the five together,
 >        ready for `Kit.body.catalog`).
 > Does not own: any behaviour. There is no code here beyond freezing the tables.
+>
+> A bone's `girth` is its mass data (kit/dynamics.js reads it) and is lean; what is drawn is its `shape` row, a
+> stylised solid stated beside it (`drawn`, `flattened`, `fin` below), so every plan is presentable as it stands.
 >
 > Conventions (kit/body-plan.js): metres, +Y up, +Z forward, +X the body's left. Every plan starts with a
 > `ground` bone at the origin, so a `size` dial on the root scales the whole body about the point it stands on.
@@ -8040,11 +8122,14 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `[emissive]` *boolean* - always the lightest tone; its ink group defaults to 0
   - `[tone]` *number* - a fixed position along the ramp, 0 (its deepest colour) .. 1 (lightest), instead of shading; it is drawn with the nearest tone the ramp has (`Kit.palette.columnAt`)
   - `[response='form']` *string* - a key of `Kit.look.RESPONSES`: how the part answers the light. 'face' is for skin that carries features (a head): the fill light keeps what is turned to the viewer at the ramp's own colour, and it is never dithered. Where a region map paints over the mesh (hair on a scalp) and on its raised shells, the part answers as a form again
+  - `[responseShare]` *boolean* - the geometry has a float `responseShare` attribute, 0..1 per vertex: how much of `response` the surface takes there, the rest being a form's (one skin that is a head and a body)
   - `[anchor]` *{value: THREE.Vector2}* - from `shading.follow(root)`: the figure this part's dither moves with
+  - `[crowdBones]` *THREE.Texture* - an InstancedMesh of one skinned surface: a float texture with a row of bone matrices per instance (4 texels a bone), which bend the geometry's `skinIndex`/`skinWeight` before the instance matrix places it (WebGL2)
   - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
   - `[inkClass=0]` *number* - 0..15. Where two classes meet on one surface (a sleeve and the skin below it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
   - `[regions]` *LookRegions* - the mesh is painted from a baked region map instead of one ramp
-  - `[blockRow]` *number* - with `regions` or `stamps`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
+  - `[vertexPaint]` *boolean* - the geometry has a three-number `vertexPaint` attribute: per vertex, its ramp slot (a row from `blockRow`, and its line class), its ink group and its flags added up (1 where it is shiny, 2 where it has no outline), instead of the part's one `ramp`, `inkClass`, `inkGroup`, `shiny` and `outlined` (several paints in one mesh, so one draw: a sculpted figure's layers)
+  - `[blockRow]` *number* - with `regions`, `stamps` or `vertexPaint`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
   - `[shell]` *number* - with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
   - `[stamps]` *boolean* - the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js `stamps`): each vertex names its slot and tone, and it is never outlined
   - `[outlined=true]` *boolean* - false: no hull outline of its own, though it keeps its ink group
@@ -8112,9 +8197,10 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
 
 - **LookView**
   - `scene` *THREE.Scene* - add figures here (through `add`); only dressed meshes belong in it
+  - `isWebGL2` *boolean* - whether the renderer is WebGL2 (a sculpted crowd needs it)
   - `atlas` *ReturnType\<typeof Kit.palette.atlas\>* - the palette table; `atlas.load(palette)` gives a figure its rows
   - `shading` *Object* - from Kit.look.shading: `shading.dress(mesh, part)`
-  - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
+  - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor). An anchor given `sized` (`{ height(): metres, resize(pixels, milliseconds), isBusy() }`) is told each frame how tall it is drawn
   - `remove` *function(THREE.Object3D): void* - take a figure's root out of the scene and drop its dither anchor
   - `use` *function(string, Object=): Object* - switch to a preset, with optional knob overrides; returns the settings
   - `set` *function(string, \*): Object* - change one knob; returns the settings
@@ -8375,6 +8461,8 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `[faces]` *ReadonlyArray\<{state: Object\<string, number\>, shape: Object}\>* - with `stamps`: the same stamps in other face states (a blink, an open mouth); `figure.face(state)` draws one in place of the piece
   - `[stamps]` *boolean* - the shape is of kind 'stamps' (flat polygons that carry their own paint): it is drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
   - `[outlined]` *boolean* - false: the piece gets no hull outline of its own (a nose inside a face)
+  - `[carve]` *boolean* - the solid is pressed into the bone's surface when the body is sculpted (an eye socket); it is never drawn as a piece
+  - `[blend]` *number* - metres: the fillet that joins the solid to its bone's surface when sculpted
 - **RegionLookup** - A point lookup `regionOf(plan, bone, x, y, z)` -> ramp index (`Kit.body.figureHooks(bake).regionOf`).
 - **FigureLayout**
   - `plan` *Object* - the bake's assembled `BodyPlan`
@@ -8396,11 +8484,781 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `centerZ` *number* - the middle of the footprint along Z
   - `reach` *number* - how far the body's footprint reaches from that middle (half its diagonal), metres: a figure turning about the middle stays inside it
   - `lowestPropY` *number* - the lowest point of a prop, or Infinity when none is worn
+- **SweptMeasure**
+  - `center` *number[]* - [x, y, z] the middle of the measured pieces' box, in the space of `world`
+  - `radius` *number* - the furthest any measured point is from `center`, metres: a ball that holds them however they are turned
+  - `sweep` *number* - the furthest any measured point is from the vertical axis through the origin, metres: what a figure turning about that axis sweeps
+  - `lowestY` *number*
+  - `highestY` *number*
 - **ViewWindow** - An orthographic camera's window onto a figure: the world point at its centre and its half extents.
   - `centerX` *number* - world units across the camera (0: the figure's vertical axis)
   - `centerY` *number* - world height of the centre
   - `halfWidth` *number*
   - `halfHeight` *number*
+
+## sculpt.js
+
+> Kit sculpt: smooth surfaces from simple solids. Several solids (capsules, balls, boxes, turned profiles, flat
+> outlines) are blended into one distance field, like clay pressed together, and the field's surface is turned
+> into one mesh whose every vertex knows which solids it belongs to. A limb then runs into a torso without a
+> seam, a layer of cloth is the same surface pushed out and cut along a hem, and a rig can bend the result by
+> its weights instead of moving rigid pieces that overlap.
+>
+> Owns:  `Kit.sculpt.distanceOf` (a shape descriptor of kit/figure-shapes.js -> a signed distance function),
+>        `solid` (a descriptor placed by a transform, with its bounds), `sample` (solids -> a `Field`: distances on
+>        a grid, blended), `surface` (a field -> positions, normals and triangles by surface nets; a `cut` trims
+>        it along any boundary, found exactly), `weights` (vertices -> the up to four owners that move each),
+>        `smoothMin` and the `DETAIL` table.
+> Does not own: what the solids are (a body's bones, a part), which layers a figure has (kit/figure-sculpt.js),
+>        THREE, or drawing.
+>
+> The field is the contract, and both of its ends can be replaced:
+>   Sources. A solid is anything that answers a signed distance at a point (`Solid.distance`), with bounds, a
+>     thinness and an owner. The analytic shapes are rows of `KINDS`; so is `grid`, distances stored on a grid
+>     (a field sampled earlier, a bake kept between sessions, the output of a learned implicit evaluated once).
+>     A new source is a new row of `KINDS` (or a `Solid` made by hand); nothing downstream asks what it was.
+>   The field. `sample` blends solids into a `Field`; `valueAt` (distance), `nearestAt` (which solid, so whose
+>     paint and whose bones) and `weights` (owners of any points) read it. None of them knows of triangles.
+>   Consumers. `surface` (surface nets) is one consumer and the only place a mesh is made. Another (points or
+>     splats laid on the zero set, a ray marcher) would read the same three functions and the band.
+>
+> Conventions: metres; a field's grid is axis-aligned in the space the solids were placed in (a body's rest
+> pose). Distances are negative inside. Triangles wind counter-clockwise seen from outside.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-sculpt.js.
+
+### `Kit.sculpt.DETAIL`
+
+Grid cell size by level of detail, metres, and the most cells along the longest side of what is sampled
+(`cellFor`): a body twice as tall is meshed with cells twice as large, so its cost and its look on screen
+stay those of a small one. A solid thinner than `FEWEST_CELLS_ACROSS` cells cannot be meshed (`isTooThin`);
+what to do with it then (kit/figure-sculpt.js leaves it a rigid piece) is the caller's choice, so one
+earring never makes a whole body's grid finer.
+
+A level is made for a size on screen (kit/figure-detail.js): at the largest a level is drawn, its cell is
+about four pixels. `error` is how far a mesh of the level may then stand off the surface it was meshed on,
+as a share of the cell (`simplify`'s tolerance: about a third of a pixel at that size, less than the chord
+of one cell across a limb), and `triangles`, where given, the most a whole figure may have whatever that
+costs in error. `far` is meshed on the cell of `low` (a coarser grid would lose the limbs) and is for a
+figure a few dozen pixels tall: a crowd.
+
+### `Kit.sculpt.KINDS`
+
+Distance functions by shape kind, each `(shape) -> (x, y, z) -> metres` in the shape's own space, before
+its `at`, `scale` and `basis`. A kind listed in `SLOPED` also writes the distance's slope into `SLOPE`.
+Adding a kind of solid means adding a row here and a builder in kit/figure-shapes.js.
+
+### `Kit.sculpt.FAR`
+
+"Far outside": the value of a node nothing was measured at, metres (its negative: far inside).
+
+### `Kit.sculpt.invertAffine(matrix)`
+
+Inverts the upper 3 x 4 of a column-major 4 x 4 affine matrix.
+
+- `matrix` *ArrayLike\<number\>* - 16 numbers, column-major
+
+**Returns** *number[]* the inverse's 12 numbers row by row (three rows of x, y, z, translation)
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.invertAffine([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 1, 0, 0, 1]) // [0.5, 0, 0, -0.5, 0, 0.5, 0, 0, 0, 0, 0.5, 0]
+```
+
+### `Kit.sculpt.smoothMin(first, second, radius)`
+
+The smaller of two distances, rounded where they meet: within `radius` of each other the result dips below
+both, which fills the crease between two solids with a fillet about that wide.
+
+- `first` *number*
+- `second` *number*
+- `radius` *number* - metres; 0 is a plain minimum (a crisp crease)
+
+**Returns** *number* never more than `radius / 4` below the smaller
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.smoothMin(0.01, 0.01, 0.04) // 0: two surfaces a centimetre away each are joined here
+```
+
+### `Kit.sculpt.polygonDistance(points, u, v)`
+
+Distance from (u, v) to a closed polygon, negative inside: the even-odd rule for the sign, nearest edge for the size.
+
+- `points` *ArrayLike\<number\>\|number[][]* - u, v per corner, flat; or [[u, v], ...]
+- `u` *number*
+- `v` *number*
+
+**Returns** *number*
+
+**Complexity** O(corners), no allocation for a flat array
+
+```js
+Kit.sculpt.polygonDistance([[0, 0], [1, 0], [1, 1], [0, 1]], 0.5, 0.5) // -0.5
+```
+
+### `Kit.sculpt.sectionTable(section, leastU = -Infinity)`
+
+The distance table of a closed flat section, shared by every shape with the same section (a dial that
+stretches a torso keeps its profile, so it keeps its table).
+
+- `section` *number[][]* - [[u, v], ...]
+- `leastU` *number* - the table starts no lower than this along u (0 for a profile turned about its axis)
+
+**Returns** *SectionTable*
+
+**Complexity** O(table nodes x corners) the first time a section is seen (about 2000 x 30), O(corners) to look it up
+
+```js
+const table = Kit.sculpt.sectionTable([[0, 0], [0.1, 0], [0.1, 0.3], [0, 0.3]], 0);
+```
+
+### `Kit.sculpt.distanceOf(shape)`
+
+The signed distance function of a shape descriptor (kit/figure-shapes.js `ShapeDescriptor`), honouring its
+`at`, `scale`, `basis` and `inflate`.
+
+- `shape` *Object* - a `ShapeDescriptor`
+
+**Returns** *function(number, number, number): number* metres, negative inside, in the descriptor's (bone) space
+
+**Complexity** O(1) to make (O(table) the first time a lathe's or an extrude's section is seen); O(1) per call
+
+```js
+Kit.sculpt.distanceOf({ kind: 'sphere', radius: 0.1, at: [0, 0.2, 0] })(0, 0.2, 0) // -0.1
+```
+
+### `Kit.sculpt.solid(shape, matrix, { owner = 0, blend = 0, positions } = {})`
+
+Places a shape in the field's space.
+
+- `shape` *Object* - a `ShapeDescriptor`
+- `matrix` *Float32Array\|number[]* - column-major 4 x 4 from the shape's space to the field's (a bone's rest transform, `Kit.figure.writeBoneMatrix`)
+- `[options]` *{owner?: number, blend?: number, positions?: Float32Array}* - `positions`: points of the shape's surface in its own space (its built mesh), for the bounds; without them the shape is built at low detail
+
+**Returns** *Solid*
+
+**Complexity** O(surface points) for the bounds
+
+```js
+const forearm = Kit.sculpt.solid({ kind: 'capsule', end: [0, -0.25, 0], radius: 0.04, endRadius: 0.03, at: [0, 0, 0] }, boneMatrix, { owner: 7 });
+```
+
+### `Kit.sculpt.cellFor(solids, detail = 'high')`
+
+The grid cell for a set of solids at a level of detail: the level's own, or larger when the solids' longest
+side would otherwise span more than the level's `most` cells.
+
+- `solids` *Solid[]*
+- `[detail='high']` *string* - a key of `DETAIL`
+
+**Returns** *number* metres
+
+**Complexity** O(solids)
+
+```js
+Kit.sculpt.cellFor(bodySolids, 'high') // 0.011 for a body up to 1.32 m on its longest side
+```
+
+### `Kit.sculpt.isTooThin(part, cell)`
+
+Is a solid too thin to be meshed on a grid of this cell (it could fall between the samples)?
+
+- `part` *Solid*
+- `cell` *number* - metres (`cellFor`)
+
+**Returns** *boolean*
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.isTooThin(earring, Kit.sculpt.cellFor(solids)) // true: draw it as a rigid piece instead
+```
+
+### `Kit.sculpt.sample(solids, options)`
+
+`sampleSteps` run to its end in one go (see it for the method).
+
+- `solids` *Solid[]*
+- `[options]` *{detail?: string, cell?: number, margin?: number}* - as `sampleSteps`
+
+**Returns** *Field*
+
+**Complexity** as `sampleSteps`
+
+```js
+const field = Kit.sculpt.sample(bodySolids, { detail: 'medium', margin: 0.03 });
+```
+
+### `Kit.sculpt.valueAt(field, x, y, z)`
+
+The field's value at any point, by blending the eight nodes round it.
+
+- `field` *Field*
+- `x` *number*
+- `y` *number*
+- `z` *number*
+
+**Returns** *number* metres; meaningless (a blend with `FAR`) further than the field's band from its surfaces
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.valueAt(field, 0, 1.2, 0) < 0 // inside the chest
+```
+
+### `Kit.sculpt.slopeAt(field, x, y, z, out)`
+
+The slope of the field at a point: that of the blend of the eight nodes round it (`valueAt`), so it reads
+no node `valueAt` would not. Not unit length.
+
+- `field` *Field*
+- `x` *number*
+- `y` *number*
+- `z` *number*
+- `out` *number[]\|Float64Array* - receives [x, y, z], metres per metre
+
+**Returns** *number[]\|Float64Array* `out`
+
+**Complexity** O(1)
+
+```js
+Kit.sculpt.slopeAt(field, 0.2, 1.2, 0, [0, 0, 0]) // about [1, 0, 0] on the right side of a chest
+```
+
+### `Kit.sculpt.nearestAt(field, x, y, z)`
+
+Which solid is nearest a point. A node knows its nearest solid; where the nodes round a point disagree (it
+is near the border between two solids), the solids they name are measured at the point itself, so the
+border is as smooth as the solids and not stepped like the grid.
+
+- `field` *Field*
+- `x` *number*
+- `y` *number*
+- `z` *number*
+
+**Returns** *number* index into `field.solids`, or -1 where no node round the point was measured
+
+**Complexity** O(1): eight lookups, and up to eight distance evaluations near a border
+
+```js
+const bone = field.solids[Kit.sculpt.nearestAt(field, x, y, z)].owner;
+```
+
+### `Kit.sculpt.surface(field, options)`
+
+`surfaceSteps` run to its end in one go (see it for the method and the options).
+
+- `field` *Field*
+- `[options]` *{offset?: number, cut?: function(number, number, number): boolean, near?: ArrayLike\<number\>, depth?: number, walls?: boolean, cover?: Uint8Array, under?: Uint8Array}*
+
+**Returns** *SurfaceArrays*
+
+**Complexity** as `surfaceSteps`
+
+```js
+const skin = Kit.sculpt.surface(field); const sleeve = Kit.sculpt.surface(field, { offset: 0.008, cut: isSleeve });
+```
+
+### `Kit.sculpt.simplify(mesh, options)`
+
+`simplifySteps` run to its end in one go (see it for the method and the options).
+
+- `mesh` *{positions: Float32Array, normals: Float32Array, indices: ArrayLike\<number\>}*
+- `[options]` *{tolerance?: number, most?: number, skin?: ?{owners: ArrayLike\<number\>, weights: ArrayLike\<number\>}, locked?: ?ArrayLike\<number\>, paints?: ?ArrayLike\<number\>}*
+
+**Returns** *Simplified*
+
+**Complexity** as `simplifySteps`
+
+```js
+const light = Kit.sculpt.simplify(skin, { tolerance: 0.001 }); const weights = Kit.sculpt.pick(skinWeights, 4, light.kept);
+```
+
+### `Kit.sculpt.pick(values, size, kept)`
+
+The values of the vertices kept: `size` numbers per vertex, for the vertices `kept` names, in that order.
+
+- `values` *Values* - `size` per vertex of the mesh before
+- `size` *number* - numbers per vertex
+- `kept` *ArrayLike\<number\>* - vertex indices (`Simplified.kept`)
+
+**Returns** *Values* a new array of the same type
+
+**Complexity** O(kept x size)
+
+```js
+const owners = Kit.sculpt.pick(layer.owners, 4, light.kept);
+```
+
+### `Kit.sculpt.SIMPLIFY`
+
+Tunables of `simplify`.
+
+### `Kit.sculpt.COVER`
+
+What a `cover` says of a node (`surface`): nothing, that a layer was asked about it and does not lie there, or that one does.
+
+### `Kit.sculpt.weights(positions, solids, { spread = 0.03, reach = 0, sharpness = 2 } = {})`
+
+Which owners move each vertex, and how much. A vertex belongs fully to the solid it lies on; near another
+solid (within `spread` of being as close) it is shared, so the surface bends smoothly across a joint.
+
+- `positions` *Float32Array* - 3 per vertex, in the field's space
+- `solids` *Solid[]*
+- `[options]` *{spread?: number, reach?: number, sharpness?: number}* - `spread`: metres over which ownership fades from one solid to the next (default 0.03); `reach`: how far off the solids the vertices lie (a layer's offset), metres; `sharpness`: the power a solid's nearness is raised to (default 2): higher keeps a vertex with its nearest solid for longer across a wide `spread` (cloth right over a knee follows that knee, cloth between two is shared)
+
+**Returns** *SkinArrays*
+
+**Complexity** O(vertices x solids whose bounds are near)
+
+```js
+const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
+```
+
+### Types
+
+- **SectionTable** - A flat section's distance, measured once on a 2D grid.
+  - `values` *Float32Array* - distance at each node, u fastest
+  - `sizeU` *number* - nodes along u
+  - `sizeV` *number*
+  - `fromU` *number* - u of node 0
+  - `fromV` *number*
+  - `step` *number* - metres between nodes
+  - `corners` *Float64Array* - the section, flat (for points off the table)
+- **Solid**
+  - `owner` *number* - who moves it (a bone index): becomes the vertices' skin
+  - `distance` *function(number, number, number): number* - signed distance in the field's space
+  - `min` *number[]* - [x, y, z] of its bounds in the field's space
+  - `max` *number[]*
+  - `thinness` *number* - its smallest half-thickness, metres (see `isTooThin`)
+  - `blend` *number* - how wide a fillet it makes where it meets other solids, metres
+  - `[group=0]` *number* - solids of one group blend with each other everywhere (the segments of an arm)
+  - `[anchor]` *number[]* - [x, y, z]: where the solid's group joins the groups sampled before it (a shoulder). The join's fillet fades to nothing `joinReach` away from here, so an arm hanging beside a torso stays a separate arm instead of melting into the ribs. Without it the group joins everywhere
+  - `[join]` *number* - the fillet where the solid's group joins the rest, metres (default: the group's widest `blend`)
+  - `[joinReach]` *number* - metres from `anchor` over which the join stays full (default: 2.5 x `join`)
+- **Field**
+  - `values` *Float32Array* - distance at each node, x fastest, then y, then z. Only nodes near a surface are measured (`band`); the rest hold `FAR` outside the solids and `-FAR` deep inside them
+  - `nearest` *Int16Array* - index (into the solids sampled) of the solid nearest each measured node, else -1
+  - `band` *Int32Array* - the measured nodes
+  - `margin` *number* - the furthest a surface may be pushed out of this field (`surface`'s `offset`), metres
+  - `size` *number[]* - nodes along [x, y, z]
+  - `origin` *number[]* - [x, y, z] of node (0, 0, 0)
+  - `cell` *number* - metres between nodes
+  - `solids` *Solid[]* - what was sampled
+- **SurfaceArrays**
+  - `positions` *Float32Array* - 3 per vertex, in the field's space
+  - `normals` *Float32Array* - 3 per vertex, unit length, outward
+  - `indices` *Uint16Array\|Uint32Array* - 3 per triangle
+- **Simplified**
+  - `positions` *Float32Array* - 3 per kept vertex (each where it was: no vertex is moved)
+  - `normals` *Float32Array*
+  - `indices` *Uint16Array\|Uint32Array*
+  - `kept` *Uint32Array* - per kept vertex, its index in the mesh given (rising): `pick` carries any other attribute over
+  - `faces` *Uint32Array* - per kept triangle, its number in the mesh given (rising): what was known per triangle (its paint) is found again
+  - `error` *number* - the largest cost of a collapse made, metres (root mean square distance to the planes a vertex stood for, with the turn of its normal counted in)
+  - `distance` *number* - the largest such distance alone, metres: how far the form may have moved
+- **SkinArrays**
+  - `owners` *Uint16Array* - 4 per vertex: owner ids (bone indices), strongest first; unused slots are 0
+  - `weights` *Float32Array* - 4 per vertex: their shares, summing to 1
+
+## drape.js
+
+> Kit drape: cloth that hangs on a body, as plain geometry. A hanging garment (a skirt, a cloak, a scarf's end)
+> is authored once, as a shape on a bone; a body under it may be any build. This module makes the authored
+> shape lie on the body it meets: it is swung out about the joint it hangs from until it is clear of what is
+> under it, what the body still pushes through it is laid over the body, thin cloth is meshed as a thin shell
+> at any level of detail, and every vertex is shared between the bone the cloth hangs from and the body bones
+> beneath it, so a knee pushes a skirt and a simulated cloak bone carries its cloak.
+>
+> Owns:  `Kit.drape.under` (solids -> the surface a cloth must stay outside of), `cloud` (a cloth already laid, as
+>        one of those solids), `hangAngle` and `turnAbout`
+>        (the least swing that clears it), `shell` (a built shape -> a welded, evenly fine, closed mesh),
+>        `settle` (vertices pushed out of what is under them), `ride` (skin weights shared with the cloth's own
+>        bone), `smoothNormals` and the `DRAPE` tunables.
+> Does not own: which bones are draped and in what order (catalogue data read by kit/figure-sculpt.js), the
+>        solids' distances (kit/sculpt.js), built shapes (kit/figure-shapes.js), movement (kit/motion.js) or THREE.
+>
+> Conventions: metres; points are in the space the solids were placed in (a body's rest pose); a mesh is
+> `{ positions, normals, indices }` with three numbers per vertex and triangles wound counter-clockwise seen
+> from outside.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-drape.js.
+
+### `Kit.drape.DRAPE`
+
+Tunables, metres unless noted.
+
+### `Kit.drape.FAR`
+
+"Out of every solid's reach": the distance `under` gives there, metres.
+
+### `Kit.drape.under(solids, options = {})`
+
+The surface under a cloth: the union of the solids beneath it, each grown by what is already worn on it.
+Distances are the solids' own (not a grid's), so a cloth is placed as exactly as the body is described.
+
+- `solids` *UnderSolid[]*
+- `[options]` *{reach?: number, slopeStep?: number}* - see `DRAPE`
+
+**Returns** *Under*
+
+**Complexity** O(solids) per distance (a bounds test each, a distance for those near); a slope is one distance and three more of one solid
+
+```js
+const under = Kit.drape.under(bodySolids.map((part) => ({ ...part, lift: 0.009 }))); under.distance(0, 1, -0.2) // > 0: behind the back
+```
+
+#### `Kit.drape.under().distance(x, y, z)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.drape.under().slope(x, y, z, out)`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.drape.cloud(points, radius)`
+
+Points as something a cloth lies over: the union of a ball round each (a cloth already laid, by its
+vertices, for the cloth laid on top of it). The balls of neighbouring vertices must overlap: give a radius
+of at least 0.6 of the mesh's longest edge. Outside every ball's reach the distance is `Kit.drape.FAR`.
+
+- `points` *ArrayLike\<number\>* - x, y, z each
+- `radius` *number* - metres
+
+**Returns** *UnderSolid*
+
+**Complexity** O(points) to make; O(points in the 27 cells round a point) per distance
+
+```js
+const skirtAsLaid = Kit.drape.cloud(skirt.positions, 0.012);
+```
+
+#### `Kit.drape.cloud().distance(x, y, z)`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.drape.swingAxis(along, outward)`
+
+The axis a hanging piece swings about: across both the way it hangs and the way out of the body, so a
+positive turn carries its free end outward. Null when it hangs straight out already or has no way out.
+
+- `along` *number[]* - unit [x, y, z]: from the joint towards the piece's free end
+- `outward` *number[]* - [x, y, z]: away from what it hangs on
+
+**Returns** *?number[]* unit [x, y, z]
+
+**Complexity** O(1)
+
+```js
+Kit.drape.swingAxis([0, -1, 0], [0, 0, -1]) // [1, 0, 0]: a cloak down a back swings about the shoulders' line
+```
+
+### `Kit.drape.hangAngle(points, joint, axis, below, need, options = {})`
+
+The least angle a hanging piece must swing out, about its joint, to rest on the body instead of passing
+through it: the smallest swing after which nothing of it is buried deeper than `restDepth` (what `settle`
+then lays over the body), or, when no swing does that (its top, at the joint, never moves), the smallest
+that leaves about as little buried deeper as any swing can. A cloak then lies down the back of a slight
+body and of a stout one alike, and how it hangs depends on nothing but the piece and what is under it.
+
+- `points` *ArrayLike\<number\>* - x, y, z of points of the piece, as authored (its built surface)
+- `joint` *number[]* - [x, y, z] it hangs from
+- `axis` *number[]* - unit [x, y, z] to swing about (`swingAxis`)
+- `below` *Under* - what it must clear
+- `need` *number* - metres every point should stand off `below`
+- `[options]` *{mostSwing?: number, swingSteps?: number, swingHalvings?: number, swingSlack?: number, restDepth?: number, swingFrom?: number}* - see `DRAPE`
+
+**Returns** *number* radians, 0 .. `mostSwing`
+
+**Complexity** O((swingSteps + swingHalvings) x min(points, swingPoints) x solids)
+
+```js
+const angle = Kit.drape.hangAngle(cloakPoints, shoulders, [1, 0, 0], under, 0.01);
+```
+
+### `Kit.drape.turnAbout(matrices, from, to, joint, axis, angle)`
+
+Turns bone matrices about an axis through a point, in place: a piece (and whatever hangs from it) swung to
+where `hangAngle` says it rests.
+
+- `matrices` *Float32Array* - column-major 4 x 4 per bone
+- `from` *number* - the first bone to turn
+- `to` *number* - one past the last
+- `joint` *number[]* - [x, y, z]
+- `axis` *number[]* - unit [x, y, z]
+- `angle` *number* - radians
+
+**Returns** *Float32Array* `matrices`
+
+**Complexity** O(bones turned)
+
+```js
+Kit.drape.turnAbout(matrices, cloak, plan.subtreeEnd[cloak], shoulders, [1, 0, 0], 0.2);
+```
+
+### `Kit.drape.shell(arrays, edge)`
+
+A built shape as cloth: its vertices welded where they coincide (a built shape repeats a vertex wherever
+its faces meet in a hard edge), and its edges split until none is longer than `edge`, so the surface is one
+closed skin fine enough to bend and to be laid over a body. A thin panel stays exactly as thin as it was
+authored, at any level of detail, where a grid would have to thicken it to hold it at all.
+
+Every edge longer than the target is split at its middle, and each triangle is cut by which of its edges
+were split (one, two or three); a split is decided per edge, so both triangles on an edge agree and the
+mesh stays closed.
+
+- `arrays` *{positions: ArrayLike\<number\>, indices: ArrayLike\<number\>}* - a built shape (`Kit.figure.buildShape`), or any triangle mesh
+- `edge` *number* - metres: the longest an edge may stay
+
+**Returns** *{positions: Float32Array, indices: Uint32Array}*
+
+**Complexity** O(surface area / edge^2) vertices and triangles; at most `DRAPE.mostSplits` passes over them
+
+```js
+const cloth = Kit.drape.shell(Kit.figure.buildShape(panel, 'low'), 0.03);
+```
+
+### `Kit.drape.round(points, joint, along, edge)`
+
+A cloth hung all round a line (a skirt round the hips) as something a later cloth lies over: everything
+nearer the line than the cloth is, where the cloth reaches along it. The cloth itself is hollow, and so is
+the shape it was built from; a coat's tails laid over a skirt must clear the space the skirt encloses, not
+only its wall.
+
+The cloth's vertices are binned by how far along the line and which way round it they lie; a bin keeps
+the furthest of them from the line, or of its neighbours'. The distance of a point is how far outside that radius it is, read
+between the four bins round it (negative inside), or how far beyond the cloth's ends it is, if that is more.
+
+- `points` *ArrayLike\<number\>* - x, y, z each: the cloth's vertices as laid
+- `joint` *number[]* - a point of the line
+- `along` *number[]* - the line's unit direction
+- `edge` *number* - metres: the cloth's longest edge (a bin is twice that long, so none is empty inside the cloth)
+
+**Returns** *UnderSolid*
+
+**Complexity** O(points) to make; O(1) per distance
+
+```js
+laid.push(Kit.drape.round(skirt.positions, hips, [0, -1, 0], 0.03));
+```
+
+#### `Kit.drape.round().distance(x, y, z)`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.drape.settle(mesh, below, options = {})`
+
+Lays a cloth over what is under it, as cloth lies: pushed out where the body is in its way, and hanging
+straight on down from there.
+
+1. Each vertex nearer `below` than it should be is moved out until it is not, by at most `mostPush`. The
+   way out is the slope of `below`; for a cloth that hangs (`hang`), only the part of it across the hang,
+   so a skirt's waist is pushed outwards level and never up the body, and a cloak inside a skirt's cone
+   comes out through its side, not its bottom. Where the slope has almost nothing across the hang, the
+   hang's own `outward` is the way, or with none (a cloth hung all round the body) straight away from the
+   line it hangs along. A thin sheet (`thickness` above 0) has two sides: the side whose
+   normal points out comes to rest `gap + thickness` off what is under it and the lining `gap` off it, so
+   a panel the body pushes through keeps its thickness where it lies on the body.
+2. With `hang`, a move is handed on down the cloth: a vertex further along the way the cloth hangs takes
+   its neighbours' move from above, less `1 / fall` of it per metre, across the hang only. A cloak pushed
+   out by a seat then falls from the seat instead of folding back under it.
+The normals are made again afterwards, and averaged over neighbours `normalPasses` times: a move differs a
+little from vertex to vertex, and a toon ramp would show each step as a patch. Where nothing is in the cloth's way it keeps its authored shape
+exactly, so how a garment hangs depends only on the garment and the body under it.
+
+- `mesh` *{positions: Float32Array, normals: Float32Array, indices: ArrayLike\<number\>}* - changed in place
+- `below` *Under*
+- `[options]` *{gap?: number, thickness?: number, mostPush?: number, settleSteps?: number, normalPasses?: number, hang?: {joint: number[], along: number[], outward?: number[]}, fall?: number}* - `thickness`: metres between the cloth's two sides (default 0: one side); `hang`: the point the cloth hangs from, the unit direction it hangs in and, for a cloth that hangs to one side of the body, the unit direction away from the body across that; the rest as `DRAPE`
+
+**Returns** *number* how many vertices were moved
+
+**Complexity** O(vertices x settleSteps x solids + (vertices + triangles) x normalPasses + vertices log vertices)
+
+```js
+const moved = Kit.drape.settle(cloak, under, { thickness: 0.018, hang: { joint: shoulders, along: [0, -1, 0] } });
+```
+
+### `Kit.drape.seat(points, outward, cloth, options = {})`
+
+How far out a thing worn over cloth must be moved to sit on it: the least move along `outward` after which
+no cloth is in front of any of its points (inside it or behind it is where cloth under a pack belongs). A
+pack authored against the back then sits on the cloak laid over that back instead of showing through it.
+
+- `points` *ArrayLike\<number\>* - x, y, z of the thing (its corners will do)
+- `outward` *number[]* - unit direction away from the body
+- `cloth` *Under* - the cloth laid so far (`Kit.drape.under` of its solids)
+- `[options]` *{seatStep?: number, mostSeat?: number, seatReach?: number, seatProbe?: number}* - see `DRAPE`
+
+**Returns** *number* metres, 0 when nothing is in front of it; never more than `mostSeat`
+
+**Complexity** O(mostSeat / seatStep x points x seatReach / seatProbe x solids) at worst
+
+```js
+const shift = Kit.drape.seat(packCorners, [0, 0, -1], Kit.drape.under(cloakSolids)); // 0.05: the cloak's back is 5 cm behind the pack's
+```
+
+### `Kit.drape.smoothNormals(positions, indices, out = new Float32Array(positions.length), passes = 0)`
+
+Vertex normals of a mesh: each triangle's area-weighted normal added to its corners, so the surface shades
+as one smooth cloth, round its edges too.
+
+- `positions` *Float32Array*
+- `indices` *ArrayLike\<number\>*
+- `[out]` *Float32Array* - receives the normals (default: a new array)
+- `[passes]` *number* - times each normal is then replaced by the mean of its triangles' corners' normals (default 0)
+
+**Returns** *Float32Array* unit normals, 3 per vertex
+
+**Complexity** O((vertices + triangles) x (1 + passes))
+
+```js
+mesh.normals = Kit.drape.smoothNormals(mesh.positions, mesh.indices);
+```
+
+### `Kit.drape.ride(skin, positions, own, bodyDistance, options = {})`
+
+Shares a cloth's vertices between the body bones beneath it and the bone it hangs from. Where the cloth
+lies on the body (within `contact`) the body carries it, so a knee pushes a skirt; further off it rides
+its own bone more, and `clings` beyond contact it rides its own bone alone, so a bone that is simulated (a
+loose cloak, a swaying hem) carries the cloth that hangs free.
+
+- `skin` *{owners: Uint16Array, weights: Float32Array}* - the body's share (`Kit.sculpt.weights`); changed in place
+- `positions` *Float32Array* - the cloth's vertices
+- `own` *ArrayLike\<number\>\|number* - the cloth's own bone: one for all, or one per vertex
+- `bodyDistance` *function(number, number, number): number* - metres from a point to the body that carries the cloth
+- `[options]` *{contact?: number, clings?: number}* - `clings`: metres (default `DRAPE.clings`); `contact` as `DRAPE`
+
+**Returns** *{owners: Uint16Array, weights: Float32Array}* `skin`
+
+**Complexity** O(vertices x the cost of `bodyDistance`)
+
+```js
+Kit.drape.ride(skin, cloak.positions, cloakBone, bodyUnder.distance, { clings: 0.03 });
+```
+
+### Types
+
+- **UnderSolid** - A solid a cloth lies over.
+  - `distance` *function(number, number, number): number* - signed distance, negative inside (a `Solid` of kit/sculpt.js)
+  - `min` *number[]* - [x, y, z] of its bounds
+  - `max` *number[]*
+  - `[lift=0]` *number* - metres the layers already on it stand off it: the cloth clears the solid grown by this
+- **Under** - What a cloth must stay outside of: the union of solids, each grown by its `lift`.
+  - `distance` *function(number, number, number): number* - metres to that union, negative inside; `Kit.drape.FAR` beyond every solid's reach
+  - `slope` *function(number, number, number, number[]): number* - writes the unit direction out of the union (zero where none) and returns the distance there
+
+## sculpt-relief.js
+
+> Kit sculpt relief: one solid modelled out of another. A base solid (a head) takes any number of marks, each a
+> small solid pressed on with its own fillet (a nose, a brow ridge, an ear) or pressed in (an eye socket, the
+> line of a gill), and the result is again one `Solid` of kit/sculpt.js: one distance, one owner, one set of
+> bounds. The sampler then sees a head, not a head and nine lumps, so every mark blends with every other where
+> they overlap (the sampler fillets only the two solids nearest a node), and a mark may be thinner than a grid
+> cell without being dropped.
+>
+> Owns:  `Kit.sculpt.relief` (a base and its marks -> a solid), `Kit.sculpt.smoothMax` and the `RELIEF` tunables.
+> Does not own: sampling or meshing (kit/sculpt.js), which features of a body are marks (kit/body-surface.js
+>        says so per feature; kit/figure-sculpt.js gathers them per bone), or what a face is (kit/body-face.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-faces.js.
+
+### Types
+
+- **ReliefMark**
+  - `solid` *Object* - a `Solid` of kit/sculpt.js in the base's space (`Kit.sculpt.solid`)
+  - `[blend]` *number* - metres: how wide a fillet joins it to what is there (default: from its thickness, `RELIEF`)
+  - `[carve=false]` *boolean* - pressed in: the base loses what the mark holds, with the same fillet round the rim
+
+## figure-detail.js
+
+> Kit figure detail: which level of detail a figure needs for how large it is drawn, chosen so that nobody has
+> to pass one. A level is made for a band of on-screen heights (kit/figure-shapes.js `LEVEL_BY_PIXELS`, with
+> `far` below them for crowds); a figure moves to the next band only once it is clearly inside it, so one that
+> hovers at a boundary does not flicker between two meshes.
+>
+> Owns:  `Kit.figure.DETAIL_BANDS` (the bands, `far` included), `detailFor` (pixels and the level shown now ->
+>        the level to show) and `pixelsTall` (a height in the world and a camera -> target pixels).
+> Does not own: what a level is made of (kit/figure-shapes.js `LEVELS`, kit/sculpt.js `DETAIL`), measuring a
+>        figure or a camera (kit/look-view.js does, each frame), or swapping the meshes (kit/figure.js).
+>
+> Heights are in pixels of the target a look draws on: a pixel look's texels, not the screen's pixels, so a
+> figure 100 texels tall is drawn at the level of 100 pixels however large the texels are shown.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-sculpt.js.
+
+## figure-sculpt.js
+
+> Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone. The
+> body's own solids are blended into one skin per paint (kit/sculpt.js), so limbs run into the torso and a
+> head into its neck; every painted region (a sleeve, trousers, hair) becomes a layer of its own, the same
+> surface pushed out and cut along the region's edge, so cloth has thickness and a hem instead of being a
+> colour on the skin. Each layer's vertices carry bone weights, so one mesh bends with the rig.
+>
+> Owns:  `Kit.figure.sculptLayers` (a bake and its layout -> the layers as plain arrays, and which layout
+>        pieces they replace), `SCULPT` (its tunables) and `restMatrices` (a bake's rest pose as bone matrices).
+> Does not own: the blending and meshing (kit/sculpt.js), what pieces a bake has (kit/figure-layout.js), the
+>        regions' predicates (kit/region.js, kit/body-surface.js), or THREE (kit/figure.js binds the arrays
+>        to skinned meshes).
+>
+> What is sculpted: the solids of the body itself and of its solid features (a nose, an ear). What stays rigid:
+> attached parts (a sword, a hat: thin and hard-edged, which a grid would blur) and flat stamps (a face).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-sculpt.js.
+
+### Types
+
+- **Limb**
+  - `lead` *number* - the limb's first bone (the one whose parent belongs to something else)
+  - `bones` *number[]* - the bones further along it
+  - `direction` *number[]* - unit [x, y, z]: where it points at rest, from its joint
+  - `outward` *number[]* - unit [x, y, z]: away from the trunk
+  - `offset` *number* - metres its joint is to the side of the root
+  - `key` *string* - its ink key ('arms-left')
+- **SculptLayer**
+  - `id` *string* - 'skin:<ramp>' for a body surface, 'region:<part>|<ramp>|<raise>' for a painted layer, 'worn:<socket>|<ramp>|<wear>' for a worn object
+  - `ramp` *number* - index into the bake's ramps
+  - `inkGroup` *number*
+  - `inkClass` *number* - which line class it draws as (its ramp)
+  - `positions` *Float32Array* - 3 per vertex, in the bake's sculpting pose (`matrices`)
+  - `normals` *Float32Array*
+  - `indices` *Uint16Array\|Uint32Array*
+  - `owners` *Uint16Array* - 4 bone indices per vertex
+  - `weights` *Float32Array* - 4 shares per vertex
+  - `[isShiny]` *boolean* - it glints (a rigid piece joined as it is: a blade)
+  - `[isUnoutlined]` *boolean* - it has no outline of its own (a rigid piece joined as it is: a lip too thin for the grid)
+  - `[locked]` *Uint8Array* - per vertex, 1 where it must be kept when the surface is made lighter (all of a rigid piece)
+  - `[on]` *SculptLayer* - for paint while it is made: the layer it was cut out of, whose vertices on the cut it shares
+  - `[canvas]` *string* - for paint: the id of that layer
+  - `[faceShare]` *Float32Array* - on a body surface: per vertex, how much of it the head's bones move (0..1); a look lights a face and a form differently
+- **Sculpted**
+  - `layers` *SculptLayer[]* - shared between equal bakes: never write to their arrays (views of `surface`'s, a layer each, made the first time they are read)
+  - `surface` *SculptSurface* - every layer as one mesh: what a figure draws
+  - `bytes` *number* - what the surface's arrays take, bytes
+  - `replaced` *Set\<string\>* - ids of the layout pieces the layers stand in for (do not draw them)
+  - `joined` *Set\<string\>* - ids of the layout pieces that are drawn in the surface as they are: rigid, each moved wholly by its own bone, with the triangles it was authored with (a sword, a pack; do not draw them either)
+  - `matrices` *Float32Array* - the bone matrices the layers were made in (the bind pose), 16 per bone
+  - `clearance` *{leads: Int16Array, turns: Float32Array}* - see `limbClearance`
+  - `signature` *string* - what the layers depend on (see `sculptSignature`)
+- **SculptSurface** - The layers of a bake as one skinned mesh: a figure is one draw however many garments it wears.
+  - `positions` *Float32Array* - 3 per vertex, in the bake's sculpting pose
+  - `normals` *Float32Array*
+  - `indices` *Uint16Array\|Uint32Array*
+  - `owners` *Uint16Array* - 4 bone indices per vertex
+  - `weights` *Float32Array* - 4 shares per vertex
+  - `faceShare` *Float32Array* - per vertex, how much of it the head's bones move where its layer is a body surface, else 0
+  - `paint` *Uint8Array* - 3 per vertex: its layer's ramp slot (also its line class), its ink group, and its flags added up (1 where it is shiny, 2 where it has no outline of its own: `Kit.look`'s `vertexPaint`)
+  - `ranges` *Array\<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}\>*
+  - `error` *number* - the furthest a vertex was moved off the planes it stood for when the mesh was simplified, metres (`Kit.sculpt.simplify`'s `distance`)
+- **Garment** - The regions of one worn part with one paint and one raise (its waist, chest and sleeves are separate regions, one per bone): one layer.
+  - `key` *string* - '<part>|<ramp>|<raise>'
+  - `part` *?string*
+  - `ramp` *number*
+  - `raise` *number* - metres; 0 is paint
+  - `order` *number* - its place in the paint order (the highest of its regions')
+  - `tests` *Map\<number, Function[]\>* - per bone, the predicates of its regions there
 
 ## figure.js
 
@@ -8447,16 +9305,21 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `rest` *function(): void* - copies the bake's rest pose into `local`
   - `pose` *function(): void* - forward kinematics over `local` and a matrix write per mesh; no allocation
   - `face` *function(Object\<string, number\>): void* - shows the face of a state: per set of `Kit.body.FRAME_SETS` an index into its frames ({ blink: 2 } is eyes closed; zeros are the rest face). A motion state chooses it: `figure.face(Kit.act.face(motion))`. O(1) when the state has not changed; the first time a state is shown its stamps are built
-  - `setBake` *function(Object, Object=): Object* - draws another bake with the fewest changes; returns the plan carried out
+  - `setBake` *function(Object, Object=, {settle?: boolean}=): Object* - draws another bake with the fewest changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is still moving (a dial being dragged): the sculpted surfaces are bent to the new proportions by the skeleton at once, and sculpted again by `settle()`
+  - `settle` *function(number=): boolean* - sculpts the surfaces for the bake shown if they were only bent to it (or, built with `sculpt: 'steps'`, not sculpted yet); true when it did. With a number it works for about that many milliseconds and returns false until the work, spread over as many calls as it takes, is done
+  - `isSettled` *function(): boolean* - false while the surfaces wait for `settle()`
+  - `level` *function(): string* - the level of detail shown now
+  - `resize` *function(number, number=): string* - tells the figure how tall it is drawn, in target pixels: it moves to the level that height asks for (`Kit.figure.detailFor`, so not at every wobble), sculpting the new level for about the given milliseconds a call (default 4) and swapping when it is ready; returns the level shown. A view calls it every frame for a figure built with `level: 'auto'`; any figure may be told by hand
   - `frame` *function(number): Object* - a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
-  - `counters` *function(): {meshes: number, materialsCreated: number, geometriesCreated: number}*
+  - `counters` *function(): {meshes: number, skinned: number, materialsCreated: number, geometriesCreated: number}* - `meshes`: draw objects in all, of which `skinned` are sculpted surfaces
   - `dispose` *function(): void*
 - **Crowd**
   - `root` *THREE.Group* - a direct child of `view.scene`
   - `count` *number*
   - `locals` *Object[]* - one pose buffer per member (write it, then `pose`)
   - `places` *Float32Array* - 4 per member: x, y, z, heading (radians); written by the caller
-  - `pose` *function(): void* - forward kinematics and an instance matrix per member per piece; no allocation
+  - `cost` *{triangles: number, meshes: number, isSculpted: boolean}* - triangles per member, instanced meshes for the whole crowd
+  - `pose` *function(): void* - forward kinematics, an instance matrix per member per rigid piece and a bone texture row per member; no allocation
   - `dispose` *function(): void*
 
 ## figure-show.js
@@ -10236,6 +11099,10 @@ Directions of a turnaround, in turns of a full circle; 0 faces the camera and th
 
 The three directions that between them show a front, a side and a back.
 
+### `Kit.body.proof.WORN_SOCKETS`
+
+The sockets the `worn` suite turns all the way round unless told others: garments that hang, and what is carried behind.
+
 ### `Kit.body.proof.DEFAULT_VIEWS`
 
 A three-quarter view and the front: what a movement is shown from unless its row says otherwise.
@@ -10265,7 +11132,7 @@ The cells of a suite for a catalogue.
 
 - `name` *string* - a key of `SUITES`
 - `catalog` *Object* - from `Kit.body.catalog`
-- `[options]` *{species?: string[], count?: number, acts?: string[]}* - `species`: which (default all)
+- `[options]` *{species?: string[], count?: number, acts?: string[], sockets?: string[], only?: string[]}* - `species`: which (default all); `sockets`: which socket paths the `worn` suite turns round; `only`: the socket paths (options) or dial ids (extremes) to show, default all
 
 **Returns** *ProofSheet*
 

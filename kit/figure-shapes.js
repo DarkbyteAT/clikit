@@ -30,16 +30,33 @@
    *   high:   a figure a few hundred pixels tall (the creator, a close-up)
    *   medium: a figure on a game screen
    *   low:    the pixel look's low-resolution target, or a crowd
+   *   far:    a figure a few dozen pixels tall (a crowd in the distance; kit/figure-detail.js chooses it)
    */
   const LEVELS = Object.freeze({
     high: Object.freeze({ edge: 0.022, minAround: 8, maxAround: 32, minRings: 3, smoothSteps: 4 }),
     medium: Object.freeze({ edge: 0.045, minAround: 6, maxAround: 14, minRings: 2, smoothSteps: 2 }),
     low: Object.freeze({ edge: 0.09, minAround: 5, maxAround: 8, minRings: 1, smoothSteps: 1 }),
+    far: Object.freeze({ edge: 0.18, minAround: 4, maxAround: 6, minRings: 1, smoothSteps: 1 }),
   });
   /** Floats per vertex of a stamp's paint (slot, tone, size rule, order) and of its centre (x, y, z, half extent). */
   const PAINT = 3;
   const CENTRE = 4;
   const DEFAULT_LEVEL = 'high';
+  /**
+   * The level of detail a figure needs by how tall it is drawn, in target pixels: the coarsest level whose
+   * sculpting cell (kit/sculpt.js `DETAIL`: 28, 17 and 11 mm on a body about 1.1 m tall) still covers under
+   * about four pixels, so a silhouette never shows the grid. A close-up (a character maker, a portrait) is
+   * high; a figure in a game scene is medium or low. Rows in rising order; the last has no limit.
+   */
+  const LEVEL_BY_PIXELS = Object.freeze([Object.freeze({ upTo: 150, level: 'low' }), Object.freeze({ upTo: 330, level: 'medium' }), Object.freeze({ upTo: Infinity, level: 'high' })]);
+  /**
+   * The level of detail for a figure drawn `pixels` tall.
+   * @param {number} pixels the figure's height on the target, in target pixels (a pixel look's texels)
+   * @returns {string} a key of `LEVELS`
+   * @complexity O(1)
+   * @example Kit.figure.levelFor(96) // 'low': a footballer on a phone pitch
+   */
+  const levelFor = (pixels) => LEVEL_BY_PIXELS.find((row) => pixels <= row.upTo).level;
   /** Rings of a sphere per segment around (a quarter turn of rings per quarter turn around). */
   const RINGS_PER_AROUND = 0.25;
 
@@ -553,18 +570,25 @@
    * with a head in front and a rear behind) draws every link instead of only the first. Within one region a
    * link narrows to the child's girth (a limb into its next segment); out of it the first link keeps the bone's
    * width (a chest into its neck) and the others narrow by `SIDE_LINK_SHARE` at most. A child drawn as some
-   * other shape (a head sphere, a foot box) is never tapered towards. Neither: a ball of the bone's girth.
+   * other shape (a head sphere, a foot box) is never tapered towards, and a flat one (a fin) beside solid
+   * ones is not linked to at all. Neither: a ball of the bone's girth.
    */
   const describeCapsules = (plan, bone, row, at, rules) => {
     // A row may state its own radius and taper (a plait that thins, a chin tuft); otherwise the bone's girth decides.
     const radius = row.radius === undefined ? plan.girth[bone] / 2 : row.radius;
     const tail = Array.from(plan.tail.subarray(bone * VECTOR, bone * VECTOR + VECTOR));
     if (length3(tail) > EPSILON) return [{ shape: { kind: 'capsule', end: tail, radius, endRadius: radius * (row.taper === undefined ? 1 : row.taper), at }, child: -1 }];
-    const links = continuingChildren(plan, bone, rules.skipChild || (() => false)).filter((child) => length3(plan.restTranslation.subarray(child * VECTOR, child * VECTOR + VECTOR)) > EPSILON);
+    const rowOf = (child) => (rules.shapes ? rules.shapes[child] : plan.shapes[child]) || DEFAULT_SHAPE_ROW;
+    // A flat child (a fin, a wing's blade) beside solid ones stands on the bone's surface: it is not a stretch
+    // of body to reach. When flat children are all a bone leads to (a tail's stalk to its fin), it reaches them.
+    const reached = continuingChildren(plan, bone, rules.skipChild || (() => false)).filter((child) => length3(plan.restTranslation.subarray(child * VECTOR, child * VECTOR + VECTOR)) > EPSILON);
+    const solid = reached.filter((child) => rowOf(child).kind !== 'extrude');
+    const links = solid.length ? solid : reached;
     if (!links.length) return [{ shape: { kind: 'sphere', radius, at }, child: -1 }];
     return links.map((child, index) => {
-      const isCapsuleChild = !plan.shapes[child] || plan.shapes[child].kind === 'capsule';
-      const childRadius = isCapsuleChild ? plan.girth[child] / 2 : radius;
+      const childRow = rowOf(child);
+      // The child's drawn radius: the one its row states (a stylised limb drawn thicker than its mass), else its girth.
+      const childRadius = childRow.kind !== 'capsule' ? radius : childRow.radius === undefined ? plan.girth[child] / 2 : childRow.radius;
       const isSameRegion = rules.isSameRegion ? rules.isSameRegion(bone, child) : false;
       const endRadius = isSameRegion ? childRadius : index === 0 ? radius : Math.max(childRadius, radius * SIDE_LINK_SHARE);
       return { shape: { kind: 'capsule', end: Array.from(plan.restTranslation.subarray(child * VECTOR, child * VECTOR + VECTOR)), radius, endRadius, at }, child: index === 0 ? -1 : child };
@@ -708,5 +732,5 @@
     return out;
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, ACROSS_AXIS, BUILDERS, segmentsFor, smoothProfile, triangulate, describeShapes, shapeKey, buildShape, writeBoneMatrix });
+  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, LEVEL_BY_PIXELS, levelFor, ACROSS_AXIS, BUILDERS, segmentsFor, smoothProfile, triangulate, describeShapes, shapeKey, buildShape, writeBoneMatrix });
 })();

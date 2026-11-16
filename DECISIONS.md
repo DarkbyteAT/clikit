@@ -962,6 +962,106 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Revisit if** one skinned mesh carries head and body (then `response` must be per vertex or per region, not
   per mesh); a catalogue passes 511 palette rows; a contrast rule proves unsatisfiable for a palette (the roll
   falls back a tier and `clashes` reports it: 48 of 5000 wardrobe rolls miss harmony, none miss contrast).
+## Sculpted bodies: one blended, skinned surface per paint instead of a rigid piece per bone (sculpt branch)
+
+- **What is drawn.** `Kit.figure.build` now draws a body as the surface of a distance field: every bone
+  shape becomes a solid (kit/sculpt.js), the solids of one paint are blended and meshed over a grid
+  (surface nets), and the mesh is bound to the skeleton with up to four owners per vertex. A garment (a
+  region with a raise) is the same field pushed out by its raise and cut by the region's predicate; hair is
+  one such layer. `options.sculpt === false` keeps the rigid path (`Kit.figure.crowd` was rigid until round 2, below)
+  (instanced pieces per bone: a crowd of skinned bodies needs a bone texture per instance, not built).
+  Rejected: more rigid pieces with overlap tricks (the seams at shoulders, hips and necks are the defect, and
+  every garment was a second copy of the piece under it); a field per bone meshed apart and stitched (the
+  stitch is the hard part); marching cubes (sliver triangles and a vertex per edge: three times the
+  vertices for the same cell); GPU ray-marched fields (no outline or pixel preset without a second pipeline).
+- **What stays rigid, and why.** (1) A solid thinner than 1.6 grid cells (`isTooThin`: an earring, glasses,
+  a fish's fins at 14 mm, a hound's legs at low detail) would fall between samples, and letting it set the
+  cell made one earring cost a second for a whole body; it is drawn as the rigid piece it was. (2) Parts on
+  their own sockets that are objects, not flesh (hats, cloaks, skirts, props, horns): they are separate ink
+  groups with hard edges and should not melt into the body. (3) Face stamps. A consequence that is visible:
+  a rigid skirt or cloak does not follow the legs, so a knee passes through a skirt in a run exactly as it
+  did before.
+- **Blending rule.** A plain smooth minimum swells wherever two surfaces run side by side (a waist inside
+  a chest) and rippled every torso. The fillet between the two nearest solids is sized by the groove they
+  make: `GROOVE_FILL` x thinness x (1 - cos(half the angle between their outward directions)), capped by the
+  solids' `blend`. Aligned surfaces get none; a limb leaving a trunk gets all of it. A limb (an ink group)
+  joins the rest only near its anchor (its first joint), so an arm hanging beside the ribs stays an arm.
+  Rejected: a fixed blend per joint kind (needs a table per species: amendment 24); a blend by distance
+  between surfaces alone (cannot tell a groove from a gap).
+- **Speed.** Baseline (prototype, dense grid, exact sections): 2.6 to 3.2 s for the wardrobe person at high
+  detail. Now the grid is walked in blocks of 8 nodes halved only where a surface can pass (a distance
+  changes at most 1.2 m per metre), each block keeps only the solids that can matter in it, lathe and
+  extrude sections are 2D tables (exact polygon beyond the table), a cut is asked only at band nodes near the
+  solids its garment is on, and layers are kept by a signature of what they depend on (shapes, regions, rest
+  pose, detail; not colours), 24 most recent. Node 22, 4 cores, load average 14 (other agents), wardrobe
+  person, six layers, best of 8 warm runs, process CPU time: high 190 ms, medium 88 ms, low 28 ms; first
+  call in a fresh process (cold JIT) 0.6 to 1.2 s at high. Samples human (two layers): 68 / 31 / 13 ms;
+  hound: 39 / 18 / 6 ms. The targets of 150 / 60 / 20 ms are met for the samples plans and missed for the
+  six-layer wardrobe person. Where the rest goes: sampling about 45% (about 107 k band nodes, 340 k distance
+  calls), six surfaces about 35%, weights about 10%. Rejected to close the gap: a coarser cell (it is
+  quality, not speed). Not done: passing coordinates through typed scratch instead of arguments (each
+  non-inlined distance call boxes four doubles: about 100 MB of short-lived numbers per sculpt, 40 scavenges).
+- **Memory and draw calls.** Wardrobe person, high: 36 rigid pieces (bone shapes and the garment shells copied
+  from them) become 6 skinned meshes plus 5 rigid pieces (two earrings, the face stamps, the skirt and the
+  cloak panel): 28.2 k vertices, 55.6 k triangles, 1.65 MB of arrays (0.69 MB at medium, 0.25 MB
+  at low), shared by every figure with the same signature. The grid's scratch (about 23 bytes a node) is
+  module-level and reused between sculpts. Samples human: 25 pieces -> 2 skinned + 4 rigid, 1.0 MB.
+- **Editing.** `setBake(next, changes, { settle: false })` bends the existing surfaces through the skeleton
+  (the bind pose is the pose they were sculpted in) and marks the figure stale; `settle()` sculpts. The
+  creator calls it 0.18 s after the last change. A bake with the same signature (a colour) never sculpts.
+  Rejected: sculpting in a worker (the kit has no build step and the pure modules would have to be loaded
+  twice; revisit if cold sculpts on phones hurt).
+- **Known limits.** Two sheets of a surface that pass through one grid cell share its vertex (a pinched
+  edge: closed, but a web one cell wide in a tight armpit); skins of different paints are separate fields
+  and meet without a fillet (a seraph's arm paint against its shoulder); normals are averaged over about
+  44 mm, which softens authored creases as well as grid wobble.
+- **Revisit if** crowds must match close-up figures (skin the crowd from a bone texture); a skirt must
+  follow legs (make it a garment layer on the thighs with its own cut, or give it dynamics); cold sculpt time
+  matters on phones (worker, or sculpt at low first and refine).
+
+- **Round 2 (same branch).** Four small layers, each written in the one below, so a part is data, not code:
+  1. *Shape vocabulary* (kit/sculpt.js solids; `lathe`, `drawn`, flattened spheres, `shape.inflate`): a hat brim is
+     a lathe profile of six numbers; a muzzle is a profile on the head lathe.
+  2. *Thin shells* (kit/figure-sculpt.js `fittedSolid`): a solid thinner than the grid is thickened to
+     `thickenedCells` cells instead of being left rigid or given its own fine grid (which cost 7 to 14 thousand
+     vertices a hat). Thinner than `leastThinShare` of that, it stays a rigid piece. A wing with 34 mm of depth
+     is now part of the surface.
+  3. *Worn layers* (bone row `wear: 'solid' | 'drape'`, `hangs: [roles]`, defaults by part kind in
+     kit/body-wardrobe.js `WEAR_BY_FIT`): hair, beards, hats, horns and tails are sculpted solids of their own
+     layer; bottoms and outerwear are drapes. A new garment says `wear: 'drape', hangs: ['leg']` and a knee
+     pushes it.
+  4. *Skinned cloth* (`carry`): a drape is sculpted where it hangs at rest, weighted to the body solids it hangs
+     beside (`drapeSpread`, `drapeSharpness`), then carried into the sculpting pose by a fixed-point correction so
+     that skinning back returns the authored hang exactly. Rejected: weighting to its own bone (a board), a
+     cloth simulation (cost, and not deterministic per frame).
+  Also: light response is per vertex on the one skin (`responseShare`), so a face is lit as a face and the body
+  form-shaded without a seam mesh; grid faces whose corners are in and out in a chequer are parted before
+  meshing, so every edge of a skin or worn layer is shared by exactly two triangles (the test asserts it; it
+  only asserted closed before); sculpting is resumable (`Kit.sculpt.sampleSteps`, `Kit.figure.sculptTask`,
+  `build(..., { sculpt: 'steps' })`, `figure.settle(ms)`) and the creator gives it a share of each frame, the
+  rigid pieces or the bent old surface showing meanwhile; `Kit.figure.crowd` bends one instanced surface per
+  layer with a bone texture row per member (WebGL2; rigid pieces otherwise or with `sculpt: false`); detail
+  follows on-screen height (`Kit.figure.levelFor`: up to 150 px low, up to 330 medium, else high).
+  Rejected: a Worker for the first sculpt (time slices met the 100 ms limit without loading the pure modules
+  twice); splitting vertices in ambiguous cells (parting the chequer is three lines and moves the surface by
+  less than a cell).
+  *The field is the contract, kept apart from both ends* (owner's note: a learned implicit or a baked grid as a
+  source, points or Gaussian splats as a consumer, later). Sources answer a signed distance at a point and are
+  rows of `Kit.sculpt.KINDS`; `grid` is one (distances on a grid, so a kept field is a solid). Sampling,
+  blending, `valueAt`, `nearestAt` and `weights` never mention triangles; `Kit.sculpt.surface` is the one
+  function that makes a mesh. To add (a) a baked or learned field as a shape kind: evaluate it onto a grid once
+  and pass `{ kind: 'grid', values, size, origin, cell }`, or add a row to `KINDS` that calls it per point
+  (slow in the band walk; a row in `SLOPED` if it gives a gradient), and state its bounds through `positions`;
+  owners and paint come from the solid it is wrapped in, so a source that carries several owners must be split
+  per owner or `weights` extended to ask the source. (b) A point or splat emitter: a second function beside
+  `surface` that walks `field.band`, projects each crossing cell's point onto the zero set with `valueAt`,
+  takes the normal from the field's gradient, the owners from `weights` and the paint from `nearestAt`; the
+  layers of kit/figure-sculpt.js would call it where they now call `surface`, which today is three call sites
+  in `sculptSteps` and `wornSteps` and should become one `mesher` argument when a second consumer exists.
+  Not done, and why: faces (nose, ears, brow, lips as blended shapes) are still the catalogue's stamps and
+  spheres; the warm targets of 150 / 60 / 20 ms are missed for the eight-layer person (about 245 / 95 / 38);
+  low-detail drapes thinner than the least share fall back to a rigid board; the look view does not yet pick
+  the level itself (the caller passes `levelFor(pixels)`).
 
 ## Spot Kick Showdown round 3: a finer picture, and the layers under it moved into the kit (football branch)
 
@@ -1014,3 +1114,272 @@ machine at load 20 to 40, so only the ratios mean anything.
   every seat of a screen shares one texel size.
 - **Play tool**: `--dpr 1|2|3` draws at a phone's pixel ratio (the grid rule cannot be judged at 1), and `log`
   waits for a promise, so `log Kit.debug.probe(3)` prints frame times.
+## Cloth, paint and carried things on the sculpt layer (sculpt-cloth branch)
+
+- **Causes first.** Four faults had one cause each, none of them in a garment. (1) The cape hole and the
+  notched hem: a draped piece was meshed where it was authored, and a cloak panel authored 17 cm behind
+  the spine, tilted 7 degrees in, lies inside a stout body and its top (83% of its vertices within 2 cm of
+  the skin, up to 5.6 cm deep). Nothing placed cloth relative to what is under it. (2) A nose dial changing
+  a skirt's length: `sculptSignature` left out the pose's inherited size (`rest.uniform`), so the first body
+  sculpted on a sheet (a height extreme) lent its layers to every later body with the same pieces; and a
+  worn part's root bone carried the role `root`, so a height dial reached it twice (once through the bone it
+  hangs from, once by role). (3) Boards at low detail: a solid thinner than 0.4 of the grid's least
+  thickness was left as its rigid piece. (4) Ragged bands, speckle and patches in paint: a paint sheet was
+  meshed on its own 1.2 mm above its canvas, so it was faceted differently from it (the chord error of a
+  limb at low detail is about that lift), crossed it, and shaded by normals of its own.
+- **Cloth is laid, not placed (kit/drape.js).** A drape is made at rest in four steps: its bones are swung
+  about their joints until nothing of it is buried deeper than `restDepth` in what is under it
+  (`hangAngle`); it is meshed, on the grid where it is thick and as a shell of its built shape where it is
+  thinner than the grid can hold (`shell`: welded, edges bisected, exactly as thin as authored at every
+  level); what is still under the surface is pushed out across the way it hangs and the push is handed on
+  down the cloth (`settle`); and its vertices are shared between the body bones it rests on and its own
+  bone (`ride`). "What is under it" is one function (`under`): the body's solids, each grown by the raise of
+  the garments on it, plus every drape of a lower `rank` already laid, as its solid, as a cloud of the
+  vertices that moved (`cloud`), and, for cloth hung all round the body, as everything it encloses
+  (`round`: a skirt is hollow, and tails laid over only its wall hung inside it). A solid with a rank is set
+  out on the cloth under it (`seat`): a pack sits on the cloak. The order is data: `rank` on a bone row,
+  defaults by fit in `WEAR_BY_FIT` (bottom 1, outerwear 2, cloak 3, back 4).
+  Rejected: a field warp (offsetting the garment's distance field by the body's) cannot hold a 2 cm panel
+  on a 2 to 5 cm grid and costs a field sample per drape; a relaxation pass (position-based cloth over a
+  few iterations) made at sculpt time would give folds, but its result depends on the mesh it runs on, so
+  the same garment would hang differently at each level of detail unless it ran on one mesh and was
+  transferred (not tried: reasoned, not measured); pushing
+  along the body's own slope crumpled cone caps and pushed a cloak out of the bottom of a skirt (kept:
+  across the hang only). Trade-off recorded: a cloak hangs as a straight panel from the shoulders to where
+  it rests (no fold at the seat); a second hinge at the contact is the next step, not a simulation.
+- **Cloth in motion is skin weights plus one bone.** Where cloth lies within `contact` of the body the
+  body's bones carry it (a lifted thigh moves the skirt: under 2 cm of thigh shows where the rigid piece let
+  4 cm through); further off it rides its own bone more, and beyond `clings` wholly. That bone is the one
+  the movement layer simulates (`soft` rows and `Kit.motion.loose` on the act branch), so trailing and
+  settling of a cape are the movement layer's, and this layer's part is that all the free cloth rides that
+  one bone. Rejected: a per-frame cloth pass (verlet over the shell) costs a CPU pass per figure per frame
+  and cannot be instanced in a crowd; collision in the vertex shader needs the body's capsules per instance
+  (a second bone-texture read per vertex per capsule). Weights cost nothing per frame and instance as the
+  body does. Known limit: with no simulated bone on this branch a cape does not swing, and a leg can pass
+  through cloth that rides only its own bone.
+- **Paint is the surface it is on.** `paintedOn` parts a layer's own triangles along the pattern's exact
+  edge (the predicate asked at vertices and at the middle of edges whose ends agree, a crossing placed by
+  seven bisections, decided per edge so no crack opens) into a painted sheet and the rest; both share
+  vertices, normals and skin along the cut. Nothing is drawn twice and nothing is lifted. Rejected: a
+  per-pixel shader would give the same edge with no triangles, and is the right end state for stipple; it
+  needs every `where` predicate of the region vocabulary compiled to GLSL with the surface coordinates as
+  vertex attributes, in both looks, which is a change to the look and region modules together and not to
+  this layer. Kept apart: finer paint grids (the edge stays stepped) and a larger lift (parallax at the
+  silhouette).
+- **What a garment covers is not drawn.** Each layer of a paint group gives up the triangles under a raised
+  garment that stands further off the skin, but for one ring under the garment's edge (`uncovered`). This
+  is the layering rule read downward, and it pays for the paint's cut: over 48 rolled figures mean
+  triangles fall 17 to 19% at every level (low 13 556 to 11 211; medium, 24 rolls, 34 584 to 28 183; high,
+  12 rolls, 72 182 to 58 542), though a nearly bare figure with a stippled scalp rises 41% at low and 19%
+  at medium (roll 3): three of the 48 rise more than 10% at low.
+- **Carried things by fit.** `back` parts are `wear: 'solid'` with rank 4 by default: sculpted, smooth,
+  skinned to their bones and set on the cloth under them. Held things (`grip`, `flame`) were tried as
+  solids and put back: a 1.5 cm pole thickened to fit the grid came out lumpy where the built capsule is
+  clean, and an umbrella's canopy cost 11 000 triangles at high detail. They, glasses and earrings stay the
+  pieces they are built as (looked at and left).
+- **Size reaches a worn part once.** A role selector that names `root` matches the body's own root, not the
+  roots of attached parts (names with a `/`), which inherit size through the bone they hang from. Visible
+  across the catalogue: on the default person worn parts are about 4.5% smaller than before, on a stout
+  body about 13% larger, which is what one application of its height dial gives.
+- **Fixtures changed.** tools/test-sculpt.js: a skirt's hem may be owned by the skirt's own bone as well as
+  the legs, and "hangs as authored" became "nothing inside the authored cone, nothing pushed further than
+  `mostPush`, some vertices exactly as authored"; "skins are closed" became "a skin, with the paint cut out
+  of it put back, is open only under a raised garment".
+- **Not done.** No fold where a panel leaves the body; coat tails over a skirt are lumpy and can show a
+  slit between two coarse vertices; stipple at low detail turns to short dashes; an umbrella's canopy still
+  passes through the head (a hold pose is the movement layer's); sit, kick and dive rows do not exist on
+  this branch, so cloth was judged in walk, run and swim only.
+## Faces, hair and species anatomy as relief and vocabularies (sculpt-faces branch)
+
+- **A face is relief on the head, not lumps beside it.** A feature's solid painted as its bone, or marked
+  `carve`, is a *mark* (`Kit.sculpt.relief`, kit/sculpt-relief.js): it is folded into the bone's own solid by a
+  smooth minimum (pressed on) or maximum (pressed in) with its own fillet (`blend`), so the sampler sees one
+  head. A nose, both ears, a ridge, cheeks, a chin, lips and two sockets then blend with each other, never
+  band where three meet, and may be thinner than a grid cell where they lie on the head. `Solid.plain` keeps
+  the bare base, so cloth and paint give way where a mark stands more than `SCULPT.proud` off it (a hair cap
+  no longer swells over an ear). A solid of another paint (a moustache) stays a solid of its own.
+  Rejected: (a) features as more solids in the body's field: the sampler fillets only the two nearest solids,
+  so a nose beside a cheek and a lip banded, and anything under a cell was dropped; (b) a k-way blend in the
+  kernel's sampler: right in principle, but it is the kernel owner's inner loop, costs every node of every
+  body, and still needs a way to carve; (c) displacement of the finished mesh: no new silhouette for an ear,
+  and the normals would need rebuilding.
+- **Named anchors on the plan.** `plan.anchors` says where this head keeps its eye, brow, nose, mouth, ear,
+  cheek and chin (`AnchorSpec`); a feature that names an anchor is placed from it. The same `face.nose('hooked')`
+  sits right on a chibi head, a tall head, a hound's muzzle and a fish. Rejected: per-part azimuths and
+  elevations (every part re-tuned per head; the reason faces drifted off relief), and anchors computed from
+  the head's shape (a muzzle and a skull need different answers that only the designer knows).
+- **Shape vocabularies as data.** kit/body-face.js: style rows (`NOSES`, `EARS`) and builders that turn a row
+  into features at any scale; a dial addresses the features by id (`nose`, `earTip`, `ridge`, `cheek`, `chin`,
+  `mouth`), so a new style needs no new dial. `lean` tips a feature's solid out of the surface (ear flare, nose
+  tip). kit/body-hair.js: hair primitives (mass, lock, fringe, parting, bun, tail, braid, sideburns, fall)
+  placed by azimuth and rise on a head ellipsoid, returning ordinary bone rows; a style is a few calls. Long
+  hair is `fall`, a drape that `hangs` on head, neck and spine through the existing wear mechanism.
+  Rejected: hair as raised painted regions only (no silhouette beyond an offset shell, which is what read as a
+  helmet), and one strand bone per lock with no shared placement (every style hand-placed in metres).
+- **A plan may extend a plan** (`extends`, one step deep): the sample species' faces live on `bipedFaced`,
+  `quadrupedFaced` and `fishFaced`, which add `anchors` and `features` to skeletons that tests and other
+  catalogues keep using bare. Rejected: putting the face on the bare plans (fixtures that count pieces and pin
+  shapes are about skeletons) and copying the bone lists (two sources of one skeleton).
+- **Proof framing.** A body cell is sized by what the figure sweeps when it turns (`Kit.figure.measureSwept`,
+  props included); a head cell is centred on the ball of the head bone's own surface, every species' head drawn
+  the same size, and the tool photographs each close-up cell alone (`solo`) so a hound's back never covers the
+  next head. `--only` narrows options and extremes to the sockets or dials under review; `--framing head`
+  judges them close up. Rejected: scissoring each cell in the renderer (the look's passes share full-screen
+  targets) and widening head cells until bodies fit (no longer a close-up).
+  Not done, and why: worn solids (hair masses, a hat) still carry the faces buried in the head, which is most
+  of the triangle rise on a haired figure (dropping them belongs to the worn-layer code and its closed-mesh
+  test); the stipple of a buzz cut and stubble is still paint and still blotches at some sizes; sample bipeds
+  keep capsule torsos and their bone counts because fixtures pin them, so a wing has two blades and no arm bone.
+
+## Sculpted figures cheap enough for games: one culled, simplified surface per figure, a level chosen by size (sculpt-cost branch)
+
+- **The problem.** A dressed wardrobe person was 8 skinned meshes of 69 k triangles at high detail (10.6 k
+  at low), each drawn twice (toon and ink hull): 21 draw calls and 139 k triangles a figure in the browser, and
+  a "low" crowd member of 10 k where the old rigid body was 1.8 k. Nothing chose the level; callers passed it.
+- **What a figure is now.** `Kit.figure.sculptLayers` returns, beside its layers, one `surface`
+  (`SculptSurface`): every layer end to end in one skinned mesh, with a paint per vertex (ramp slot, which is
+  also the line class, ink group, shiny). `kit/look-toon.js` reads it with `LOOK_VERTEX_PAINT` (additive: a
+  part with `vertexPaint: true`). No vertex is shared between two layers, so the paint is constant over a
+  triangle and needs no flat varying (WebGL1 has none). Rigid pieces that are plainly shaded (a held blade, a
+  pack, a fin too thin for the grid) ride in the same mesh, placed by their bone in the bind pose and owned
+  wholly by it (`joined`); stamps, region-painted and fixed-tone pieces keep their own material. A figure is
+  the surface, its hull and its face: 3 draw calls (renderer.info, toon), 4 in the pixel look (2 of them the
+  indexed passes), and a crowd of any size is the same 3 or 4.
+  Rejected: a material group per layer in one geometry (still a draw per group); a texture atlas of paints
+  (needs a UV unwrap of an implicit surface); one flat-shaded varying (WebGL2 only, and single figures must
+  run on WebGL1).
+- **Fewer triangles, three mechanisms in this order.**
+  1. *What a layer hides is not meshed* (`Kit.sculpt.surface`, `cover` / `under`). A cut surface marks the
+     grid nodes it holds; the layers are made from the outermost in and the skin last, and a cell whose inside
+     corners are all under a layer, with no bare node among their 18 neighbours, makes no vertex. A garment's
+     wall now reaches `SCULPT.wallShare` (0.3) of a cell below the surface it sits on, because a coarse mesh of
+     that surface sags between its vertices and the 2 mm wall left pinholes at hems. Measured from 26
+     directions at 160 x 160 rays on four dressed bodies at two levels: 0 of 665,600 rays see anything else
+     (6 neighbours: up to 25 differ; 26 neighbours: nothing gained over 18). It removes 21% of the triangles
+     at high, 15% at medium and 3% at low: less than hoped, because the margin is a cell and at coarse levels a
+     garment is only a few cells wide. Rejected: testing the upper layer's predicate at each lower vertex (the
+     predicate is the dearest call in the kernel); culling under worn solids and drapes (they are other fields
+     and they swing: what a hat hides at rest it shows in a nod).
+  2. *Edges collapse within an error* (`Kit.sculpt.simplify`): quadric error, collapse onto one end (a kept
+     vertex is never moved, so it is still on the field's surface and keeps its normal, owners and weights
+     untouched), cheapest first from a heap. It refuses whatever would open or pinch the surface (link
+     condition, open edges only along themselves), fold a triangle, or leave an edge spanning more than half a
+     change of owner (a knee keeps its loops). The turn of the vertex normal is part of the cost
+     (`SIMPLIFY.turn`): the normals are smoothed over 44 mm and carry form the positions do not, and without
+     the term tone edges ran straight across what had been curves (seen on a skirt and a cloak, sheets kept).
+     The tolerance is `DETAIL[level].error` of a cell: a level's cell is about four pixels at the largest size
+     the level is drawn, so 0.06 to 0.13 of a cell is a quarter to half a pixel there (0.66, 1.7, 3.6 mm).
+     Then `DETAIL[level].triangles` is a budget (25 k, 8 k, 2.5 k, 1 k): the cheapest further collapses until
+     it is met, whatever they cost, with the worst distance reported (`surface.error`).
+     Rejected: coarser cells (thin limbs fall off the grid and small features go first, which is the
+     opposite of what an error-driven collapse does); vertex clustering (fast, but not manifold and blind to
+     weights); optimal vertex placement (moves vertices off the surface and needs weights blended);
+     adaptive (octree) surface nets (the right long-term answer, since it would also save the sampling and
+     the collapse time, but a new mesher with crack handling: not in this round).
+  3. *A `far` level* for crowds: the grid of low (a coarser grid loses the limbs) simplified to 1,000
+     triangles. The target was 600. At 600 heads go angular and skin shows through shirts at 64 pixels
+     (sheet kept); at 1,000 it holds. Layers stand at least the level's error apart (`stackGarments`, `slack`)
+     so a coarse level's flat triangles do not cut through the layer below. What would reach 600: garments
+     as paint on one surface at far (needs seams whose two sides collapse together) rather than as shells.
+- **Not done: replacing the inverted hull.** The hull doubles the triangles drawn in the toon look (the
+  pixel look already inks in screen space and draws none). A screen-space outline at native resolution is
+  the indexed path the pixel look uses; switching toon to it changes its anti-aliasing and line weight, which
+  is a look decision, not a cost one. The numbers per figure below are per pass; double them for toon.
+- **Choosing the level** (`kit/figure-detail.js`, pure). `detailFor(pixels, shown)` over the bands far up to
+  64, low up to 150, medium up to 330, else high, with 16% hysteresis round the band shown. Heights are in
+  pixels of the target, so a pixel look counts texels. `Kit.figure.build(view, bake, { level: 'auto' })`
+  registers the figure with the view, which measures each such figure every frame (`pixelsTall`) and calls
+  `figure.resize`; the new level is sculpted in slices of 4 ms a frame (one figure at a time, the rest wait)
+  while the old one is drawn, and swapped when ready; figures of one bake share the result through the cache.
+  The default level stays 'high' (the creator, the portrait and the sheets rely on it); a game passes
+  `level: 'auto'`. Rejected: making auto the default now (changes what five existing callers get; proposed
+  once games have run on it). `Kit.figure.crowd` still takes one level for the whole crowd.
+- **Time.** The simplifier costs about what culling saves, and more: wardrobe person, eight layers, warm,
+  process CPU, node 22, load average 11 on 4 cores, before / after: high 237 / 322 ms, medium 103 / 153,
+  low 44 / 74, far - / 97 (targets 150 / 60 / 20: missed, and further than before). A sculpt never blocks a
+  frame for long: surfaces are now meshed in stages (`surfaceSteps`) and the simplifier pauses every 1,200
+  collapses. A Worker was weighed again and not taken: the hosted page's policy on worker scripts is not
+  stated in the repository (scripts come only from an allowed CDN list; the kit is not on one, so a worker
+  would need a blob URL, which such a policy normally refuses) and cannot be tried headless here. The kernel
+  is pure and its results are typed arrays, so it can move if the policy allows. What would meet the
+  targets: adaptive sampling so that flat regions are never meshed finely (it removes the collapse work and
+  about half the sampling), then typed scratch for the distance calls (see the first sculpt entry).
+- **Memory.** `sculptCache` is bounded by bytes (`SCULPT.keptBytes`, 12 MB) as well as by count (24). A
+  person's arrays: 917 / 345 / 107 / 43 kB at high / medium / low / far (2,164 / 908 / 338 kB before). 500
+  dial changes at medium hold the cache at 24 bakes and 8.3 MB throughout.
+- **Trade-offs taken.** Changing a held prop now sculpts the figure again (it is part of the surface), as
+  changing a hat already did. A layer's arrays are views of the surface (no copy), so a layer cannot be
+  written to. Skins are open under clothes: code that needs a closed skin asks for `{ cull: false }`.
+- **Revisit if** a phone shows vertex cost dominating (then replace the hull in toon), crowds need mixed
+  levels, or sculpt time hurts editing (adaptive meshing, or a Worker once the policy is known).
+
+## Sculpt branches joined: cloth, faces, cost and movement on one surface (sculpt branch, merge)
+
+- **The problem.** Three branches grew from one sculpt layer and each changed what a figure's surface is:
+  cloth cut paint out of its canvas and stopped drawing covered layers, faces added relief marks, proud
+  garment cuts and a worn head of hair, cost made the figure one culled, simplified, vertex-painted mesh.
+  Main meanwhile gave figures acts, loose bones and soft part kinds. Joined textually they compile; joined
+  without thought they do the same work twice (two culls), weld nothing (paint sheets and their canvas are
+  separate layers, so the simplifier opens gaps along every paint edge) and miss each other's inputs.
+- **Hidden surface: one mechanism in a field, the other across fields.** Inside one distance field cost's
+  `cover` / `under` at mesh time is the only cull: a cell that a layer further out covers is never meshed, so
+  cloth's `uncovered` pass over finished garment layers of the same field was the same question asked later
+  and is no longer run there. `uncovered` stays for what `cover` cannot see: a worn solid on its own grid
+  (a head of hair, a hat, a pack) that sits partly inside the body. Its triangles deeper than
+  `SCULPT.buriedCells` (1.5) of its own cells inside the posed body are dropped; drapes are exempt (a thin
+  shell near the skin is the garment, not a buried part). Measured on a parted head of hair at high detail:
+  8,616 triangles, of which cost's cull removed none; 4,789 after. `{ cull: false }` still gives closed layers.
+  Rejected: running both culls on garments (double work, same answer); sampling worn solids into the body's
+  field so one cull serves (a hat would blend into the head, and the field's grid is sized for the body);
+  a depth of 0 (the hull and a posed joint show the rim of the hole).
+- **Paint and the simplifier: welded seams, held like borders.** A paint is cut from its canvas by
+  `paintedOn`, so the sheet and what is left share their cut edge exactly. `joinLayers` welds those seam
+  vertices (the sheet names its canvas, `on`) and gives every triangle a paint label; `Kit.sculpt.simplify`
+  takes the labels (`paints`) and treats an edge between two labels as it treats an open border: a seam
+  vertex moves only along a seam edge, and a vertex where seams fork, end or meet a border does not move.
+  Paint edges, ink groups and skin ownership therefore survive at every level, with no crack between a
+  sheet and its canvas, and the triangle budgets still hold. Different layers that are not paint on one
+  another are never welded, so nothing collapses across a garment or a worn solid. Relief marks are part of
+  the bone's solid, hence of the field, and are kept or lost by the error bound like any other shape.
+  Rejected: locking every seam vertex (a stippled beard is all seam; the low and far budgets cannot be met);
+  simplifying each layer before the paint cut (the cut needs the dense canvas, and two layers simplified
+  apart no longer share an edge); leaving sheets unwelded (cracks at low detail, drawn as ink lines).
+- **`locked` now locks.** Cost's `locked` vertices were skipped when the queue was first filled and queued
+  again after any neighbour collapsed, so a joined rigid piece could lose vertices at a tight budget. Found
+  while reading the queue for the seam rule; fixed in the queue (`isFixed`). No test asked for it; one does
+  now, with a control.
+- **Kept bakes hold the surface only.** With paint and hair in the surface a person at high detail was
+  1.17 MB against a 1.10 MB budget. The bytes were the layers kept beside the surface (index copies), not
+  the surface. `layers` is now derived from the surface on first read. The budget is unchanged.
+  Rejected: raising the budget.
+- **Unoutlined pieces join the surface.** Lips, a nose pad and other plain rigid pieces drawn without an ink
+  line used to stay separate meshes (a draw call each) because the surface had no way to say "no line".
+  The paint's third number is now a sum of flags (`PAINT_FLAGS`: shiny 1, unoutlined 2) and the toon hull
+  leaves an unoutlined vertex where it is. Stamps, region paint, fixed tones and emissive pieces still keep
+  their own material.
+- **The signature.** `sculptSignature` now holds everything any branch reads: per piece its regions, wears,
+  hangs, rank, clings, covers, carve, blend, shiny and unoutlined; per pose the uniform size; per call the
+  `whole` and `dense` options. A test changes each and expects a new bake.
+- **Movement.** A cloak is a drape that rides its own bone (`hangs`, rank 3) and that bone is a soft part
+  (`soft: 'cloak'`), so acts and `Kit.motion.loose` swing it and the sculpted cloth follows; plaits swing by
+  `soft: 'plait'` in place of the stiffness and damping pair the faces branch wrote before soft kinds
+  existed. Hair masses and falls stay rigid on the head, as the faces branch left them.
+- **Proof tool.** One job shape for every flag the branches added (`--acts`, `--sockets`, `--only`,
+  `--framing`, `--rigid`, `--level`); cells are framed by swept bounds (main) through the faces branch's
+  body and head framings.
+- **A fall of hair and the cloth layer.** A fall is a drape (it follows head, neck and spine), and the cloth
+  layer settles a drape out of everything under it: the fall was pushed out of the head it grows from and
+  came out ragged. Its row now says what it covers (`covers: ['spine']`): it is laid over the back and what
+  is worn there, and the head and neck are not under it. Rejected: making the fall a solid (it would stop
+  following a nod); exempting hair in code (the row can already say it).
+- **Workbench screens and the frame budget.** `proof`, `wardrobe` and `portrait` failed the game budget on
+  main by draw calls (560 / 660 / 1,036). One surface a figure brought the calls to 24 to 39, and left them
+  over by triangles (401 k / 389 k / 632 k of 300 k), because each drew every figure at high detail whatever
+  its size. They now build figures at `level: 'auto'`, the level their size on the screen asks for
+  (kit/figure-detail.js); the proof tool still states the level from its cell size, so a photograph does
+  not change level while it is taken. On the smoke's phone screen: 41 k / 41 k / 67 k triangles. No budget
+  was raised and no workbench row was added. Rejected: a looser budget row for `kind: 'workbench'` (the
+  screens were drawing detail nobody could see; the budget was right).
+- **Costs and revisit.** See METRICS row 43. Revisit the burial depth if a pose opens a visible hole at a
+  hairline; revisit seam holding if a look needs paint edges to move (a seam then needs its own error
+  term rather than the border rule).

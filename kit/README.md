@@ -89,6 +89,9 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `body-recipe.js` | `Kit.body.catalog`: species over `Kit.lineage`; `resolve`, `validate`, `normalize`, `encode` / `decode`, `hash`, `table`, `bakery` |
 | `body-edit.js` | `Kit.body.editor`: a schema of every dial, colour and socket; pure edits; what changed between two bakes |
 | `body-store.js` | `Kit.body.store`: instances as columns (position, heading, phase, detail, recipe index) |
+| `sculpt-relief.js` | `Kit.sculpt.relief`: a base solid with marks pressed on (a nose) or in (an eye socket), as one solid; `smoothMax` |
+| `body-face.js` | `Kit.body.face`: a face as relief, as data: `anchors`, style tables `NOSES` and `EARS`, builders for a nose, ears, brow ridge, cheeks, chin, lips, eye sockets, plain eyes, mouth and nose pad |
+| `body-hair.js` | `Kit.body.hair.on(head)`: hair primitives as bone rows (mass, lock, fringe, parting, bun, tail, braid, sideburns, fall), placed by azimuth and rise on a head |
 | `body-samples.js` | `Kit.body.samples`: a biped, a quadruped, a fish, four parts and a family of species, as data |
 | `body-wardrobe.js` | `Kit.body.wardrobe`: an original humanoid catalogue for a character creator (46 dials, 14 colour channels, 21 sockets, 4 species), as data |
 | `body-debug.js` | `Kit.body.debug`: a stick figure with socket markers on any 2D context (runs in node with a recorder) |
@@ -140,6 +143,9 @@ Kit.pack.toText(catalog.encode(recipe));                              // an 8-ch
 | `look-show.js` | the `look` screen (`Kit.play('look')`): two stand-in figures, every knob, and on-request measurements |
 | `figure-shapes.js` | pure. `Kit.figure` shape builders (capsule, sphere, box, lathe, extrude) to plain arrays per level of detail, `shapeKey`, `writeBoneMatrix` |
 | `figure-layout.js` | pure. `Kit.figure.layout` (bake -> pieces with ramps and ink groups), `planUpdate` (what an edit changes), `measureRest` / `fitView` (grounding, framing) |
+| `sculpt.js` | pure. `Kit.sculpt`: solids -> a distance `Field` (`sample`), a field -> a mesh (`surface`, with `cover` / `under` so hidden surface is not meshed), `simplify` (edge collapse within an error, skin kept), `weights` |
+| `figure-sculpt.js` | pure. `Kit.figure.sculptLayers` / `sculptTask` (a bake -> its layers and the one `surface` a figure draws), `sculptCache` (bounded by count and bytes) |
+| `figure-detail.js` | pure. `Kit.figure.detailFor` (height drawn -> level of detail, with hysteresis), `pixelsTall`, `DETAIL_BANDS` |
 | `figure.js` | `Kit.figure.build` (a bake drawn through `Kit.look`, posed in one pass, updated incrementally), `geometryCache`, `crowd` (instanced, one bake) |
 | `figure-show.js` | the `figures` screen (`Kit.play('figures')`): the body samples in 3D, live edits, a debug pose and the binding probe |
 
@@ -215,7 +221,7 @@ loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
 input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
 lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
-body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery
+body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-face  body-hair  body-samples  body-wardrobe  body-debug  body-gallery
 look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show  body-sheet
 creator-rows  creator-session  creator-slots  creator-camera  creator-icons  creator-perform  creator-controls  creator-stage  creator-panels  creator-theme  creator
 games/*.js  ui/gallery

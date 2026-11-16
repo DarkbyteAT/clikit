@@ -69,6 +69,23 @@
   // ---- GLSL chunks -----------------------------------------------------------------------------------------------------
 
   /**
+   * A crowd of one sculpted surface: an instanced mesh whose members each have their own bones. Row `gl_InstanceID`
+   * of the bone texture holds that member's bone matrices (four texels each, columns), already times the inverse
+   * of the pose the surface was made in; the instance matrix then places the member. WebGL2 only.
+   */
+  const GLSL_CROWD_PARS = `
+    #ifdef LOOK_CROWD_BONES
+      attribute vec4 skinIndex;
+      attribute vec4 skinWeight;
+      uniform highp sampler2D uCrowdBones;
+      mat4 crowdBone(float bone) {
+        int at = int(bone) * 4;
+        return mat4(texelFetch(uCrowdBones, ivec2(at, gl_InstanceID), 0), texelFetch(uCrowdBones, ivec2(at + 1, gl_InstanceID), 0),
+          texelFetch(uCrowdBones, ivec2(at + 2, gl_InstanceID), 0), texelFetch(uCrowdBones, ivec2(at + 3, gl_InstanceID), 0));
+      }
+    #endif`;
+
+  /**
    * Vertex stage shared by the toon and hull shaders: three.js's skinning and instancing chunks, in the order
    * its own materials use them. Leaves `transformedNormal` (view space), `mvPosition` and `gl_Position` set.
    */
@@ -79,8 +96,15 @@
     #endif
     #include <skinbase_vertex>
     #include <skinnormal_vertex>
+    #ifdef LOOK_CROWD_BONES
+      mat4 crowdSkin = skinWeight.x * crowdBone(skinIndex.x) + skinWeight.y * crowdBone(skinIndex.y) + skinWeight.z * crowdBone(skinIndex.z) + skinWeight.w * crowdBone(skinIndex.w);
+      objectNormal = (crowdSkin * vec4(objectNormal, 0.0)).xyz;
+    #endif
     #include <defaultnormal_vertex>
     #include <begin_vertex>
+    #ifdef LOOK_CROWD_BONES
+      transformed = (crowdSkin * vec4(transformed, 1.0)).xyz;
+    #endif
     #ifdef LOOK_STAMP
       transformed = stampCentre.xyz + (transformed - stampCentre.xyz) * stampGrowth();
     #endif
@@ -193,8 +217,8 @@
    * contour "bilinear weight of one side = 1/2", a smooth curve, where a nearest read would give texel steps.
    */
   const GLSL_REGIONS = `
-    #if defined(LOOK_STAMP) && !defined(LOOK_REGIONS)
-      uniform float uBlockRow;     // a stamp on a bone nothing is painted over still looks its ramps up from the block
+    #if (defined(LOOK_STAMP) || defined(LOOK_VERTEX_PAINT)) && !defined(LOOK_REGIONS)
+      uniform float uBlockRow;     // a stamp on a bone nothing is painted over (or a vertex-painted surface) still looks its ramps up from the block
     #endif
     #ifdef LOOK_REGIONS
       uniform sampler2D uRegionMap;
@@ -268,8 +292,23 @@
       }
     #endif`;
 
+  /**
+   * One mesh of several paints (the layers of a sculpted figure joined: kit/figure-sculpt.js): each vertex names
+   * its ramp slot, which is also its line class, its ink group, and its flags added up: 1 if it glints like a
+   * shiny part, 2 if it has no outline of its own (a lip on a face: its hull is not pushed out, so it stays
+   * behind the piece). No vertex is shared between two paints, so the three are the same at a triangle's corners
+   * and reach a fragment unchanged.
+   */
+  const GLSL_VERTEX_PAINT_PARS = `
+    #ifdef LOOK_VERTEX_PAINT
+      attribute vec3 vertexPaint;
+      varying vec3 vPaint;
+    #endif`;
+
   const TOON_VERTEX = `
     #include <skinning_pars_vertex>
+    ${GLSL_CROWD_PARS}
+    ${GLSL_VERTEX_PAINT_PARS}
     #ifdef LOOK_INSTANCE_RAMP
       attribute float instanceRamp;
     #endif
@@ -289,6 +328,11 @@
         return clamp(stampPaint.z / max(texels, 1e-5), 1.0, ${STAMP_MOST_GROWTH.toFixed(1)});
       }
     #endif
+    #ifdef LOOK_RESPONSE_SHARE
+      // One surface that is part face and part body (a sculpted skin): how much of the part's response each vertex takes.
+      attribute float responseShare;
+      varying float vResponseShare;
+    #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
     varying float vViewDepth;
@@ -296,9 +340,15 @@
     void main() {
       ${GLSL_TRANSFORM}
       vViewNormal = normalize(transformedNormal);
+      #ifdef LOOK_RESPONSE_SHARE
+        vResponseShare = responseShare;
+      #endif
       vLocalPosition = position;
       vViewDepth = -mvPosition.z;
       vRampOffset = 0.0;
+      #ifdef LOOK_VERTEX_PAINT
+        vPaint = vertexPaint;
+      #endif
       #ifdef LOOK_INSTANCE_RAMP
         vRampOffset = instanceRamp;
       #endif
@@ -333,6 +383,12 @@
     #ifdef LOOK_STAMP
       varying vec3 vStampPaint;
     #endif
+    #ifdef LOOK_RESPONSE_SHARE
+      varying float vResponseShare;
+    #endif
+    #ifdef LOOK_VERTEX_PAINT
+      varying vec3 vPaint;
+    #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
     varying float vViewDepth;
@@ -354,8 +410,20 @@
     void main() {
       float row = uRamp + vRampOffset;
       float inkClass = uInkClass;
+      float inkGroup = uInkGroup;
+      bool isShiny = uPart.x > 0.5;
+      #ifdef LOOK_VERTEX_PAINT
+        row = uBlockRow + floor(vPaint.x + 0.5) + vRampOffset;
+        inkClass = floor(vPaint.x + 0.5);
+        inkGroup = floor(vPaint.y + 0.5);
+        isShiny = mod(floor(vPaint.z + 0.5), 2.0) > 0.5;
+      #endif
       float lineRow = -1.0;
       vec3 response = uResponse;
+      #ifdef LOOK_RESPONSE_SHARE
+        // Light values are mixed, not gains: halfway down a neck is halfway between a face's light and a form's.
+        response = mix(vec3(${RESPONSES.form.fillGain.toFixed(1)}, ${RESPONSES.form.fillBias.toFixed(1)}, ${RESPONSES.form.dither.toFixed(1)}), uResponse, clamp(vResponseShare, 0.0, 1.0));
+      #endif
       #ifdef LOOK_REGIONS
         vec2 regionPoint = regionUv(vLocalPosition);
         vec4 region = regionAt(regionPoint);
@@ -389,7 +457,7 @@
       // Bounce: shadowed surface that faces the back light steps up one tone, toward the ramp's own colour and never past it.
       if (uBounce > 0.5 && dot(normal, uBack.xyz) > uBack.w) tone = min(tone + 1.0, max(tone, lightest - 1.0));
       // Glint: where the normal bisects the light and the viewer (the viewer is +z in view space), a shiny part takes the lightest tone.
-      if (uPart.x > 0.5 && dot(normal, normalize(uLight + vec3(0.0, 0.0, 1.0))) > uGlintEdge) tone = lightest;
+      if (isShiny && dot(normal, normalize(uLight + vec3(0.0, 0.0, 1.0))) > uGlintEdge) tone = lightest;
       if (uPart.y > 0.5) tone = lightest;
       if (uPart.z >= 0.0) tone = fixedTone(uPart.z);
       #ifdef LOOK_STAMP
@@ -402,7 +470,7 @@
       }
       #ifdef LOOK_INDEX_OUTPUT
         // (ramp, tone + line class, ink group, depth) as four bytes; colour is resolved later, by look-ink.js.
-        gl_FragColor = vec4(indexBytes(row, tone, inkClass), uInkGroup / 255.0, depthByte(vViewDepth));
+        gl_FragColor = vec4(indexBytes(row, tone, inkClass), inkGroup / 255.0, depthByte(vViewDepth));
       #else
         #ifdef LOOK_SOFT
           // A fixed tone is whole (and may be the deep column), so its blend weight is zero and it is read as it is.
@@ -422,6 +490,8 @@
    */
   const HULL_VERTEX = `
     #include <skinning_pars_vertex>
+    ${GLSL_CROWD_PARS}
+    ${GLSL_VERTEX_PAINT_PARS}
     #ifdef LOOK_INK_NORMAL
       attribute vec3 inkNormal;
     #endif
@@ -431,6 +501,9 @@
     varying vec3 vLocalPosition;
     void main() {
       vLocalPosition = position;
+      #ifdef LOOK_VERTEX_PAINT
+        vPaint = vertexPaint;
+      #endif
       ${GLSL_TRANSFORM}
       // three.js flips the normal of a back-side material; the push must follow the surface's true outward normal.
       #ifdef FLIP_SIDED
@@ -438,7 +511,12 @@
       #endif
       vec2 direction = (projectionMatrix * vec4(transformedNormal, 0.0)).xy * uViewport;
       direction /= max(length(direction), 0.0001);
-      gl_Position.xy += direction * (2.0 * uInkWidth / uViewport) * gl_Position.w;
+      float inkWidth = uInkWidth;
+      #ifdef LOOK_VERTEX_PAINT
+        // A vertex that says it has no outline (flag 2) is not pushed out: its hull stays behind its own surface.
+        if (vertexPaint.z > 1.5) inkWidth = 0.0;
+      #endif
+      gl_Position.xy += direction * (2.0 * inkWidth / uViewport) * gl_Position.w;
       // The step back is made in view space and only the depth is taken from it, so the line keeps its place on screen.
       vec4 behind = projectionMatrix * vec4(mvPosition.xy, mvPosition.z - ${HULL_BACK}, 1.0);
       gl_Position.z = behind.z / behind.w * gl_Position.w;
@@ -454,12 +532,21 @@
     uniform float uInkClass;
     varying float vViewDepth;
     varying vec3 vLocalPosition;
+    #ifdef LOOK_VERTEX_PAINT
+      varying vec3 vPaint;
+    #endif
     ${GLSL_PALETTE}
     ${GLSL_DEPTH_BYTE}
     ${GLSL_REGIONS}
     void main() {
       float row = uRamp;
       float inkClass = uInkClass;
+      float inkGroup = uInkGroup;
+      #ifdef LOOK_VERTEX_PAINT
+        row = uBlockRow + floor(vPaint.x + 0.5);
+        inkClass = floor(vPaint.x + 0.5);
+        inkGroup = floor(vPaint.y + 0.5);
+      #endif
       #ifdef LOOK_REGIONS
         // The outline takes the ink of whatever is painted there, and a shell is outlined only where it shows.
         vec4 region = regionAt(regionUv(vLocalPosition));
@@ -469,7 +556,7 @@
       #endif
       #ifdef LOOK_INDEX_OUTPUT
         float high = step(${ROW_HIGH_STEP}.0, row);
-        gl_FragColor = vec4((row - ${ROW_HIGH_STEP}.0 * high) / 255.0, (${INK_COLUMN}.0 + ${CLASS_STEP}.0 * inkClass + ${ROW_HIGH_BIT}.0 * high) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
+        gl_FragColor = vec4((row - ${ROW_HIGH_STEP}.0 * high) / 255.0, (${INK_COLUMN}.0 + ${CLASS_STEP}.0 * inkClass + ${ROW_HIGH_BIT}.0 * high) / 255.0, inkGroup / 255.0, depthByte(vViewDepth));
       #else
         gl_FragColor = vec4(toOutput(paletteColor(${INK_COLUMN}.0, row)), 1.0);
       #endif
@@ -514,12 +601,20 @@
    *   for skin that carries features (a head): the fill light keeps what is turned to the viewer at the ramp's
    *   own colour, and it is never dithered. Where a region map paints over the mesh (hair on a scalp) and on
    *   its raised shells, the part answers as a form again
+   * @property {boolean} [responseShare] the geometry has a float `responseShare` attribute, 0..1 per vertex: how
+   *   much of `response` the surface takes there, the rest being a form's (one skin that is a head and a body)
    * @property {{value: THREE.Vector2}} [anchor] from `shading.follow(root)`: the figure this part's dither moves with
+   * @property {THREE.Texture} [crowdBones] an InstancedMesh of one skinned surface: a float texture with a row of bone
+   *   matrices per instance (4 texels a bone), which bend the geometry's `skinIndex`/`skinWeight` before the instance matrix places it (WebGL2)
    * @property {boolean} [instanceRamp] an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
    * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below
    *   it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
    * @property {LookRegions} [regions] the mesh is painted from a baked region map instead of one ramp
-   * @property {number} [blockRow] with `regions` or `stamps`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
+   * @property {boolean} [vertexPaint] the geometry has a three-number `vertexPaint` attribute: per vertex, its ramp slot
+   *   (a row from `blockRow`, and its line class), its ink group and its flags added up (1 where it is shiny, 2 where
+   *   it has no outline), instead of the part's one `ramp`, `inkClass`, `inkGroup`, `shiny` and `outlined` (several
+   *   paints in one mesh, so one draw: a sculpted figure's layers)
+   * @property {number} [blockRow] with `regions`, `stamps` or `vertexPaint`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
    * @property {number} [shell] with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
    * @property {boolean} [stamps] the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js
    *   `stamps`): each vertex names its slot and tone, and it is never outlined
@@ -616,7 +711,8 @@
       uInkGroup: { value: part.inkGroup === undefined ? (part.emissive ? 0 : 1) : part.inkGroup },
       uPart: { value: new THREE.Vector3(part.shiny ? 1 : 0, part.emissive ? 1 : 0, part.tone === undefined ? -1 : part.tone) },
       uInkClass: { value: part.inkClass || 0 },
-      ...(part.regions || part.stamps ? { uBlockRow: { value: part.blockRow || 0 } } : {}),
+      ...(part.crowdBones ? { uCrowdBones: { value: part.crowdBones } } : {}),
+      ...(part.regions || part.stamps || part.vertexPaint ? { uBlockRow: { value: part.blockRow || 0 } } : {}),
       ...(part.regions ? regionUniforms(part.regions, part.shell || 0) : {}),
     });
     const axisVector = (axis) => new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
@@ -632,7 +728,14 @@
         uShell: { value: shell },
       };
     };
-    const partDefines = (part) => ({ ...(part.regions ? { LOOK_REGIONS: '' } : {}), ...(part.stamps ? { LOOK_STAMP: '' } : {}) });
+    const partDefines = (part) => ({
+      ...(part.regions ? { LOOK_REGIONS: '' } : {}),
+      ...(part.stamps ? { LOOK_STAMP: '' } : {}),
+      ...(part.responseShare ? { LOOK_RESPONSE_SHARE: '' } : {}),
+      ...crowdDefines(part),
+    });
+    /** What the toon and the hull material of a part both need to know of how its vertices are placed and painted. */
+    const crowdDefines = (part) => ({ ...(part.crowdBones ? { LOOK_CROWD_BONES: '' } : {}), ...(part.vertexPaint ? { LOOK_VERTEX_PAINT: '' } : {}) });
 
     /** Makes the geometry draw twice, once per material slot (toon, hull), and gives it welded normals for the hull. */
     const prepareGeometry = (mesh) => {
@@ -680,7 +783,7 @@
           vertexShader: HULL_VERTEX,
           fragmentShader: HULL_FRAGMENT,
           side: THREE.BackSide,
-          defines: { ...baseDefines(), ...(part.regions && !part.stamps ? { LOOK_REGIONS: '' } : {}), LOOK_INK_NORMAL: '' },
+          defines: { ...baseDefines(), ...(part.regions && !part.stamps ? { LOOK_REGIONS: '' } : {}), ...crowdDefines(part), LOOK_INK_NORMAL: '' },
         });
         // An unoutlined part (group 0, stamps, or one that asked for none) keeps its hull material but never shows it.
         hull.userData.isInked = partValues.uInkGroup.value > 0 && !part.stamps && part.outlined !== false;
@@ -689,7 +792,7 @@
         const entry = { mesh, toon, hull, setRamp: (row) => (partValues.uRamp.value = row) };
         // A region or stamp may name any slot of its figure's block, so the block's last row counts too (a per-instance
         // row offset is the caller's to keep in range).
-        highestRow = Math.max(highestRow, part.ramp, part.regions || part.stamps ? (part.blockRow || 0) + BLOCK_SLOTS - 1 : 0);
+        highestRow = Math.max(highestRow, part.ramp, part.regions || part.stamps || part.vertexPaint ? (part.blockRow || 0) + BLOCK_SLOTS - 1 : 0);
         dressed.push(entry);
         defineKey = '';
         return entry;

@@ -52,7 +52,8 @@
         Array.from({ length: CHARACTERS }, (_unused, index) => {
           const recipe = pageIndex === 0 && index === 0 ? basePerson() : table.roll(TABLE_SEED, pageIndex * CHARACTERS + index);
           const bake = bakery.bakeRecipe(recipe);
-          const figure = Kit.figure.build(view, bake, { cache, featuresOf: Kit.body.figureHooks(bake).featuresOf });
+          // The level its cell's size on the screen asks for (kit/figure-detail.js): sixteen characters on a phone are small.
+          const figure = Kit.figure.build(view, bake, { cache, level: 'auto', featuresOf: Kit.body.figureHooks(bake).featuresOf });
           const column = index % GRID.columns;
           const row = Math.floor(index / GRID.columns);
           figure.root.position.x = (column - (GRID.columns - 1) / 2) * GRID.cellWidth;
