@@ -560,8 +560,10 @@
         const columns = job.columns || sheet.columns;
         const framing = job.framing || sheet.framing;
         const rowsPerPage = job.rows || 4;
-        // A head close-up is drawn at full detail; a body in a cell by how many pixels tall the cell makes it.
-        const level = job.level || (framing === 'head' || !job.cellPixels ? undefined : Kit.figure.levelFor(job.cellPixels * CELL.figureShare));
+        // A head close-up is drawn at full detail; a body in a cell by how many pixels tall the cell makes it, which
+        // the tool states (a photograph must not change level while it is taken) and the view measures otherwise.
+        const sized = job.cellPixels ? Kit.figure.levelFor(job.cellPixels * CELL.figureShare) : 'auto';
+        const level = job.level || (framing === 'head' ? undefined : sized);
         const perPage = columns * rowsPerPage;
         const pages = Math.max(1, Math.ceil(sheet.cells.length / perPage));
         const cells = sheet.cells.slice((job.page || 0) * perPage, ((job.page || 0) + 1) * perPage);

@@ -1367,6 +1367,19 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Proof tool.** One job shape for every flag the branches added (`--acts`, `--sockets`, `--only`,
   `--framing`, `--rigid`, `--level`); cells are framed by swept bounds (main) through the faces branch's
   body and head framings.
+- **A fall of hair and the cloth layer.** A fall is a drape (it follows head, neck and spine), and the cloth
+  layer settles a drape out of everything under it: the fall was pushed out of the head it grows from and
+  came out ragged. Its row now says what it covers (`covers: ['spine']`): it is laid over the back and what
+  is worn there, and the head and neck are not under it. Rejected: making the fall a solid (it would stop
+  following a nod); exempting hair in code (the row can already say it).
+- **Workbench screens and the frame budget.** `proof`, `wardrobe` and `portrait` failed the game budget on
+  main by draw calls (560 / 660 / 1,036). One surface a figure brought the calls to 24 to 39, and left them
+  over by triangles (401 k / 389 k / 632 k of 300 k), because each drew every figure at high detail whatever
+  its size. They now build figures at `level: 'auto'`, the level their size on the screen asks for
+  (kit/figure-detail.js); the proof tool still states the level from its cell size, so a photograph does
+  not change level while it is taken. On the smoke's phone screen: 41 k / 41 k / 67 k triangles. No budget
+  was raised and no workbench row was added. Rejected: a looser budget row for `kind: 'workbench'` (the
+  screens were drawing detail nobody could see; the budget was right).
 - **Costs and revisit.** See METRICS row 43. Revisit the burial depth if a pose opens a visible hole at a
   hairline; revisit seam holding if a look needs paint edges to move (a seam then needs its own error
   term rather than the border rule).
