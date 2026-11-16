@@ -55,7 +55,7 @@
   /** The grounds, by `CupRow.look`. A ground is a palette: the same meshes, recoloured by rewriting atlas rows. */
   const LOOKS = {
     park: {
-      sky: 0x8fd0f2, crowd: 0.45, shirts: [DYE.coral, DYE.sky, DYE.mustard, DYE.cream, DYE.forest, DYE.plum],
+      sky: 0x8fd0f2, crowd: 0.6, shirts: [DYE.coral, DYE.sky, DYE.mustard, DYE.cream, DYE.forest, DYE.plum],
       colors: {
         grass: '#57a843', stripe: '#4c9a3c', worn: '#8f9648', stand: '#8a7a68', step: '#a39382', rail: '#e4dfd0', roof: '#5f6f7a', board: '#e8e2d0', boardAlt: '#3f8f6a', shade: '#2f6b33',
         sky: '#8fd0f2', haze: '#c9ecf7', cloud: '#ffffff', glow: '#8fd0f2', flag: '#ff6b4a', lamp: '#7f8c96',

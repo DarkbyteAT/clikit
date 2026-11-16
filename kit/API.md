@@ -8,7 +8,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [core.js](#corejs) (29) - Kit core: the foundation every other kit file and every game builds on.
 - [model.js](#modeljs) (9) - Kit model: progression as small, pure, composable pieces.
 - [meta.js](#metajs) (2) - Kit meta: progression that outlives a single run, and synergies between the things a player collects.
-- [flow.js](#flowjs) (3) - Kit flow: how things change over time.
+- [flow.js](#flowjs) (4) - Kit flow: how things change over time.
 - [lanes.js](#lanesjs) (3) - Kit lanes: "can a player get through this?" for anything laid out as rows of side-by-side lanes (endless runners, rhythm highways, falling-b
 - [scrub.js](#scrubjs) (1) - Kit scrub: play a CSS animation on game time instead of wall-clock time.
 - [span.js](#spanjs) (5) - Kit span: one-dimensional extents (a centre and a size on one axis).
@@ -79,7 +79,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [body-wardrobe.js](#body-wardrobejs) (0) - Kit body wardrobe: an original, generic humanoid catalogue for a character creator, as data.
 - [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
 - [body-gallery.js](#body-galleryjs) (0) - Kit body gallery: the `bodies` screen (`Kit.play('bodies')`).
-- [look-settings.js](#look-settingsjs) (17) - Kit look settings: the look as data and small pure functions.
+- [look-settings.js](#look-settingsjs) (21) - Kit look settings: the look as data and small pure functions.
 - [look-toon.js](#look-toonjs) (0) - Kit look toon: the materials of the stylised look.
 - [look-ink.js](#look-inkjs) (0) - Kit look ink: the indexed pipeline.
 - [look-view.js](#look-viewjs) (0) - Kit look view: the thin composition that draws a scene of dressed meshes in a chosen look.
@@ -97,7 +97,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [motion.js](#motionjs) (29) - Kit motion: movement as small stages that compose.
 - [gait.js](#gaitjs) (23) - Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages.
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
-- [act.js](#actjs) (31) - Kit act: performances.
+- [act.js](#actjs) (32) - Kit act: performances.
 - [act-moves.js](#act-movesjs) (1) - Kit act moves: the everyday repertoire, as data.
 - [act-sport.js](#act-sportjs) (1) - Kit act sport: the moves a ball game needs, as data.
 - [act-life.js](#act-lifejs) (0) - Kit act life: what a body does when it is doing nothing, as small `Kit.motion` stages to sequence with anything - a walk, a swim, a performa
@@ -1136,6 +1136,7 @@ Every synergy with how many of each needed tag the build has, for "one more to g
 >   spawnTable - "what appears now":                   table.pick(t) from rows with { from, until, weight }
 >   path       - composable 2D motion (t) => { x, y }: enemies, fish, moving platforms, camera rails
 >   envelope   - a number fired to a peak, held, then eased back to zero: camera pushes, recoil, glow pulses
+>   slices     - work that must never hold a frame, done a few milliseconds a frame: slices.run(4)
 >
 > Owns:  the time-driven models above.
 > Does not own: the clock that drives them (Kit.clock in core.js, the frame loop in shell.js) or
@@ -1227,6 +1228,40 @@ camera.fov = 55 - 2 * push.update(dt);   // every frame
 _Undocumented: add a JSDoc block in the source._
 
 #### `Kit.envelope().update(dt)`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.slices({ now = () => performance.now() } = {})`
+
+A queue of work that must never hold a frame (sculpting a figure, building a level, decoding a save): each
+job is a step that works for about the milliseconds it is given. `run` hands one frame's slice to the jobs
+in order: a job that finishes inside the slice lets the next begin; one that does not ends the run and goes
+on next frame, so a frame never spends more than the slice plus one step's overshoot.
+
+- `[options]` *{now?: function(): number}* - `now`: a clock in milliseconds (default `performance.now`)
+
+**Returns** *{add: function(SliceStep): SliceStep, drop: function(SliceStep): boolean, run: function(number): boolean, size: function(): number}* `add` queues a job and returns it; `drop` takes a job out unfinished; `run` is true when nothing is left (give it what is left of the frame's slice after a more urgent queue: 0 or less does nothing); `size` counts the jobs waiting
+
+**Complexity** run: O(jobs finished this frame); add, drop: O(jobs)
+
+```js
+const building = Kit.slices();
+building.add((milliseconds) => figure.settle(milliseconds));   // each frame: building.run(4);
+```
+
+#### `Kit.slices().add(step)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slices().drop(step)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slices().run(milliseconds)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slices().size()`
 
 _Undocumented: add a JSDoc block in the source._
 
@@ -7888,7 +7923,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > Owns:  the band lookup, the light value and the ordered-dither tables the shaders mirror (`bandOf`, `lightOf`,
 >        `edgesFor`, `bayerAt`); the grid
->        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`);
+>        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); how big a texel is where a thing is drawn and
+>        what a stamp does about it (`texelSlope`, `texelWorldAt`, `stampGrowth`); smooth outline normals (`weldNormals`);
 >        the lights and how kinds of surface answer them (`LIGHTING`, `RESPONSES`); and the presets and knobs
 >        (`PRESETS`, `KNOBS`, `settings`).
 > Does not own: colour (kit/palette.js: ramps, tones and the packed atlas), textures, materials or passes
@@ -7945,6 +7981,52 @@ The dither strength to draw with.
 
 ```js
 Kit.look.ditherAt(0.07, 0.018) // 0.035: half way through the fade
+```
+
+### `Kit.look.texelSlope(fieldOfView, rows)`
+
+How fast a texel grows with distance under a perspective camera: world units one target texel covers per
+unit of depth in front of the lens. An orthographic camera has one texel size (`slope` 0); a perspective one
+has none of its own, only this slope, so anything sized in texels asks at the depth it is drawn.
+
+- `fieldOfView` *number* - the camera's vertical angle, radians
+- `rows` *number* - the target's height in texels
+
+**Returns** *number* world units per texel per unit of depth
+
+```js
+Kit.look.texelSlope(Math.PI / 2, 400) * 10 // 0.05: at 10 m a texel of a 400-row picture is 5 cm
+```
+
+### `Kit.look.texelWorldAt(texelWorld, slope, depth)`
+
+The world size of a target texel at a depth: what the stamp shader (kit/look-toon.js `stampGrowth`) measures a layer in.
+
+- `texelWorld` *number* - the size under an orthographic camera; 0 under a perspective one
+- `slope` *number* - `texelSlope` under a perspective camera; 0 under an orthographic one
+- `depth` *number* - world units in front of the camera
+
+**Returns** *number* world units; 0 when unknown (both zero) or at the lens
+
+### `Kit.look.STAMP_MOST_GROWTH`
+
+A stamp layer below its least size is grown about its centre, but never by more than this: a face must not swallow the head.
+
+### `Kit.look.stampGrowth(halfExtent, sizeRule, texelWorld)`
+
+How much a stamp layer (an eye, a glint, a mouth) is scaled about its centre so it survives a small sprite:
+the rule the stamp shader runs per vertex, kept here so it can be tested. A positive `sizeRule` is a least
+size in texels (the layer is grown until its smaller side covers that many, up to `STAMP_MOST_GROWTH`); a
+negative one drops the layer below that size (0: it collapses to its centre); 0 leaves it alone.
+
+- `halfExtent` *number* - the layer's smaller half extent, world units (after the model's scale)
+- `sizeRule` *number* - texels: positive a least size, negative a size to vanish under
+- `texelWorld` *number* - world units a texel covers where the layer is (`texelWorldAt`); 0 when unknown
+
+**Returns** *number* the scale about the centre: 0, or 1..`STAMP_MOST_GROWTH`
+
+```js
+Kit.look.stampGrowth(0.01, 2, 0.02) // 2: a 2 cm eye on 2 cm texels is one texel, and is grown to two
 ```
 
 ### `Kit.look.lightOf(normal, response = RESPONSES.form)`
@@ -10324,6 +10406,7 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 >   Kit.act.marks('dive').contact                                     // seconds into a dive that the hands arrive
 >   Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: 0.3 } }); // hands there in 0.3 s; landing as authored
 >   Kit.act.play(motion, 'save', { target, reach: { mark: 'contact', in: 0.4 } }); // a FAMILY: the form that gets there
+>   Kit.act.meet(motion, 'contact', 0.25);                            // while it plays: the moment became known, or moved
 >   Kit.act.playing(motion)                                           // 'dive' (or the form a family chose) until it has finished
 >   Kit.act.takeRootMotion(motion, offset)                            // after a kick or a dive: where the body ended up
 >   Kit.act.base(motion, 'keeperReady');                              // the loop it returns to between one-shots
@@ -10338,7 +10421,7 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 >        performances for one job, chosen by where the point is against the body's own reach), `rig` (what a plan's roles are, measured once),
 >        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
 >        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
->        controls (`play`, `marks`, `stop`, `base`, `aim`, `point`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+>        controls (`play`, `marks`, `meet`, `stop`, `base`, `aim`, `point`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
 >        `takeRootMotion`, `cast`), `refusal`,
 >        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
 > Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
@@ -10724,6 +10807,25 @@ The named moments of a performance, in seconds from its start at the authored sp
 ```js
 const lead = Kit.act.marks('dive').contact;   // seconds a dive needs to get its hands there, unhurried
 if (ballArrivesIn < lead) Kit.act.play(keeper, 'dive', { target, reach: { mark: 'contact', in: ballArrivesIn } });
+```
+
+### `Kit.act.meet(motion, mark, seconds)`
+
+Fits what is left of the lead-in of the performance that is playing to a new time: the named mark is met
+`seconds` from now, whatever `play` was told. For a moment that becomes known, or moves, after the body
+has begun (a keeper who went early learns at the strike when the ball will arrive).
+
+- `motion` *Object* - a `MotionState`
+- `mark` *string* - a mark of the performance that is playing (usually 'contact')
+- `seconds` *number* - from now, greater than 0
+
+**Returns** *boolean* false, changing nothing, when nothing playing declares the mark or it has already passed
+
+**Complexity** O(1)
+
+```js
+Kit.act.play(keeper, 'save', { target, reach: { mark: 'contact', in: guess } });
+Kit.act.meet(keeper, 'contact', ballArrivesIn);   // later, once the ball is struck
 ```
 
 ### `Kit.act.progress(motion)`

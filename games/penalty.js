@@ -122,7 +122,7 @@
     /** The match in play: its ladder entry, the shootout, the four actors and the running tallies. */
     let match = null;
     /** The kick in play: the rules' kick once struck, and what led up to it. */
-    let play = { role: 'taker', kick: null, clock: 0, pressure: 0, wind: 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: null, touch: null, arrival: null };
+    let play = { role: 'taker', kick: null, clock: 0, pressure: 0, wind: 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: null, touch: null, arrival: null, setDive: null };
     const keyAim = { isActive: false, angle: 0, pull: KEYS.startPull };
     let liveAim = { pull: 0, angle: 0, isArmed: false };
     let ratchetStep = 0;
@@ -284,7 +284,7 @@
     /** Sets up the next kick: whose it is, how much it weighs, the wind, and where everyone stands. */
     const beginKick = () => {
       const role = SIM.kickerOf(match.shootout) === 'you' ? 'taker' : 'keeper';
-      play = { role, kick: null, clock: 0, pressure: SIM.pressureOf(match.shootout, match.cup.pressure), wind: match.cup.wind ? random.range(-match.cup.wind, match.cup.wind) : 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: play.lastOutcome, touch: play.touch, arrival: null };
+      play = { role, kick: null, clock: 0, pressure: SIM.pressureOf(match.shootout, match.cup.pressure), wind: match.cup.wind ? random.range(-match.cup.wind, match.cup.wind) : 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: play.lastOutcome, touch: play.touch, arrival: null, setDive: null };
       stage.setSeat(role === 'taker' ? 'aim' : 'keeper');
       stage.setWind(play.wind);
       stage.ball.set(SIM.SPOT, { x: 0, y: 0, z: 0 }, 0);
@@ -331,7 +331,8 @@
     /** The player's shot leaves the boot: their keeper decides, and the kick begins. */
     const strikeAsTaker = () => {
       const launch = SIM.launchOf(play.shot, progress.ball(), boot());
-      strike(launch, SIM.rivalDive(match.rival.keeper, { launch, ballRow: progress.ball(), wind: play.wind, history: match.history }, random));
+      const dive = play.setDive ? SIM.diveOf(play.setDive, 0, match.rival.keeper) : SIM.rivalDive(match.rival.keeper, { launch, ballRow: progress.ball(), wind: play.wind, history: match.history }, random);
+      strike(launch, dive);
     };
 
     /** Their shot leaves the boot: the taker answers an early dive, sprays under pressure, and the kick begins. */
@@ -684,7 +685,7 @@
           onPitch().forEach((each) => each.update(dt, time));
           const kick = play.kick;
           // A held ball is in the gloves: the rules say it was caught, the body says where the gloves are.
-          if (kick) stage.ball.set(kick.touched.held ? onPitch()[1].hands() : kick.ball.position, kick.ball.velocity, dt);
+          if (kick) stage.ball.set(kick.touched.held ? onPitch()[1].holding(FIELD.ballRadius) : kick.ball.position, kick.ball.velocity, dt);
           const isNetted = stage.net.update(dt, kick ? kick.ball.position : null);
           if (isNetted && kick && !kick.touched.net) sfx.noise({ dur: 0.12, vol: 0.12, freq: 3000, type: 'highpass' });
         }
@@ -699,7 +700,18 @@
        */
       tools: {
         progress,
-        shoot: (aim) => flow.is('aiming') && releaseShot({ curve: 0, isArmed: true, ...aim }),
+        /**
+         * Shoots without a finger.
+         * @param {{pull: number, angle: number, curve?: number}} aim
+         * @param {{x: number, y: number}} [setDive] where their keeper goes at the strike, in place of their own mind
+         */
+        shoot(aim, setDive = null) {
+          if (!flow.is('aiming')) return false;
+          play.setDive = setDive;
+          return releaseShot({ curve: 0, isArmed: true, ...aim });
+        },
+        /** Where a shot of an aim crosses the keeper's plane, and when (for a playtest that sends their keeper there). */
+        crossing: (aim) => SIM.crossingOf(SIM.launchOf({ curve: 0, ...aim }, progress.ball(), boot()), progress.ball(), play.wind),
         dive: (x, y) => diveTo({ x, y }),
         /** Ends the match in play at once, five kicks to none, for or against the player (to reach the result sheet). */
         finish(won) {
@@ -749,6 +761,7 @@
         role: play.role,
         outcome: play.lastOutcome,
         touch: play.touch,
+        isKeeperOnBall: Boolean(play.kick && play.kick.touched.keeper),
         kickTime: play.kick ? play.kick.time : 0,
         waited: play.role === 'taker' ? play.aimSeconds : play.clock,
         pull: liveAim.pull,

@@ -57,8 +57,9 @@
     /** The play options that put a performance's moment of contact `seconds` from now; what follows the contact runs as authored. */
     const contactIn = (seconds) => ({ reach: { mark: SAVE.mark, in: Math.max(seconds, TIMING.leastSave) } });
     const hands = ['handLeft', 'handRight'].map((name) => figure.bake.plan.boneIndex(name));
+    const headBone = figure.bake.plan.boneIndex('head');
     const handPoint = { x: 0, y: 0, z: 0 };
-    /** Where a hand is in the world now, metres (written into `handPoint`). */
+    /** Where a bone (a hand, the head) is in the world now, metres (written into `handPoint`). */
     const handAt = (bone) => {
       const { translation } = figure.world;
       const [sine, cosine] = [Math.sin(place.heading), Math.cos(place.heading)];
@@ -211,13 +212,19 @@
        */
       handsFrom: (point) => Math.min(...hands.map((bone) => Math.hypot(handAt(bone).x - point.x, handAt(bone).y - point.y))),
       /**
-       * Where the hands are now: the point half way between them.
+       * Where a ball held in the gloves is now: beyond the point half way between the hands, along the line the
+       * arms reach on (from the head out through the hands), so the ball leads, then the gloves, then the head.
+       * @param {number} lead how far beyond the hands the ball's centre sits, world metres (about its radius)
        * @returns {{x: number, y: number, z: number}} world metres (a new object)
        */
-      hands() {
+      holding(lead) {
         const first = { ...handAt(hands[0]) };
-        const second = handAt(hands[1]);
-        return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2, z: (first.z + second.z) / 2 };
+        const second = { ...handAt(hands[1]) };
+        const head = handAt(headBone);
+        const middle = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2, z: (first.z + second.z) / 2 };
+        const [alongX, alongY, alongZ] = [middle.x - head.x, middle.y - head.y, middle.z - head.z];
+        const length = Math.hypot(alongX, alongY, alongZ) || 1;
+        return { x: middle.x + (alongX / length) * lead, y: middle.y + (alongY / length) * lead, z: middle.z + (alongZ / length) * lead };
       },
       /** Which performance is on (for the flow and the debug state). */
       mode: () => state.mode,
