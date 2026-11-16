@@ -207,7 +207,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const [eye, nose] = ['head#0', 'head#1'].map((id) => glowing.pieces.find((piece) => piece.id === id));
     assert.strictEqual(eye.inkGroup, 0, 'a glowing feature is never outlined');
     assert.strictEqual(nose.inkGroup, groupsOf({ species: 'human', seed: 4 }).get('head'), 'a plain feature belongs to its bone`s region');
-    assert.throws(() => figure.layout(bakery.bakeRecipe({ species: 'human', seed: 4 }), { regionOf: () => null }), /not implemented/);
+    assert.throws(() => figure.layout(bakery.bakeRecipe({ species: 'human', seed: 4 }), { regionOf: () => null }), /pass `regionMapOf`/, 'a point lookup is refused and the map hook named');
   });
 
   test('figure layout: planUpdate keeps everything for a dial or a colour, and adds or removes only a part`s pieces', () => {

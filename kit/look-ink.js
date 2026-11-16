@@ -33,6 +33,9 @@
    *    small step between different ink groups, a large one inside a group, where only a real overlap such as
    *    an arm across the chest should draw a line). The line lands on the farther surface, so the nearer
    *    shape keeps its full outline.
+   *  - a surface texel becomes ink when the neighbour is of a higher line class (the tone byte holds
+   *    tone + ${Kit.look.CLASS_STEP} x class) and about as deep: two paints meeting on one surface, a sleeve and the skin
+   *    below it. The line lands on the lower class, so the garment keeps its size.
    * Group 0 never gives or takes ink. When several neighbours qualify the nearest one wins, and the line takes
    * that neighbour's ramp: ink colour comes from the ink column of the shape the line belongs to.
    */
@@ -47,6 +50,7 @@
     vec3 paletteColor(float column, float row) {
       return texture2D(uPalette, vec2((column + 0.5) / ${TONE_SLOTS}.0, (row + 0.5) / uPaletteRows)).rgb;
     }
+    float classOf(vec4 texel) { return floor((texel.g * 255.0 + 0.5) / ${Kit.look.CLASS_STEP}.0); }
     // x: the neighbour's ramp byte when it inks this texel, else -1; y: its depth, for choosing the nearest.
     vec2 inkFrom(vec4 own, vec2 offset) {
       vec4 other = texture2D(uIndex, vUv + offset * uTexel);
@@ -55,7 +59,8 @@
       float lead = own.a - other.a;
       bool overEmpty = own.a == 0.0;
       bool overSurface = own.a > 0.0 && own.b > 0.0 && lead > (sameGroup ? uDepthSteps.y : uDepthSteps.x);
-      return otherInks && (overEmpty || overSurface) ? vec2(other.r, other.a) : vec2(-1.0, 2.0);
+      bool overClass = own.a > 0.0 && own.b > 0.0 && classOf(other) > classOf(own) + 0.5 && abs(lead) <= uDepthSteps.x;
+      return otherInks && (overEmpty || overSurface || overClass) ? vec2(other.r, other.a) : vec2(-1.0, 2.0);
     }
     void main() {
       vec4 own = texture2D(uIndex, vUv);
@@ -72,7 +77,7 @@
       }
       if (ink.x >= 0.0) gl_FragColor = vec4(paletteColor(${INK_COLUMN}.0, floor(ink.x * 255.0 + 0.5)), 1.0);
       else if (own.a == 0.0) gl_FragColor = vec4(0.0);
-      else gl_FragColor = vec4(paletteColor(floor(own.g * 255.0 + 0.5), floor(own.r * 255.0 + 0.5)), 1.0);
+      else gl_FragColor = vec4(paletteColor(mod(floor(own.g * 255.0 + 0.5), ${Kit.look.CLASS_STEP}.0), floor(own.r * 255.0 + 0.5)), 1.0);
     }`;
 
   /**

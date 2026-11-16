@@ -150,6 +150,12 @@
   };
 
   /**
+   * The showcase's hand-built figures, for a screen that sets other characters beside them (`Kit.play('portrait')`).
+   * `build(view, FIGURES[index])` adds one to the view; the caller disposes the geometries of `root`.
+   */
+  look.standIns = { FIGURES, STAGE, build: buildFigure };
+
+  /**
    * Fits the orthographic camera so the stage rectangle fills the part of the screen the panel leaves free.
    * The frustum is off-centre: the world point (0, STAGE.centerY) lands in the middle of the free area.
    */

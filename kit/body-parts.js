@@ -214,7 +214,17 @@
       .sort(byDepthThenName)
       .map((path) => `${path}=${filled[path]}`)
       .join(',');
-    return Kit.body.plan({ id: `${bodyPlan.id.split('[')[0]}[${outfit}]`, bones, sockets, capabilities: [...declared], filled, features, regions });
+    const id = `${bodyPlan.id.split('[')[0]}[${outfit}]`;
+    // Parts that are only surface (eyes, a printed shirt) add no bone, socket or capability, and nothing a
+    // compiled plan holds is derived from features or regions: the host's compiled arrays are shared and only
+    // the spec, the id and `filled` are new. Swapping a face part then costs no skeleton compile.
+    const isSurfaceOnly = paths.every((path) => !parts[fills[path]].spec.bones.length && !(parts[fills[path]].spec.capabilities || []).length);
+    if (isSurfaceOnly) {
+      // In the order a single assemble from the bare plan would record them.
+      const inOrder = Object.freeze(Object.fromEntries(Object.keys(filled).sort(byDepthThenName).map((path) => [path, filled[path]])));
+      return Object.freeze({ ...bodyPlan, id, filled: inOrder, spec: Object.freeze({ ...bodyPlan.spec, id, filled: inOrder, features, regions }) });
+    }
+    return Kit.body.plan({ id, bones, sockets, capabilities: [...declared], filled, features, regions });
   };
 
   Kit.body = Object.assign(Kit.body || {}, { part, canAttach, openSockets, assemble, SOCKET_PATH_SEPARATOR: PATH_SEPARATOR, MOUNT_BONE, HOST_BONE, compareSocketPaths: byDepthThenName });

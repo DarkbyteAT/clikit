@@ -7,7 +7,9 @@
  *
  * Owns:  `Kit.body.surfaceLayout(plan)` (validate and index a plan's features and regions; cached per plan) and
  *        `Kit.body.surfaceOf(...)` (one individual's placements and painted layers, with `regionAt`), plus the
- *        `FeatureSpec` and `RegionSpec` shapes and `FRAME_SETS`.
+ *        `FeatureSpec` and `RegionSpec` shapes and `FRAME_SETS`; and the figure renderer's two hooks for a bake,
+ *        `Kit.body.FIGURE_HOOKS` (`featuresOf`: a bone's face as one stamps piece plus feature solids, kept per
+ *        placed list; `regionMapOf`: a bone's regions baked to a small map, kept per outfit).
  * Does not own: the maths of placing on a solid (kit/surface.js), the predicates (kit/region.js), how features
  *        and regions travel with parts (kit/body-parts.js), or drawing them (renderers; kit/body-debug.js marks them).
  *
@@ -41,6 +43,12 @@
    *   draws one); u runs across (towards the body's left on a front-facing stamp), v up
    * @property {{channel: string, shade: number}} paint a colour channel of the species and a shade of its ramp
    *   (0 is the darkest); the shade is clamped to the ramp
+   * @property {number} [least] the fewest target texels the layer's smaller side may cover: a renderer grows a
+   *   layer that would be smaller (a glint, a pupil), so it survives a low-resolution target
+   * @property {number} [drop] the layer is left out while its smaller side covers fewer target texels than this:
+   *   detail (the white of an eye, a pupil) that would only be noise on a small sprite. Not with `least`.
+   * @property {boolean} [fixed] the layer is not mirrored on the right copy of a pair: a glint sits on the lit
+   *   side of both eyes
    */
 
   /**
@@ -60,6 +68,10 @@
    *   capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
    * @property {string} [paint] the colour channel of the solid (default 'skin')
    * @property {boolean} [glow] draw it as a glow (eyes): a renderer leaves it out of outlines
+   * @property {number} [under=0] stamps of a feature with a higher `under` are drawn beneath the others on its
+   *   bone whatever order the parts were attached in: blush and freckles go under the eyes
+   * @property {boolean} [outlined=true] false for a solid that should not get an outline of its own (a nose
+   *   inside the face's silhouette), while still shading and inking as part of its bone
    * @property {string} [part] set by kit/body-parts.js: the part that brought it
    */
 
@@ -72,6 +84,11 @@
    * @property {Object} where a `Kit.region` predicate tree over the bone's along / around coordinates
    * @property {string} paint the colour channel it paints with
    * @property {number} [layer=0] stacking order: higher covers lower (skin marks 1, clothes 2, outerwear 3, hair 4)
+   * @property {boolean} [ink=true] false for a pattern inside a garment (stripes, stipple): a renderer draws no line round it
+   * @property {number} [raise=0] metres the painted area stands proud of the bone's surface: a renderer draws it
+   *   on a shell of the bone's own (dialled) shape, so cloth and hair have thickness and follow every dial
+   * @property {boolean} [occludes=false] the area hides face stamps beneath it (hair over a brow); a beard or
+   *   stubble leaves it false so the mouth still shows
    * @property {string} [part] set by kit/body-parts.js: the part that brought it
    */
 
@@ -95,6 +112,8 @@
    * @property {number} ramp the solid's ramp index (-1 when none)
    * @property {?string} part the part it came from, null for the plan's own
    * @property {boolean} glow the feature asked to be drawn as a glow (eyes): never outlined
+   * @property {boolean} outlined false when the solid should get no outline of its own
+   * @property {number} lift metres `point` stands off the surface (already applied to it)
    */
 
   /** The far end of a bone in its own space: its tail, else its first child's offset, else straight up its length. */
@@ -162,7 +181,9 @@
    * Checks and indexes a plan's features and regions: every name resolved to a bone index, every region
    * predicate compiled, every bone's region layers in stacking order. Cached per plan, so an outfit pays once.
    * @param {Object} plan a `BodyPlan` (bare or assembled)
-   * @returns {{features: Array<{spec: FeatureSpec, bone: number}>, regionsByBone: Array<Array<{spec: RegionSpec, test: Function}>>, frames: Array<{end: number[], axis: number, girth: number}>}}
+   * @returns {{features: Array<{spec: FeatureSpec, bone: number}>, regionsByBone: Array<Array<{spec: RegionSpec, test: Function, key: string}>>, frames: Array<{end: number[], axis: number, girth: number}>, featureBones: number[], featureDials: function(Object): number[], placed: Map<string, ReadonlyArray<Object>>}}
+   *   `key` says what a region's predicate is (equal keys bake to equal maps); `featureBones`, `featureDials` and
+   *   `placed` are what the placed-feature cache of `surfaceOf` is keyed and kept by
    * @throws {Error} naming the plan and the feature or region: an unknown bone, a missing id, a bad predicate, a
    *   frame layer without an outline or paint, a region that selects no bones by neither roles nor names
    * @complexity O(features + regions x bones) once per plan; O(1) after
@@ -191,12 +212,37 @@
       const exceptMask = spec.except ? Kit.body.roleMask(spec.except) : 0;
       const byRole = spec.roles ? Kit.body.bonesWithRoles(plan, Kit.body.roleMask(spec.roles)).filter((bone) => !(plan.roles[bone] & propMask) && !(plan.roles[bone] & exceptMask)) : [];
       const byName = (spec.bones || []).map((name) => boneIndexOf(owner, name));
-      [...new Set([...byRole, ...byName])].forEach((bone) => regionsByBone[bone].push({ spec, test }));
+      // The key says what the predicate is, so equal regions of different outfits share one baked map (`regionMapOf`).
+      const key = JSON.stringify(spec.where);
+      [...new Set([...byRole, ...byName])].forEach((bone) => regionsByBone[bone].push({ spec, test, key }));
     });
     const frames = plan.boneNames.map((_name, bone) => ({ end: boneEnd(plan, bone), axis: plan.axis[bone], girth: plan.girth[bone] }));
-    const layout = Object.freeze({ features, regionsByBone, frames });
+    const featureBones = [...new Set(features.map((feature) => feature.bone))];
+    // The dials that drive a feature, per dial set compiled against this plan (a bakery makes one per outfit).
+    const dialsBySet = new WeakMap();
+    const featureDials = (dialSet) => {
+      if (!dialsBySet.has(dialSet)) dialsBySet.set(dialSet, [...new Set(dialSet.featureOps.map((operation) => operation.dial))]);
+      return dialsBySet.get(dialSet);
+    };
+    const layout = Object.freeze({ features, regionsByBone, frames, featureBones, featureDials, placed: new Map() });
     layouts.set(plan, layout);
     return layout;
+  };
+
+  /** Placed feature lists kept per plan, by signature. A drag revisits a handful of values; rolls each bring their own. */
+  const MOST_PLACED_LISTS = 32;
+
+  /**
+   * What the placed features of an individual depend on, as a string: the dialled shape of every bone that
+   * carries a feature, the value of every dial that drives a feature, and each ramp's shade count (stamp
+   * shades are clamped to it). Equal signatures place equal features.
+   */
+  const featureSignature = (layout, shapes, dialSet, values, ramps) =>
+    `${layout.featureBones.map((bone) => JSON.stringify(shapes[bone])).join('|')}#${layout.featureDials(dialSet).map((dial) => values[dial]).join(',')}#${ramps.map((ramp) => ramp.shades.length).join('')}`;
+  const rememberPlaced = (layout, signature, features) => {
+    layout.placed.set(signature, features);
+    // A Map remembers insertion order, so its first key is the oldest list.
+    if (layout.placed.size > MOST_PLACED_LISTS) layout.placed.delete(layout.placed.keys().next().value);
   };
 
   /** A copy of a feature's numbers that dials may write, per copy of the feature. */
@@ -263,9 +309,16 @@
       const lightest = ramp === NO_RAMP ? 0 : ramps[ramp].shades.length - 1;
       return { ramp, shade: Math.max(darkest, Math.min(lightest, paint.shade || 0)) };
     };
-    const features = layout.features.flatMap(({ spec, bone }) => {
+    // Placing features is the expensive half of a bake (a bisection per copy). They depend only on the shapes of
+    // the bones they sit on, the dials that drive them and how many shades each ramp has, so a slider that moves
+    // none of those (height, a leg, a colour) reuses the placed list, and the renderer its pieces.
+    const signature = featureSignature(layout, shapes, dialSet, values, ramps);
+    const placedBefore = layout.placed.get(signature);
+    const features = placedBefore || layout.features.flatMap(({ spec, bone }) => {
       const sides = spec.spacing === undefined ? [null] : SIDES;
-      const resolvedFrames = Object.fromEntries(Object.keys(spec.frames || {}).map((frame) => [frame, spec.frames[frame].map((layer) => ({ outline: layer.outline, ...paintOf(layer.paint) }))]));
+      const resolvedFrames = Object.fromEntries(
+        Object.keys(spec.frames || {}).map((frame) => [frame, spec.frames[frame].map((layer) => ({ outline: layer.outline, ...paintOf(layer.paint), ...(layer.least ? { least: layer.least } : {}), ...(layer.drop ? { drop: layer.drop } : {}), ...(layer.fixed ? { fixed: true } : {}) }))])
+      );
       return sides.flatMap((side) => {
         const numbers = applyFeatureDials(featureNumbers(spec), spec.id, side, dialSet, values);
         const [leftAzimuth, rightAzimuth] = Kit.surface.pair(numbers.azimuth, numbers.spacing);
@@ -292,154 +345,208 @@
             ramp: spec.shape ? rampOf(spec.paint || 'skin') : NO_RAMP,
             part: spec.part || null,
             glow: Boolean(spec.glow),
+            outlined: spec.outlined !== false,
+            under: spec.under || 0,
+            lift: numbers.lift,
           },
         ];
       });
     });
-    const regions = layout.regionsByBone.map((layers) => layers.map(({ spec, test }) => ({ id: spec.id, ramp: rampOf(spec.paint), test, part: spec.part || null })));
+    if (!placedBefore) rememberPlaced(layout, signature, Object.freeze(features));
+    const regions = layout.regionsByBone.map((layers) =>
+      layers.map(({ spec, test, key }) => ({ id: spec.id, ramp: rampOf(spec.paint), test, part: spec.part || null, key, ink: spec.ink !== false, raise: spec.raise || 0, occludes: Boolean(spec.occludes) }))
+    );
     const regionAt = (bone, along, angle, normalX, normalY, normalZ) => {
       const layers = regions[bone];
       const layer = Kit.region.at(layers, along, angle, normalX, normalY, normalZ);
       return layer === Kit.region.NONE ? NO_RAMP : layers[layer].ramp;
     };
-    return Object.freeze({ features: Object.freeze(features), regions: Object.freeze(regions), regionAt });
+    return Object.freeze({ features, regions: Object.freeze(regions), regionAt });
   };
 
   // ---- adapters for the figure renderer (kit/figure-layout.js extension points) -------------------------------------
 
-  /** Most stamp layers turned into solids per feature (freckles are ten dots; more is noise at figure scale). */
-  const MOST_STAMP_LAYERS = 12;
-  /** A stamp layer becomes a flattened ellipsoid this thick (share of its width), sunk so only a cap shows... */
-  const STAMP = Object.freeze({ thickness: 0.45, sink: 0.62, raisePerLayer: 0.14 });
+  /** Most stamp layers drawn per feature (freckles are ten dots; more is noise at figure scale). */
+  const MOST_STAMP_LAYERS = 16;
+  /**
+   * How a stamp sits on the surface, metres: the first layer is lifted clear of the tessellated surface (a
+   * smoothed lathe bulges a few millimetres past its authored profile), each later layer a little more so a
+   * pupil shows over an iris over a white, and each later feature a hair more so overlapping features (freckles
+   * across a nose shadow) never share a depth. A feature's own `lift` is for its solid; its stamp stays on the skin.
+   */
+  const STAMP = Object.freeze({ lift: 0.004, liftPerLayer: 0.0008, liftPerFeature: 0.0001, settleSteps: 3 });
   const LAST_SHADE = 4;
-  const SMALLEST_RADIUS = 1e-4;
+  /** Region maps kept, by what they were baked from: an outfit's maps are shared by everyone who wears it. */
+  const MOST_REGION_MAPS = 256;
 
   const cross = (first, second) => [first[1] * second[2] - first[2] * second[1], first[2] * second[0] - first[0] * second[2], first[0] * second[1] - first[1] * second[0]];
   const combine = (origin, terms) => origin.map((value, axis) => terms.reduce((sum, [vector, amount]) => sum + vector[axis] * amount, value));
+  const unit = (vector) => {
+    const size = Math.hypot(vector[0], vector[1], vector[2]) || 1;
+    return vector.map((value) => value / size);
+  };
+
   /**
-   * A stretch given along a feature's own axes, moved onto the bone's axes: each feature axis gives its stretch
-   * to the bone axis it points along most. Exact for features facing straight along a bone axis (eyes, a nose,
-   * ears); an approximation in between, because the renderer's `scale` is per bone axis.
+   * The frame of one placed feature in its bone's space: `across` and `up` span the surface (turned by the
+   * feature's rotation), `normal` points out. Right-handed (across x up = normal) for both copies of a pair, so
+   * a solid built in it is never inside out; the right copy is mirrored through its data instead (`mirror`).
    */
-  const alignedScale = (stretch, axes) => {
-    const out = [1, 1, 1];
-    axes.forEach((vector, index) => {
-      const sizes = vector.map(Math.abs);
-      out[sizes.indexOf(Math.max(...sizes))] = stretch[index];
-    });
-    return out;
+  const frameOf = (feature) => {
+    const flat = cross(feature.up, feature.normal);
+    const [cosine, sine] = [Math.cos(feature.rotation), Math.sin(feature.rotation)];
+    return {
+      across: combine([0, 0, 0], [[flat, cosine], [feature.up, sine]]),
+      up: combine([0, 0, 0], [[flat, -sine], [feature.up, cosine]]),
+      normal: feature.normal,
+      mirror: feature.flip ? -1 : 1,
+    };
   };
 
-  /** One placed feature as the renderer's `FeaturePiece`s: its solid, and each stamp layer as a shallow cap. */
-  const piecesOf = (feature, ramps) => {
-    const flip = feature.flip ? -1 : 1;
-    const across0 = cross(feature.up, feature.normal).map((value) => value * flip);
-    const [cosine, sine] = [Math.cos(feature.rotation), Math.sin(feature.rotation)];
-    const across = combine(
-      [0, 0, 0],
-      [
-        [across0, cosine],
-        [feature.up, sine],
-      ]
-    );
-    const up = combine(
-      [0, 0, 0],
-      [
-        [across0, -sine],
-        [feature.up, cosine],
-      ]
-    );
-    const { normal, point, size } = feature;
-    const toBone = ([x, y, z]) =>
-      combine(
-        [0, 0, 0],
-        [
-          [across, x],
-          [up, y],
-          [normal, z],
-        ]
-      );
-    const pieces = [];
-    if (feature.shape) {
-      const solid = feature.shape;
-      const solidScale = [feature.scale[0], feature.scale[1], feature.scale[0]];
-      const offset = toBone((solid.at || [0, 0, 0]).map((value, axis) => value * solidScale[axis]));
-      const at = combine(point, [[offset, 1]]);
-      const base = { ramp: feature.ramp < 0 ? undefined : feature.ramp, glow: feature.glow };
-      if (solid.kind === 'sphere')
-        pieces.push({
-          ...base,
-          shape: {
-            kind: 'sphere',
-            radius: solid.radius,
-            at,
-            scale: alignedScale(
-              (solid.scale || [1, 1, 1]).map((value, axis) => value * solidScale[axis]),
-              [across, up, normal]
-            ),
-          },
-        });
-      else if (solid.kind === 'box')
-        pieces.push({
-          ...base,
-          shape: {
-            kind: 'box',
-            size: alignedScale(
-              solid.size.map((value, axis) => value * solidScale[axis]),
-              [across, up, normal]
-            ),
-            at,
-          },
-        });
-      else {
-        // A capsule, lathe or extrude solid runs from its origin to `end`; the renderer's capsule can point anywhere.
-        const end = toBone(solid.end.map((value, axis) => value * solidScale[axis]));
-        const radius = solid.kind === 'capsule' ? solid.radius : solid.kind === 'lathe' ? Math.max(...solid.profile.map(([radial]) => radial)) : solid.depth;
-        const taper = solid.kind === 'capsule' ? (solid.taper === undefined ? 1 : solid.taper) : SMALLEST_RADIUS;
-        pieces.push({ ...base, shape: { kind: 'capsule', end, radius: radius * solidScale[0], endRadius: Math.max(SMALLEST_RADIUS, radius * solidScale[0] * taper), at } });
-      }
+  /** A feature's solid as a renderer shape: built along the feature's own axes, then turned onto the surface. */
+  const solidPiece = (feature, frame) => {
+    const solid = feature.shape;
+    const stretch = [feature.scale[0], feature.scale[1], feature.scale[0]];
+    const { across, up, normal, mirror } = frame;
+    /** A vector of the solid's own frame (mirrored for the right copy), in bone space. */
+    const toBone = ([x, y, z]) => combine([0, 0, 0], [[across, x * mirror * stretch[0]], [up, y * stretch[1]], [normal, z * stretch[2]]]);
+    const at = combine(feature.point, [[toBone(solid.at || [0, 0, 0]), 1]]);
+    const scale = (solid.scale || [1, 1, 1]).map((value, axis) => value * stretch[axis]);
+    const base = { ramp: feature.ramp < 0 ? undefined : feature.ramp, glow: feature.glow, outlined: feature.outlined };
+    if (solid.kind === 'sphere') return { ...base, shape: { kind: 'sphere', radius: solid.radius, at, scale, basis: [across, up, normal] } };
+    if (solid.kind === 'box') return { ...base, shape: { kind: 'box', size: solid.size.slice(), at, scale, basis: [across, up, normal] } };
+    const end = toBone(solid.end);
+    if (solid.kind === 'capsule') {
+      const taper = solid.taper === undefined ? 1 : solid.taper;
+      return { ...base, shape: { kind: 'capsule', end, radius: solid.radius * stretch[0], endRadius: solid.radius * stretch[0] * taper, at } };
     }
-    const frame = (feature.frames[feature.rest] || []).slice(0, MOST_STAMP_LAYERS);
-    frame.forEach((layer, index) => {
-      const us = layer.outline.map(([across0Value]) => across0Value);
-      const vs = layer.outline.map(([, upValue]) => upValue);
-      const [centreU, centreV] = [(Math.min(...us) + Math.max(...us)) / 2, (Math.min(...vs) + Math.max(...vs)) / 2];
-      const halfU = Math.max(SMALLEST_RADIUS, ((Math.max(...us) - Math.min(...us)) / 2) * (size[0] / 2));
-      const halfV = Math.max(SMALLEST_RADIUS, ((Math.max(...vs) - Math.min(...vs)) / 2) * (size[1] / 2));
-      const radius = Math.max(halfU, halfV);
-      // Later layers sit a little prouder, so a pupil shows over an iris over a white.
-      const depth = radius * (STAMP.sink - STAMP.raisePerLayer * index);
-      const at = combine(point, [
-        [across, (centreU * size[0]) / 2],
-        [up, (centreV * size[1]) / 2],
-        [normal, -depth],
-      ]);
-      const shades = layer.ramp >= 0 && ramps[layer.ramp] ? ramps[layer.ramp].shades.length - 1 : LAST_SHADE;
-      pieces.push({
-        shape: { kind: 'sphere', radius, at, scale: alignedScale([halfU / radius, halfV / radius, STAMP.thickness], [across, up, normal]) },
-        ramp: layer.ramp < 0 ? undefined : layer.ramp,
-        tone: shades > 0 ? layer.shade / shades : 0,
-        glow: feature.glow,
-      });
-    });
-    return pieces;
+    // A lathe or an extrude runs along its `end`: its own +Y is turned onto that direction, its +Z kept as near the surface normal as it can be.
+    const along = unit(end);
+    const side = unit(cross(along, normal));
+    const basis = [side, along, cross(side, along)];
+    return solid.kind === 'lathe'
+      ? { ...base, shape: { kind: 'lathe', profile: solid.profile.map((point) => point.slice()), axis: 1, at, scale, basis, ...(solid.smooth ? { smooth: true } : {}) } }
+      : { ...base, shape: { kind: 'extrude', outline: solid.outline.map((point) => point.slice()), depth: solid.depth, axis: 1, across: 0, at, scale, basis } };
   };
 
   /**
-   * The two extension points of the figure renderer (kit/figure-layout.js), for one bake: `featuresOf` turns
-   * the bake's placed features into `FeaturePiece`s in bone space (a solid stays a solid; each stamp layer of
-   * the rest frame becomes a shallow coloured cap, later layers prouder), and `regionOf` answers which ramp
-   * paints a point of a bone, from bone-local coordinates (s and angle from `Kit.surface.along`, the normal from
-   * the bone's dialled shape). Both answer only for the bake's own plan.
+   * The rest frame of a placed feature as flat polygons on the surface (`StampLayer`s of kit/figure-shapes.js):
+   * each outline point (u, v) goes `u x width / 2` across and `v x height / 2` up from the feature's point, and
+   * is then walked back onto the bone's surface along the feature's normal (a few steps of the signed distance),
+   * so a wide stamp (blush, freckles) hugs the curve of whatever head the dials have made.
+   */
+  const stampLayers = (feature, frame, ramps, surfaceDistance, featureOrder) => {
+    const { across, up, normal, mirror } = frame;
+    return (feature.frames[feature.rest] || [])
+      .slice(0, MOST_STAMP_LAYERS)
+      .filter((layer) => layer.ramp >= 0)
+      .map((layer, index) => {
+        const shades = ramps[layer.ramp] ? ramps[layer.ramp].shades.length - 1 : LAST_SHADE;
+        const lift = STAMP.lift + STAMP.liftPerLayer * index + STAMP.liftPerFeature * featureOrder;
+        const points = layer.outline.flatMap(([u, v]) => {
+          let vertex = combine(feature.point, [[across, (u * (layer.fixed ? 1 : mirror) * feature.size[0]) / 2], [up, (v * feature.size[1]) / 2], [normal, -feature.lift]]);
+          for (let step = 0; step < STAMP.settleSteps; step++) vertex = combine(vertex, [[normal, -surfaceDistance(vertex)]]);
+          return combine(vertex, [[normal, lift]]);
+        });
+        return { points, normal: normal.slice(), slot: layer.ramp, tone: shades > 0 ? layer.shade / shades : 0, least: layer.least || 0, drop: layer.drop || 0 };
+      });
+  };
+
+  /** Pieces by bone for a list of placed features; kept per list, so a bake whose face did not change reuses them. */
+  const piecesByFeatures = new WeakMap();
+  const piecesFor = (bake) => {
+    const known = piecesByFeatures.get(bake.surface.features);
+    if (known) return known;
+    const frames = surfaceLayout(bake.plan).frames;
+    const solids = new Map();
+    const layers = new Map();
+    // Deepest first (a stable sort keeps the attach order among equals): later stamps draw over earlier ones.
+    const drawOrder = [...bake.surface.features].sort((first, second) => (second.under || 0) - (first.under || 0));
+    drawOrder.forEach((feature, featureOrder) => {
+      const frame = frameOf(feature);
+      if (feature.shape) solids.set(feature.bone, [...(solids.get(feature.bone) || []), solidPiece(feature, frame)]);
+      const sofar = layers.get(feature.bone) || [];
+      const surfaceDistance = (vertex) => Kit.surface.distance(bake.shapes[feature.bone], frames[feature.bone], vertex[0], vertex[1], vertex[2]);
+      layers.set(feature.bone, [...sofar, ...stampLayers(feature, frame, bake.ramps, surfaceDistance, featureOrder)]);
+    });
+    const byBone = new Map();
+    new Set([...solids.keys(), ...layers.keys()]).forEach((bone) => {
+      const stamps = (layers.get(bone) || []).length ? [{ shape: freezeDeep({ kind: 'stamps', layers: layers.get(bone), at: [0, 0, 0] }), stamps: true, glow: true }] : [];
+      byBone.set(bone, Object.freeze([...(solids.get(bone) || []), ...stamps]));
+    });
+    piecesByFeatures.set(bake.surface.features, byBone);
+    return byBone;
+  };
+  const freezeDeep = (value) => {
+    if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
+    Object.values(value).forEach(freezeDeep);
+    return Object.freeze(value);
+  };
+  const NO_PIECES = Object.freeze([]);
+
+  /**
+   * The figure renderer's features hook: the placed features of a bone as `FeaturePiece`s in bone space. A
+   * solid stays a solid, turned onto the surface (`basis`); every stamp layer of the bone becomes one polygon
+   * of a single `stamps` piece, so a whole face is one draw call. Works for any bake of any catalogue: the
+   * renderer hands over the bake it is laying out.
+   * @param {Object} _plan the bake's plan (unused: the bake says it all)
+   * @param {number} bone
+   * @param {?Object} _shape the bone's own surface (unused)
+   * @param {Object} bake from a bakery
+   * @returns {ReadonlyArray<Object>} `FeaturePiece`s (kit/figure-layout.js)
+   * @complexity O(1) after the first call for a bake's features, which is O(feature copies x outline points)
+   * @example Kit.figure.build(view, bake, { featuresOf: Kit.body.FIGURE_HOOKS.featuresOf })   // the default
+   */
+  const featuresOf = (_plan, bone, _shape, bake) => (bake && bake.surface ? piecesFor(bake).get(bone) || NO_PIECES : NO_PIECES);
+
+  /** @type {Map<string, Object>} baked maps by key, oldest first */
+  const regionMaps = new Map();
+
+  /**
+   * The figure renderer's regions hook: the painted layers of a bone baked into a `RegionMap` (kit/region.js)
+   * over the bone's along / around coordinates, with the frame those are measured in. Dials never change it
+   * (regions are stated in s and angle, not metres), so the map depends only on what is worn and is shared by
+   * every individual wearing it.
+   * @param {Object} plan the bake's plan
+   * @param {number} bone
+   * @param {Object} bake from a bakery
+   * @returns {?{key: string, width: number, height: number, data: Uint8Array, shells: number[], end: number[], front: number, side: number}}
+   *   null when nothing paints the bone; `end` is the bone's far end, `front` and `side` the axes (0 = x, 1 = y,
+   *   2 = z) the angle is measured from and towards (`Kit.surface.AROUND`)
+   * @complexity O(layers) for the key on every call; O(map texels x layers x nodes) the first time a key is seen
+   * @example Kit.body.FIGURE_HOOKS.regionMapOf(bake.plan, bake.plan.boneIndex('chest'), bake).shells // [0.012]
+   */
+  const regionMapOf = (plan, bone, bake) => {
+    const layers = bake && bake.surface && plan === bake.plan ? bake.surface.regions[bone].filter((layer) => layer.ramp >= 0) : [];
+    if (!layers.length) return null;
+    const frame = surfaceLayout(plan).frames[bone];
+    const [front, side] = Kit.surface.AROUND[frame.axis];
+    const key = `${front}${side}:${layers.map((layer) => `${layer.key}>${layer.ramp}${layer.ink === false ? 'p' : ''}${layer.raise ? `^${layer.raise}` : ''}${layer.occludes ? 'o' : ''}`).join('+')}`;
+    let map = regionMaps.get(key);
+    if (!map) {
+      map = Object.freeze({ key, ...Kit.region.bake(layers.map((layer) => ({ test: layer.test, slot: layer.ramp, ink: layer.ink, raise: layer.raise, occludes: layer.occludes })), { front, side }) });
+      regionMaps.set(key, map);
+      if (regionMaps.size > MOST_REGION_MAPS) regionMaps.delete(regionMaps.keys().next().value);
+    }
+    return { ...map, end: frame.end, front, side };
+  };
+
+  /**
+   * The two extension points of the figure renderer (kit/figure-layout.js) for the body system, for any bake:
+   * `featuresOf(plan, bone, shape, bake)` and `regionMapOf(plan, bone, bake)`. `Kit.figure.build` uses them by
+   * default for a bake that has a `surface`.
+   */
+  const FIGURE_HOOKS = Object.freeze({ featuresOf, regionMapOf });
+
+  /**
+   * The renderer's hooks bound to one bake (the earlier form of `FIGURE_HOOKS`, kept for callers that hold it):
+   * `featuresOf` answers for the bake the renderer passes, or for this one when it passes none; `regionOf`
+   * answers which ramp paints a point of a bone given in bone space.
    * @param {Object} bake from a catalogue's bakery
-   * @returns {{featuresOf: function(Object, number): Object[], regionOf: function(Object, number, number, number, number): ?number}}
-   * @complexity building: O(feature copies x stamp layers); `regionOf` per call: O(regions on the bone) plus
-   *   six distance evaluations for the normal
+   * @returns {{featuresOf: function(Object, number, ?Object=, Object=): ReadonlyArray<Object>, regionMapOf: function(Object, number, Object=): ?Object, regionOf: function(Object, number, number, number, number): ?number}}
+   * @complexity `regionOf` per call: O(regions on the bone) plus six distance evaluations for the normal
    * @example const figure = Kit.figure.build(view, bake, { featuresOf: Kit.body.figureHooks(bake).featuresOf });
    */
   const figureHooks = (bake) => {
-    const byBone = new Map();
-    bake.surface.features.forEach((feature) => byBone.set(feature.bone, [...(byBone.get(feature.bone) || []), ...piecesOf(feature, bake.ramps)]));
     const layout = surfaceLayout(bake.plan);
     const sample = [0, 0];
     const STEP = 1e-4;
@@ -454,8 +561,12 @@
       const ramp = bake.surface.regionAt(bone, sample[0], sample[1], normal[0] / length, normal[1] / length, normal[2] / length);
       return ramp < 0 ? null : ramp;
     };
-    return { featuresOf: (plan, bone) => (plan === bake.plan ? byBone.get(bone) || [] : []), regionOf };
+    return {
+      featuresOf: (plan, bone, shape, current = bake) => featuresOf(plan, bone, shape, current),
+      regionMapOf: (plan, bone, current = bake) => regionMapOf(plan, bone, current),
+      regionOf,
+    };
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { checkSurface, surfaceLayout, surfaceOf, figureHooks, FRAME_SETS, FEATURE_PARAMS, FEATURE_DEFAULTS });
+  Kit.body = Object.assign(Kit.body || {}, { checkSurface, surfaceLayout, surfaceOf, figureHooks, FIGURE_HOOKS, FRAME_SETS, FEATURE_PARAMS, FEATURE_DEFAULTS });
 })();

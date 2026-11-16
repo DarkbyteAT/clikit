@@ -86,17 +86,22 @@
     let nearest = Infinity;
     let inside = false;
     for (let index = 0, previous = points.length - 1; index < points.length; previous = index++) {
-      const [ua, va] = points[previous];
-      const [ub, vb] = points[index];
+      // Indexed reads and a squared distance (one root at the end): this loop is most of what placing a face costs.
+      const ua = points[previous][0];
+      const va = points[previous][1];
+      const ub = points[index][0];
+      const vb = points[index][1];
       const edgeU = ub - ua;
       const edgeV = vb - va;
       const lengthSquared = edgeU * edgeU + edgeV * edgeV || 1;
       const along = Math.max(0, Math.min(1, ((u - ua) * edgeU + (v - va) * edgeV) / lengthSquared));
-      nearest = Math.min(nearest, Math.hypot(u - ua - edgeU * along, v - va - edgeV * along));
+      const gapU = u - ua - edgeU * along;
+      const gapV = v - va - edgeV * along;
+      nearest = Math.min(nearest, gapU * gapU + gapV * gapV);
       // Even-odd crossing of a horizontal ray towards +u.
       if (va > v !== vb > v && u < ((ub - ua) * (v - va)) / (vb - va) + ua) inside = !inside;
     }
-    return inside ? -nearest : nearest;
+    return inside ? -Math.sqrt(nearest) : Math.sqrt(nearest);
   };
 
   /** Lathe sections built so far, by profile: a placement measures the same profile about a hundred times. */

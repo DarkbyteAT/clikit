@@ -322,7 +322,9 @@ function main() {
     console.log(`             ${note}; ${moved.walkers} walking, ${moved.swimmers} swimming`);
   });
   printEditor('editor on the sample human', measureEditor(Kit, catalog, { species: 'human', dial: 'legLength', channel: 'cloth', socket: 'headTop', part: 'hat' }));
-  printEditor('editor on the wardrobe person (46 dials, 14 channels, 21 sockets, a face)', measureEditor(Kit, Kit.body.catalog(Kit.body.wardrobe.CATALOG), { species: 'person', dial: 'jaw', channel: 'skin', socket: 'hat', part: 'beanie' }));
+  const wardrobe = Kit.body.catalog(Kit.body.wardrobe.CATALOG);
+  printEditor('editor on the wardrobe person (46 dials, 14 channels, 21 sockets, a face), a face dial (jaw: every feature is placed again)', measureEditor(Kit, wardrobe, { species: 'person', dial: 'jaw', channel: 'skin', socket: 'hat', part: 'beanie' }));
+  printEditor('editor on the wardrobe person, a body dial (height: the placed face is reused)', measureEditor(Kit, wardrobe, { species: 'person', dial: 'height', channel: 'skin', socket: 'hat', part: 'beanie' }));
 }
 
 if (require.main === module) main();

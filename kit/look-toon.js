@@ -3,7 +3,7 @@
  * colour up in the palette texture; a hull material draws the mesh's outline in its ramp's ink colour.
  *
  * Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
- *        lookup, hull extrusion) as named strings; `Kit.look.shading`: the uniforms every material of one look
+ *        lookup, hull extrusion, region maps and their boundary lines, stamps) as named strings; `Kit.look.shading`: the uniforms every material of one look
  *        shares, `dress(mesh, part)` to put a mesh in the look, and `apply(settings, frame)` to change the look
  *        of every dressed mesh at once.
  * Does not own: colours (kit/palette.js), screen-space ink and low-resolution targets (look-ink.js), or
@@ -31,6 +31,19 @@
   const DITHER_CELLS_PER_UNIT = 48;
   /** Gamma used when a look is drawn into the kit's linear HDR chain; it mirrors the 1 / 2.2 in kit/post.js. */
   const DISPLAY_GAMMA = 2.2;
+  /** A stamp layer smaller than its least size is grown towards it, by at most this factor (a glint may double, a face may not balloon). */
+  const STAMP_MOST_GROWTH = 2.5;
+  /**
+   * How far each later layer of a stamp is pulled toward the camera, in normalised device depth (the whole depth
+   * range is 2). Layers lie on a curved surface as flat polygons a fraction of a millimetre apart, so a large
+   * one sags under a small one's corners; the pull settles their order. Sixteen layers stay within a centimetre
+   * under the kit's orthographic cameras (40 m deep).
+   */
+  const STAMP_DEPTH_STEP = 0.00002;
+  /** A region line never reaches further than this share of the map from its fragment (near a pole the angle's gradient is unbounded). */
+  const REGION_LINE_MOST_REACH = 0.06;
+  /** Line classes pack into the tone byte of the index target above the tone: tone + CLASS_STEP x class. */
+  const CLASS_STEP = 8;
   const { TONE_SLOTS, INK_COLUMN } = Kit.palette;
   const { MAX_EDGES } = Kit.look;
 
@@ -49,8 +62,14 @@
     #include <skinnormal_vertex>
     #include <defaultnormal_vertex>
     #include <begin_vertex>
+    #ifdef LOOK_STAMP
+      transformed = stampCentre.xyz + (transformed - stampCentre.xyz) * stampGrowth();
+    #endif
     #include <skinning_vertex>
-    #include <project_vertex>`;
+    #include <project_vertex>
+    #ifdef LOOK_STAMP
+      gl_Position.z -= stampPaint.w * ${STAMP_DEPTH_STEP.toFixed(6)} * gl_Position.w;
+    #endif`;
 
   /**
    * 4 x 4 ordered dither without a texture or bit operations. bayer2 is the 2 x 2 matrix [[0, 2], [3, 1]] / 4
@@ -115,10 +134,109 @@
       return (1.0 + 254.0 * clamp((viewDepth - uDepthRange.x) / (uDepthRange.y - uDepthRange.x), 0.0, 1.0)) / 255.0;
     }`;
 
+  /**
+   * Regions: which painted layer covers a fragment, read from the bone's baked map (kit/region.js `bake`). The
+   * map's u is the angle around the bone's long axis (atan of the point's side and front components, a full
+   * turn mapped to 0..1, wrapping), its v is s, the point's share of the way along the bone (its projection on
+   * the bone's end, clamped). A texel holds bytes: [ramp slot | 255, line-class slot | 255, shell index, flags].
+   *
+   * regionAt smooths the map's staircase: it reads the four texels round the point and returns the one whose
+   * kind holds the most bilinear weight (texels of equal kind pool theirs). Along a boundary that is the
+   * contour "bilinear weight of one side = 1/2", a smooth curve, where a nearest read would give texel steps.
+   */
+  const GLSL_REGIONS = `
+    #ifdef LOOK_REGIONS
+      uniform sampler2D uRegionMap;
+      uniform vec2 uRegionSize;    // texels: around, along
+      uniform vec3 uRegionAlong;   // the bone's end over its squared length: s = dot(point, this)
+      uniform vec3 uRegionFront;   // unit axis the angle is measured from
+      uniform vec3 uRegionSide;    // unit axis it grows towards
+      uniform float uBlockRow;     // the atlas row of the figure's ramp slot 0
+      uniform float uShell;        // 0: the bone's own surface; k: the shell that shows only texels raised to shell k
+      vec2 regionUv(vec3 point) {
+        return vec2(atan(dot(point, uRegionSide), dot(point, uRegionFront)) / 6.2831853 + 0.5, clamp(dot(point, uRegionAlong), 0.0, 1.0));
+      }
+      vec4 regionTap(vec2 cell) {
+        vec2 uv = vec2(fract((cell.x + 0.5) / uRegionSize.x), (clamp(cell.y, 0.0, uRegionSize.y - 1.0) + 0.5) / uRegionSize.y);
+        return floor(texture2D(uRegionMap, uv) * 255.0 + 0.5);
+      }
+      float sameKind(vec4 first, vec4 second) {
+        return step(abs(first.r - second.r) + abs(first.g - second.g) + abs(first.b - second.b), 0.5);
+      }
+      vec4 regionAt(vec2 uv) {
+        vec2 texel = uv * uRegionSize - 0.5;
+        vec2 cell = floor(texel);
+        vec2 share = texel - cell;
+        vec4 lowNear = regionTap(cell);
+        vec4 lowFar = regionTap(cell + vec2(1.0, 0.0));
+        vec4 highNear = regionTap(cell + vec2(0.0, 1.0));
+        vec4 highFar = regionTap(cell + vec2(1.0, 1.0));
+        vec4 weight = vec4((1.0 - share.x) * (1.0 - share.y), share.x * (1.0 - share.y), (1.0 - share.x) * share.y, share.x * share.y);
+        float most = dot(weight, vec4(1.0, sameKind(lowNear, lowFar), sameKind(lowNear, highNear), sameKind(lowNear, highFar)));
+        vec4 best = lowNear;
+        float pooled = dot(weight, vec4(sameKind(lowFar, lowNear), 1.0, sameKind(lowFar, highNear), sameKind(lowFar, highFar)));
+        if (pooled > most) { most = pooled; best = lowFar; }
+        pooled = dot(weight, vec4(sameKind(highNear, lowNear), sameKind(highNear, lowFar), 1.0, sameKind(highNear, highFar)));
+        if (pooled > most) { most = pooled; best = highNear; }
+        pooled = dot(weight, vec4(sameKind(highFar, lowNear), sameKind(highFar, lowFar), sameKind(highFar, highNear), 1.0));
+        if (pooled > most) { best = highFar; }
+        return best;
+      }
+    #endif`;
+
+  /**
+   * A line along region boundaries on the direct path (the indexed path draws it in look-ink.js). The fragment
+   * looks one line width away in four screen directions; where a neighbour's line class is higher than its own
+   * it becomes ink, in that neighbour's ramp, so the line lies on the lower class (skin beside a sleeve) and
+   * the garment keeps its size. The offsets are the screen-space gradient of the map coordinates, built from s
+   * and the two components the angle is made of (d angle = (front d side - side d front) / (front^2 + side^2))
+   * rather than from the angle itself, which jumps a full turn at the back seam.
+   * Returns the ramp row of the line, or -1 when the fragment is not on one.
+   */
+  const GLSL_REGION_LINE = `
+    #if defined(LOOK_REGIONS) && defined(LOOK_REGION_INK) && !defined(LOOK_STAMP)
+      float regionLineFrom(vec2 uv, float ownClass) {
+        vec4 other = regionAt(uv);
+        float otherClass = other.g < 254.5 ? other.g : uInkClass;
+        if (otherClass < ownClass + 0.5) return -1.0;
+        return other.r < 254.5 ? uBlockRow + other.r : uRamp;
+      }
+      float regionLine(vec2 uv, float ownClass) {
+        float front = dot(vLocalPosition, uRegionFront);
+        float side = dot(vLocalPosition, uRegionSide);
+        float along = dot(vLocalPosition, uRegionAlong);
+        float turn = max(front * front + side * side, 1e-8) * 6.2831853;
+        vec2 across = vec2((front * dFdx(side) - side * dFdx(front)) / turn, dFdx(along)) * uInkWidth;
+        vec2 up = vec2((front * dFdy(side) - side * dFdy(front)) / turn, dFdy(along)) * uInkWidth;
+        across *= min(1.0, ${REGION_LINE_MOST_REACH} / max(length(across), 1e-6));
+        up *= min(1.0, ${REGION_LINE_MOST_REACH} / max(length(up), 1e-6));
+        float row = regionLineFrom(uv + across, ownClass);
+        row = max(row, regionLineFrom(uv - across, ownClass));
+        row = max(row, regionLineFrom(uv + up, ownClass));
+        return max(row, regionLineFrom(uv - up, ownClass));
+      }
+    #endif`;
+
   const TOON_VERTEX = `
     #include <skinning_pars_vertex>
     #ifdef LOOK_INSTANCE_RAMP
       attribute float instanceRamp;
+    #endif
+    #ifdef LOOK_STAMP
+      // A stamp vertex carries its layer's paint (ramp slot, tone 0..1, size rule in texels, order) and its
+      // layer's centre with the layer's smaller half extent. A positive size rule is a least size: a layer whose
+      // smaller side would cover fewer target texels is grown about its centre until it does (a glint survives a
+      // 100-texel-tall sprite). A negative one drops the layer below that size (it collapses to its centre):
+      // the white of an eye three texels wide is noise, and the iris alone reads better.
+      attribute vec4 stampPaint;
+      attribute vec4 stampCentre;
+      uniform float uTexelWorld;   // world size of one target texel; 0 when unknown (a perspective camera)
+      varying vec3 vStampPaint;
+      float stampGrowth() {
+        float texels = 2.0 * stampCentre.w / max(uTexelWorld, 1e-9);   // the smaller side, in target texels
+        if (stampPaint.z < 0.0) return uTexelWorld > 0.0 && texels < -stampPaint.z ? 0.0 : 1.0;
+        return clamp(stampPaint.z / max(texels, 1e-5), 1.0, ${STAMP_MOST_GROWTH.toFixed(1)});
+      }
     #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
@@ -132,6 +250,9 @@
       vRampOffset = 0.0;
       #ifdef LOOK_INSTANCE_RAMP
         vRampOffset = instanceRamp;
+      #endif
+      #ifdef LOOK_STAMP
+        vStampPaint = stampPaint.xyz;
       #endif
     }`;
 
@@ -151,6 +272,11 @@
     uniform float uRamp;
     uniform float uInkGroup;
     uniform vec3 uPart;      // x: 1 when shiny, y: 1 when emissive, z: fixed tone 0..1 of the ramp, or -1 when shaded
+    uniform float uInkClass; // the part's line class: ink is drawn where a higher class meets a lower one on one surface
+    uniform float uInkWidth;
+    #ifdef LOOK_STAMP
+      varying vec3 vStampPaint;
+    #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
     varying float vViewDepth;
@@ -160,7 +286,27 @@
     ${GLSL_BANDS}
     ${GLSL_PALETTE}
     ${GLSL_DEPTH_BYTE}
+    ${GLSL_REGIONS}
+    ${GLSL_REGION_LINE}
     void main() {
+      float row = uRamp + vRampOffset;
+      float inkClass = uInkClass;
+      float lineRow = -1.0;
+      #ifdef LOOK_REGIONS
+        vec2 regionPoint = regionUv(vLocalPosition);
+        vec4 region = regionAt(regionPoint);
+        #ifdef LOOK_STAMP
+          // A stamp shows only on bare surface: where hair or a band is painted over the skin, it is hidden.
+          if (mod(region.a, 2.0) > 0.5) discard;
+        #else
+          if (uShell > 0.5 && abs(region.b - uShell) > 0.5) discard;
+          if (region.r < 254.5) row = uBlockRow + region.r;
+          if (region.g < 254.5) inkClass = region.g;
+          #ifdef LOOK_REGION_INK
+            lineRow = regionLine(regionPoint, inkClass);
+          #endif
+        #endif
+      #endif
       vec3 normal = normalize(vViewNormal);
       float lightest = uToneCount - 1.0;
       // Dither moves the light value, never the colour: thresholds 0..15/16 are centred on zero (their mean is 15/32).
@@ -176,10 +322,17 @@
       if (uPart.x > 0.5 && dot(normal, normalize(uLight + vec3(0.0, 0.0, 1.0))) > uGlintEdge) tone = lightest;
       if (uPart.y > 0.5) tone = lightest;
       if (uPart.z >= 0.0) tone = floor(uPart.z * lightest + 0.5);
-      float row = uRamp + vRampOffset;
+      #ifdef LOOK_STAMP
+        row = uBlockRow + vStampPaint.x;
+        tone = floor(vStampPaint.y * lightest + 0.5);
+      #endif
+      if (lineRow >= 0.0) {
+        row = lineRow;
+        tone = ${INK_COLUMN}.0;
+      }
       #ifdef LOOK_INDEX_OUTPUT
-        // (ramp, tone, ink group, depth) as four bytes; colour is resolved later, by look-ink.js.
-        gl_FragColor = vec4(row / 255.0, floor(tone + 0.5) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
+        // (ramp, tone + line class, ink group, depth) as four bytes; colour is resolved later, by look-ink.js.
+        gl_FragColor = vec4(row / 255.0, (floor(tone + 0.5) + ${CLASS_STEP}.0 * inkClass) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
       #else
         #ifdef LOOK_SOFT
           vec3 color = mix(paletteColor(floor(tone), row), paletteColor(min(floor(tone) + 1.0, lightest), row), fract(tone));
@@ -204,7 +357,9 @@
     uniform vec2 uViewport;
     uniform float uInkWidth;
     varying float vViewDepth;
+    varying vec3 vLocalPosition;
     void main() {
+      vLocalPosition = position;
       ${GLSL_TRANSFORM}
       // three.js flips the normal of a back-side material; the push must follow the surface's true outward normal.
       #ifdef FLIP_SIDED
@@ -222,14 +377,26 @@
     uniform vec2 uDepthRange;
     uniform float uRamp;
     uniform float uInkGroup;
+    uniform float uInkClass;
     varying float vViewDepth;
+    varying vec3 vLocalPosition;
     ${GLSL_PALETTE}
     ${GLSL_DEPTH_BYTE}
+    ${GLSL_REGIONS}
     void main() {
+      float row = uRamp;
+      float inkClass = uInkClass;
+      #ifdef LOOK_REGIONS
+        // The outline takes the ink of whatever is painted there, and a shell is outlined only where it shows.
+        vec4 region = regionAt(regionUv(vLocalPosition));
+        if (uShell > 0.5 && abs(region.b - uShell) > 0.5) discard;
+        if (region.r < 254.5) row = uBlockRow + region.r;
+        if (region.g < 254.5) inkClass = region.g;
+      #endif
       #ifdef LOOK_INDEX_OUTPUT
-        gl_FragColor = vec4(uRamp / 255.0, ${INK_COLUMN}.0 / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
+        gl_FragColor = vec4(row / 255.0, (${INK_COLUMN}.0 + ${CLASS_STEP}.0 * inkClass) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
       #else
-        gl_FragColor = vec4(toOutput(paletteColor(${INK_COLUMN}.0, uRamp)), 1.0);
+        gl_FragColor = vec4(toOutput(paletteColor(${INK_COLUMN}.0, row)), 1.0);
       #endif
     }`;
 
@@ -269,6 +436,24 @@
    * @property {number} [tone] a fixed tone, 0 (darkest) .. 1 (lightest) of the ramp, instead of shading
    * @property {{value: THREE.Vector2}} [anchor] from `shading.follow(root)`: the figure this part's dither moves with
    * @property {boolean} [instanceRamp] an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
+   * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below
+   *   it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
+   * @property {LookRegions} [regions] the mesh is painted from a baked region map instead of one ramp
+   * @property {number} [blockRow] with `regions` or `stamps`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
+   * @property {number} [shell] with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
+   * @property {boolean} [stamps] the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js
+   *   `stamps`): each vertex names its slot and tone, and it is never outlined
+   * @property {boolean} [outlined=true] false: no hull outline of its own, though it keeps its ink group
+   */
+
+  /**
+   * @typedef {Object} LookRegions
+   * @property {THREE.Texture} texture a `RegionMap` (kit/region.js) as RGBA bytes, nearest-filtered, wrapping around
+   * @property {number} width texels around
+   * @property {number} height texels along
+   * @property {number[]} end [x, y, z] the far end of the mesh's long axis in its own space (s is 1 there)
+   * @property {number} front the axis (0 = x, 1 = y, 2 = z) the around-angle is measured from
+   * @property {number} side the axis it grows towards
    */
 
   /**
@@ -318,6 +503,7 @@
       uDepthRange: { value: new THREE.Vector2(0, 1) },
       uViewport: { value: new THREE.Vector2(1, 1) },
       uInkWidth: { value: 1 },
+      uTexelWorld: { value: 0 },
     };
     const noAnchor = { value: new THREE.Vector2(0, 0) };
     /** @type {DressedMesh[]} */
@@ -332,7 +518,24 @@
       uRamp: { value: part.ramp },
       uInkGroup: { value: part.inkGroup === undefined ? (part.emissive ? 0 : 1) : part.inkGroup },
       uPart: { value: new THREE.Vector3(part.shiny ? 1 : 0, part.emissive ? 1 : 0, part.tone === undefined ? -1 : part.tone) },
+      uInkClass: { value: part.inkClass || 0 },
+      ...(part.regions || part.stamps ? { uBlockRow: { value: part.blockRow || 0 } } : {}),
+      ...(part.regions ? regionUniforms(part.regions, part.shell || 0) : {}),
     });
+    const axisVector = (axis) => new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+    const regionUniforms = (regions, shell) => {
+      const end = new THREE.Vector3(...regions.end);
+      return {
+        uRegionMap: { value: regions.texture },
+        uRegionSize: { value: new THREE.Vector2(regions.width, regions.height) },
+        // A bone with no length has s = 0 everywhere, as Kit.surface.along has it.
+        uRegionAlong: { value: end.lengthSq() > 0 ? end.clone().divideScalar(end.lengthSq()) : end },
+        uRegionFront: { value: axisVector(regions.front) },
+        uRegionSide: { value: axisVector(regions.side) },
+        uShell: { value: shell },
+      };
+    };
+    const partDefines = (part) => ({ ...(part.regions ? { LOOK_REGIONS: '' } : {}), ...(part.stamps ? { LOOK_STAMP: '' } : {}) });
 
     /** Makes the geometry draw twice, once per material slot (toon, hull), and gives it welded normals for the hull. */
     const prepareGeometry = (mesh) => {
@@ -370,17 +573,19 @@
           uniforms: partValues,
           vertexShader: TOON_VERTEX,
           fragmentShader: TOON_FRAGMENT,
-          defines: { ...baseDefines(), ...(part.instanceRamp ? { LOOK_INSTANCE_RAMP: '' } : {}) },
+          defines: { ...baseDefines(), ...partDefines(part), ...(part.instanceRamp ? { LOOK_INSTANCE_RAMP: '' } : {}) },
         });
+        // The region line measures the map's gradient on screen; WebGL1 needs the derivatives extension for that.
+        if (part.regions) toon.extensions = { derivatives: true };
         const hull = new THREE.ShaderMaterial({
           uniforms: partValues,
           vertexShader: HULL_VERTEX,
           fragmentShader: HULL_FRAGMENT,
           side: THREE.BackSide,
-          defines: { ...baseDefines(), LOOK_INK_NORMAL: '' },
+          defines: { ...baseDefines(), ...(part.regions && !part.stamps ? { LOOK_REGIONS: '' } : {}), LOOK_INK_NORMAL: '' },
         });
-        // An unoutlined part (group 0) keeps its hull material but never shows it.
-        hull.userData.isInked = partValues.uInkGroup.value > 0;
+        // An unoutlined part (group 0, stamps, or one that asked for none) keeps its hull material but never shows it.
+        hull.userData.isInked = partValues.uInkGroup.value > 0 && !part.stamps && part.outlined !== false;
         hull.visible = false;
         mesh.material = [toon, hull];
         const entry = { mesh, toon, hull, setRamp: (row) => (partValues.uRamp.value = row) };
@@ -430,7 +635,13 @@
         const key = [settings.isIndexed, isSoft, settings.ditherSpace === 'object', settings.outline].join();
         if (key === defineKey) return;
         defineKey = key;
-        const switches = { LOOK_INDEX_OUTPUT: settings.isIndexed, LOOK_SOFT: isSoft, LOOK_DITHER_OBJECT: settings.ditherSpace === 'object' };
+        const switches = {
+          LOOK_INDEX_OUTPUT: settings.isIndexed,
+          LOOK_SOFT: isSoft,
+          LOOK_DITHER_OBJECT: settings.ditherSpace === 'object',
+          // On the direct path a region-painted mesh draws its own boundary lines; the indexed path's resolve pass does.
+          LOOK_REGION_INK: !settings.isIndexed && settings.outline !== 'none',
+        };
         dressed.forEach(({ toon, hull }) => {
           [toon, hull].forEach((material) => {
             Object.keys(switches).forEach((name) => (switches[name] ? (material.defines[name] = '') : delete material.defines[name]));
@@ -457,5 +668,5 @@
     return look;
   };
 
-  Object.assign(Kit.look, { shading, paletteTexture, GLSL: { GLSL_TRANSFORM, GLSL_BAYER, GLSL_DITHER_CELL, GLSL_BANDS, GLSL_PALETTE, GLSL_DEPTH_BYTE } });
+  Object.assign(Kit.look, { shading, paletteTexture, CLASS_STEP, GLSL: { GLSL_TRANSFORM, GLSL_BAYER, GLSL_DITHER_CELL, GLSL_BANDS, GLSL_PALETTE, GLSL_DEPTH_BYTE, GLSL_REGIONS, GLSL_REGION_LINE } });
 })();

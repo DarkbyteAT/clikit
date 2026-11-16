@@ -6,7 +6,8 @@
  * back and high at the front, with a fringe"; a belly patch is "facing forward and down".
  *
  * Owns:  `Kit.region.compile` (tree -> a test function, checked once), `Kit.region.at` (which of several
- *        painted layers covers a point: the topmost wins) and the `OPS` table (one row per predicate).
+ *        painted layers covers a point: the topmost wins), `Kit.region.bake` / `sample` (layers -> a small texel
+ *        map over (around, along) that a renderer reads per fragment) and the `OPS` table (one row per predicate).
  * Does not own: where the coordinates come from (kit/surface.js `along` works them out for a primitive; a body
  *        bone's are in kit/body-surface.js), what a layer paints, or drawing.
  *
@@ -154,5 +155,100 @@
     return NONE;
   };
 
-  Kit.region = { OPS, NONE, compile, at };
+  // ---- baking layers into a texel map ----------------------------------------------------------------------------------
+
+  /** Bytes per texel of a baked map. */
+  const MAP_CHANNELS = 4;
+  /** The byte a map holds where no layer paints (channel 0) or no layer draws a line (channel 1): the surface keeps its own. */
+  const MAP_OWN = 255;
+  /** Default map size, texels: around the solid by along it. Powers of two, so the around axis can wrap on any GPU. */
+  const MAP_SIZE = Object.freeze({ width: 128, height: 64 });
+  /** Bit of channel 3 set where a layer that hides surface stamps (hair over a brow) covers the texel. */
+  const MAP_OCCLUDES = 1;
+
+  /**
+   * @typedef {Object} MapLayer
+   * One painted layer of a surface, bottom first in its list.
+   * @property {RegionTest} test
+   * @property {number} slot 0..254: what the layer paints with (an index a renderer turns into a colour row)
+   * @property {boolean} [ink=true] false for a pattern inside a garment (stripes, stipple): it changes the colour
+   *   but draws no line round itself, so the line class stays that of the layer beneath
+   * @property {number} [raise=0] metres the layer stands proud of the surface (cloth over skin, hair over a scalp)
+   * @property {boolean} [occludes=false] the layer hides stamps on the surface beneath it (hair hides a brow)
+   */
+
+  /**
+   * @typedef {Object} RegionMap
+   * @property {number} width texels around the solid: column c holds the angle ((c + 0.5) / width - 0.5) x 2 pi
+   * @property {number} height texels along it: row r holds s = (r + 0.5) / height
+   * @property {Uint8Array} data 4 bytes per texel, row 0 first: [slot of the topmost layer or 255, slot of the
+   *   topmost layer that draws a line or 255, shell index (0: flush; k: `shells[k - 1]`), flags (`MAP_OCCLUDES`)]
+   * @property {number[]} shells the distinct raises in the map, metres, ascending: a renderer draws one offset
+   *   shell of the solid per entry and shows on it the texels whose shell index names it
+   */
+
+  /**
+   * Bakes painted layers into a small map over (around, along), so a renderer answers "what paints this point"
+   * with one texture read per fragment instead of walking predicate trees. A texel is raised as far as the most
+   * raised layer covering it (a belt painted on a tunic sits on the tunic, not in a groove). The outward normal
+   * handed to the tests is the radial direction at the texel's angle (exact on a round solid's side, approximate
+   * on its caps), so `facing` predicates are approximate here.
+   * @param {ReadonlyArray<MapLayer>} layers in paint order, bottom first
+   * @param {{width?: number, height?: number, front?: number, side?: number}} [options] the map's size (default
+   *   `MAP_SIZE`), and which axes (0 = x, 1 = y, 2 = z) the angle is measured in (default z and x, a solid along y)
+   * @returns {RegionMap}
+   * @complexity O(width x height x layers x nodes) time, O(width x height) space; about a millisecond for three
+   *   layers at the default size. Once per distinct set of layers, never per frame.
+   * @example Kit.region.bake([{ test: Kit.region.compile({ band: { s: [0, 0.5] } }), slot: 6, raise: 0.01 }]).shells // [0.01]
+   */
+  const bake = (layers, options = {}) => {
+    const width = options.width || MAP_SIZE.width;
+    const height = options.height || MAP_SIZE.height;
+    const [front, side] = [options.front === undefined ? 2 : options.front, options.side === undefined ? 0 : options.side];
+    const shells = [...new Set(layers.map((layer) => layer.raise || 0).filter((raise) => raise > 0))].sort((first, second) => first - second);
+    const shellOf = layers.map((layer) => shells.indexOf(layer.raise || 0) + 1);
+    const data = new Uint8Array(width * height * MAP_CHANNELS);
+    const normal = [0, 0, 0];
+    // Index loops: this visits every texel of every layer (tens of thousands of tests per map).
+    for (let column = 0; column < width; column++) {
+      const angle = ((column + 0.5) / width - 0.5) * FULL_TURN;
+      normal[front] = Math.cos(angle);
+      normal[side] = Math.sin(angle);
+      for (let row = 0; row < height; row++) {
+        const along = (row + 0.5) / height;
+        let [slot, inkSlot, shell, flags] = [MAP_OWN, MAP_OWN, 0, 0];
+        for (let index = 0; index < layers.length; index++) {
+          const layer = layers[index];
+          if (!layer.test(along, angle, normal[0], normal[1], normal[2])) continue;
+          slot = layer.slot;
+          if (layer.ink !== false) inkSlot = layer.slot;
+          shell = Math.max(shell, shellOf[index]);
+          // A later layer that does not occlude (a headband over hair) leaves the flag of the one beneath it.
+          if (layer.occludes) flags |= MAP_OCCLUDES;
+        }
+        data.set([slot, inkSlot, shell, flags], (row * width + column) * MAP_CHANNELS);
+      }
+    }
+    return { width, height, data, shells };
+  };
+
+  /**
+   * Reads a baked map at a point, as the renderer's nearest texel does.
+   * @param {RegionMap} map from `bake`
+   * @param {number} along s, 0 to 1
+   * @param {number} angle radians, 0 at the front
+   * @returns {{slot: number, inkSlot: number, shell: number, occludes: boolean}} `slot` and `inkSlot` are -1
+   *   (`NONE`) where the surface keeps its own
+   * @complexity O(1)
+   * @example Kit.region.sample(map, 0.25, 0).slot // 6
+   */
+  const sample = (map, along, angle) => {
+    const column = Math.min(map.width - 1, Math.floor(fraction(angle / FULL_TURN + 0.5) * map.width));
+    const row = Math.min(map.height - 1, Math.max(0, Math.floor(along * map.height)));
+    const at = (row * map.width + column) * MAP_CHANNELS;
+    const own = (value) => (value === MAP_OWN ? NONE : value);
+    return { slot: own(map.data[at]), inkSlot: own(map.data[at + 1]), shell: map.data[at + 2], occludes: (map.data[at + 3] & MAP_OCCLUDES) !== 0 };
+  };
+
+  Kit.region = { OPS, NONE, MAP_OWN, MAP_SIZE, MAP_OCCLUDES, compile, at, bake, sample };
 })();

@@ -17,6 +17,25 @@ const { ROOT } = require('./project');
 
 const PORTRAIT = { width: 390, height: 780 };
 const LANDSCAPE = { width: 780, height: 390 };
+/** The largest viewport side `--size` accepts, CSS pixels: software GL takes seconds per frame beyond it. */
+const MOST_VIEWPORT_PIXELS = 2400;
+const LEAST_VIEWPORT_PIXELS = 100;
+
+/**
+ * Reads a viewport size written as `<width>x<height>` (the `--size` flag of `play`).
+ * @param {string} text e.g. '1200x900'
+ * @returns {{width: number, height: number}} CSS pixels
+ * @throws {Error} naming the bad text and the accepted form and range
+ * @example parseSize('1200x900') // { width: 1200, height: 900 }
+ */
+function parseSize(text) {
+  const match = /^(\d+)x(\d+)$/.exec(String(text).trim());
+  const size = match ? { width: Number(match[1]), height: Number(match[2]) } : null;
+  const isInRange = size && [size.width, size.height].every((side) => side >= LEAST_VIEWPORT_PIXELS && side <= MOST_VIEWPORT_PIXELS);
+  if (!isInRange) throw new Error(`"${text}" is not a viewport size. Write <width>x<height> in CSS pixels, each from ${LEAST_VIEWPORT_PIXELS} to ${MOST_VIEWPORT_PIXELS}, e.g. --size 1200x900.`);
+  return size;
+}
+
 const CONTENT_TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.png': 'image/png' };
 /** CDN URLs in index.html and the local copies that stand in for them (tests have no network). */
 const VENDOR_SWAPS = [
@@ -145,19 +164,20 @@ const serve = (request, response) => {
 
 /**
  * Opens the arcade page in a headless browser.
- * @param {{landscape?: boolean, touch?: boolean}} [options] `touch`: drive the page with real touch events instead of the mouse
+ * @param {{landscape?: boolean, touch?: boolean, size?: {width: number, height: number}}} [options] `touch`: drive the page with real
+ *   touch events instead of the mouse; `size`: a viewport of its own (from `parseSize`), instead of the phone's
  * @returns {Promise<ArcadeSession>} waits for a machine-wide browser slot first (a waiting run is not a hung run)
  * @example
  * const session = await openArcade({ landscape: true });
  * await session.launchGame('miner'); await session.shot('scratch/miner/start.png'); await session.close();
  */
-async function openArcade({ landscape = false, touch = false } = {}) {
+async function openArcade({ landscape = false, touch = false, size: ownSize } = {}) {
   const { chromium } = require('playwright');
   const releaseSlot = await takeBrowserSlot();
   const server = http.createServer(serve);
   await new Promise((resolve) => server.listen(0, resolve));
   const browser = await chromium.launch({ args: BROWSER_ARGS });
-  const size = landscape ? LANDSCAPE : PORTRAIT;
+  const size = ownSize || (landscape ? LANDSCAPE : PORTRAIT);
   const page = await browser.newPage({ viewport: size, deviceScaleFactor: 1, hasTouch: true });
   const errors = [];
   page.on('pageerror', (error) => errors.push('pageerror: ' + error.message));
@@ -219,4 +239,4 @@ async function openArcade({ landscape = false, touch = false } = {}) {
   };
 }
 
-module.exports = { openArcade, takeBrowserSlot, PORTRAIT, LANDSCAPE };
+module.exports = { openArcade, takeBrowserSlot, parseSize, PORTRAIT, LANDSCAPE };

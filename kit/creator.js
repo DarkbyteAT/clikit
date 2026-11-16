@@ -25,6 +25,20 @@
   const { lookControls } = Kit.look.panel;
   const creator = Kit.creator;
 
+  /**
+   * The character a first visit opens on: the catalogue's default person with every dial at its default (a
+   * dressed, friendly character rather than a random roll), or the first body type when there is none.
+   * @param {Object} catalog
+   * @param {Object} editor from `Kit.body.editor(catalog)`
+   * @returns {Object} a recipe
+   * @complexity O(dials)
+   */
+  const openingRecipe = (catalog, editor) => {
+    const base = Kit.body.wardrobe.DEFAULT_PERSON;
+    if (!base) return { species: catalog.speciesIds()[0], ...OPENING_RECIPE };
+    return editor.schema(base).dials.reduce((recipe, dial) => editor.setDial(recipe, dial.id, dial.default), base);
+  };
+
   // ---- tunables -------------------------------------------------------------------------------------------------------
 
   /** The stage's backdrop: a calm mid slate that the toon tones read well against. */
@@ -35,7 +49,7 @@
   const STAGE_INSET = Object.freeze({ top: 52, bottom: 56 });
   /** The preset a first visit starts in. */
   const OPENING_PRESET = 'toon';
-  /** The character a first visit starts with: the first body type, seed 1, nothing rolled yet. */
+  /** The character a first visit starts with when the catalogue names no default person: the first body type, seed 1. */
   const OPENING_RECIPE = Object.freeze({ seed: 1 });
   /** The key the screen's own save holds the draft under (the character, its name and its look), so leaving does not lose it. */
   const DRAFT_KEY = 'draft';
@@ -113,7 +127,7 @@
     const editor = Kit.body.editor(catalog);
     const bakery = catalog.bakery();
     const draft = restoreDraft(ctx.save, catalog);
-    const session = creator.session({ catalog, editor, recipe: draft.recipe || { species: catalog.speciesIds()[0], ...OPENING_RECIPE }, name: draft.name || undefined });
+    const session = creator.session({ catalog, editor, recipe: draft.recipe || openingRecipe(catalog, editor), name: draft.name || undefined });
     const slots = creator.slots(ctx.save);
     const director = creator.camera.director();
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -125,9 +139,8 @@
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAMERA.near, CAMERA.far);
     let drawnRecipe = session.recipe();
     let bake = bakery.bakeRecipe(drawnRecipe);
-    // The figure asks for faces through this wrapper, so the hooks of the bake being drawn are always the ones used.
-    let hooks = Kit.body.figureHooks ? Kit.body.figureHooks(bake) : null;
-    const figure = Kit.figure.build(view, bake, { cache, featuresOf: (plan, bone) => (hooks ? hooks.featuresOf(plan, bone) : []) });
+    // Faces and clothes come through the figure's default hooks (`Kit.body.FIGURE_HOOKS`), which read the bake being drawn.
+    const figure = Kit.figure.build(view, bake, { cache });
 
     // ---- state the interface reads ----
     const held = signal(false);
@@ -228,7 +241,6 @@
     const showRecipe = (recipe) => {
       const startedAt = performance.now();
       const next = bakery.bakeRecipe(recipe);
-      hooks = Kit.body.figureHooks ? Kit.body.figureHooks(next) : null;
       figure.setBake(next, editor.changes(bake, next));
       bake = next;
       drawnRecipe = recipe;

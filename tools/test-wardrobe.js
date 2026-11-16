@@ -746,22 +746,27 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
   });
 
   // ---- the figure renderer's extension points, and the two renderer edits they needed ----
-  test('figure hooks: features become pieces on their bone (eyes glow, stamps keep their shade); regionOf paints by bone-local point', () => {
+  test('figure hooks: solids become pieces, every stamp layer of a bone one polygon of a single stamps piece; regionOf paints by bone-local point', () => {
     const bakery = wardrobe.bakery();
     const bake = bakery.bakeRecipe({ species: 'person', seed: 4, overrides: { 'fill:top': 'longSleeve', 'fill:eyes': 'eyesRound', 'fill:hat': null, 'fill:glasses': null } });
     const hooks = body.figureHooks(bake);
     const head = bake.plan.boneIndex('head');
     const pieces = hooks.featuresOf(bake.plan, head);
-    const eyes = bake.surface.features.filter((feature) => feature.id === 'eye');
-    const stampLayers = bake.surface.features
-      .filter((feature) => feature.bone === head)
-      .reduce((sum, feature) => sum + Math.min(12, (feature.frames[feature.rest] || []).length) + (feature.shape ? 1 : 0), 0);
-    same(pieces.length, stampLayers, 'one piece per solid and per stamp layer');
-    assert.ok(pieces.filter((piece) => piece.glow).length >= eyes.length * 4, 'eye layers glow (never outlined)');
-    assert.ok(
-      pieces.every((piece) => Math.abs(Kit.surface.distance(bake.shapes[head], body.surfaceLayout(bake.plan).frames[head], ...piece.shape.at)) < 0.06),
-      'every piece sits at the head surface'
+    const onHead = bake.surface.features.filter((feature) => feature.bone === head);
+    const solids = onHead.filter((feature) => feature.shape).length;
+    const layerCount = onHead.reduce((sum, feature) => sum + (feature.frames[feature.rest] || []).filter((layer) => layer.ramp >= 0).length, 0);
+    same(pieces.length, solids + 1, 'one piece per solid, and one for all the stamps');
+    const stamps = pieces.find((piece) => piece.stamps);
+    same(stamps.shape.layers.length, layerCount, 'every layer of every rest frame is a polygon of it');
+    assert.ok(stamps.glow, 'stamps are never outlined');
+    const frame = body.surfaceLayout(bake.plan).frames[head];
+    const farthest = Math.max(
+      ...stamps.shape.layers.flatMap((layer) => Array.from({ length: layer.points.length / 3 }, (_unused, vertex) => Math.abs(Kit.surface.distance(bake.shapes[head], frame, ...layer.points.slice(vertex * 3, vertex * 3 + 3)))))
     );
+    assert.ok(farthest < 0.012, `every stamp vertex hugs the head surface (farthest ${farthest})`);
+    const sclera = wardrobe.species('person').colorIds.indexOf('sclera');
+    assert.ok(stamps.shape.layers.some((layer) => layer.slot === sclera && layer.tone === 1), 'an eye white keeps its channel and its lightest shade');
+    assert.ok(pieces.filter((piece) => !piece.stamps).every((piece) => Math.abs(Kit.surface.distance(bake.shapes[head], frame, ...piece.shape.at)) < 0.06), 'every solid sits at the head surface');
     same(hooks.featuresOf(bake.plan, bake.plan.boneIndex('chest')), [], 'nothing on a bone without features');
     const layout = Kit.figure.layout(bake, { featuresOf: hooks.featuresOf });
     assert.ok(layout.pieces.filter((piece) => piece.id.startsWith('head#')).length === pieces.length, 'the renderer takes them as head pieces');
@@ -785,5 +790,99 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     close(widest({ ...sphere, scale: [0.5, 1, 1] }), widest(sphere) / 2, 1e-6, 'scale stretches the built surface');
     const normals = Kit.figure.buildShape({ ...sphere, scale: [0.5, 1, 2] }, 'low').normals;
     for (let index = 0; index < normals.length; index += 3) close(Math.hypot(normals[index], normals[index + 1], normals[index + 2]), 1, 1e-5, 'normals stay unit');
+  });
+  test('region maps: a region reaches its ramp slot per texel; a pattern keeps the line class beneath; a raised region gets a shell (controls: outside stays the bone own)', () => {
+    const lower = Kit.region.compile({ band: { s: [0, 0.5] } });
+    const stripe = Kit.region.compile({ band: { s: [0.1, 0.2] } });
+    const map = Kit.region.bake([
+      { test: lower, slot: 6, raise: 0.01, occludes: true },
+      { test: stripe, slot: 9, ink: false },
+    ]);
+    same([map.width, map.height, map.data.length], [Kit.region.MAP_SIZE.width, Kit.region.MAP_SIZE.height, Kit.region.MAP_SIZE.width * Kit.region.MAP_SIZE.height * 4]);
+    same(map.shells, [0.01], 'one distinct raise, one shell');
+    const inLower = Kit.region.sample(map, 0.3, 0);
+    same([inLower.slot, inLower.inkSlot, inLower.shell, inLower.occludes], [6, 6, 1, true], 'the region paints its slot, draws lines as itself, on shell 1, and hides what is under it');
+    const inStripe = Kit.region.sample(map, 0.15, 1);
+    same([inStripe.slot, inStripe.inkSlot], [9, 6], 'a pattern changes the colour and keeps the line class of the garment it is printed on');
+    const outside = Kit.region.sample(map, 0.8, 0);
+    same([outside.slot, outside.shell, outside.occludes], [Kit.region.NONE, 0, false], 'control: above the region the bone keeps its own ramp, flush and uncovered');
+    same(Kit.region.bake([]).shells, [], 'control: no layers, no shells');
+  });
+  test('surface features: a body dial reuses the placed face, a face dial places it again, and the renderer keeps its pieces to match', () => {
+    const bakery = wardrobe.bakery();
+    const editor = body.editor(wardrobe);
+    const person = body.wardrobe.DEFAULT_PERSON;
+    const plain = bakery.bakeRecipe(person);
+    const taller = bakery.bakeRecipe(editor.setDial(person, 'height', editor.schema(person).dials.find((dial) => dial.id === 'height').max));
+    const jawed = bakery.bakeRecipe(editor.setDial(person, 'jaw', editor.schema(person).dials.find((dial) => dial.id === 'jaw').max));
+    assert.notStrictEqual(taller, plain, 'control: the height dial made another bake');
+    assert.strictEqual(taller.surface.features, plain.surface.features, 'a height change reuses the placed features');
+    assert.notStrictEqual(jawed.surface.features, plain.surface.features, 'a jaw change places them again');
+    const head = plain.plan.boneIndex('head');
+    const hooks = body.FIGURE_HOOKS;
+    assert.strictEqual(hooks.featuresOf(taller.plan, head, taller.shapes[head], taller), hooks.featuresOf(plain.plan, head, plain.shapes[head], plain), 'and the renderer gets the same pieces back');
+    assert.notStrictEqual(hooks.featuresOf(jawed.plan, head, jawed.shapes[head], jawed), hooks.featuresOf(plain.plan, head, plain.shapes[head], plain), 'control: new pieces for the new jaw');
+    assert.strictEqual(hooks.regionMapOf(taller.plan, head, taller).data, hooks.regionMapOf(plain.plan, head, plain).data, 'region maps depend on the outfit, not on dials: one baked map');
+    const capped = bakery.bakeRecipe(editor.setSocket(person, 'hair', 'hairBuzz'));
+    assert.notStrictEqual(hooks.regionMapOf(capped.plan, head, capped).data, hooks.regionMapOf(plain.plan, head, plain).data, 'control: another haircut, another map');
+  });
+  test('bakery: outfits that differ only in a surface part share a skeleton (control: a hat brings bones and a new one)', () => {
+    const bakery = wardrobe.bakery();
+    const editor = body.editor(wardrobe);
+    const person = body.wardrobe.DEFAULT_PERSON;
+    const first = bakery.bakeRecipe(person);
+    const otherEyes = bakery.bakeRecipe(editor.setSocket(person, 'eyes', 'eyesAlmond'));
+    same([bakery.stats().outfits, bakery.skeletons()], [2, 1], 'two outfits, one skeleton');
+    assert.notStrictEqual(otherEyes.plan, first.plan, 'the plans differ');
+    assert.strictEqual(otherEyes.plan.bonePaint, first.plan.bonePaint, 'and share their compiled bones');
+    assert.strictEqual(otherEyes.plan.filled.eyes, 'eyesAlmond');
+    const whole = body.assemble(wardrobe.species('person').plan, otherEyes.individual.fills, wardrobe.parts);
+    same(otherEyes.plan.id, whole.id, 'the shared plan has the id a full assemble gives');
+    same(otherEyes.plan.filled, whole.filled);
+    same((otherEyes.plan.spec.features || []).map((feature) => feature.id).sort(), (whole.spec.features || []).map((feature) => feature.id).sort(), 'and the same features');
+    same((otherEyes.plan.spec.regions || []).map((region) => region.id).sort(), (whole.spec.regions || []).map((region) => region.id).sort(), 'and regions');
+    bakery.bakeRecipe(editor.setSocket(person, 'hat', 'beanie'));
+    same([bakery.stats().outfits, bakery.skeletons()], [3, 2], 'control: a hat is bones');
+  });
+  test('figure shapes: smooth profiles pass through their points, stamps carry paint rules and order, a falling lathe faces out', () => {
+    const profile = [
+      [0.05, 0],
+      [0.1, 0.1],
+      [0.04, 0.2],
+    ];
+    const smooth = Kit.figure.smoothProfile(profile, 4);
+    assert.ok(smooth.length > profile.length, 'more points');
+    profile.forEach((point) => assert.ok(smooth.some((made) => Math.hypot(made[0] - point[0], made[1] - point[1]) < 1e-9), `the curve passes through ${point}`));
+    same(Kit.figure.smoothProfile(profile, 1), profile, 'control: one step leaves the profile alone');
+    const square = [-0.01, -0.01, 0, 0.01, -0.01, 0, 0.01, 0.01, 0, -0.01, 0.01, 0];
+    const layer = (extra) => ({ points: square, normal: [0, 0, 1], slot: 3, tone: 0.5, ...extra });
+    const stamps = Kit.figure.buildShape({ kind: 'stamps', at: [0, 0, 0], layers: [layer({ least: 2 }), layer({ drop: 3 }), layer({})] }, 'high');
+    same(stamps.paint.length, (stamps.positions.length / 3) * 4, 'four paint floats per vertex');
+    same([0, 4, 8].map((vertex) => [stamps.paint[vertex * 4 + 2], stamps.paint[vertex * 4 + 3]]), [[2, 0], [-3, 1], [0, 2]], 'least is positive, drop negative, none zero; layers are numbered in order');
+    close(stamps.centres[3], 0.01, 1e-6, 'the half extent of the smaller side');
+    const outward = (lathe) => {
+      const built = Kit.figure.buildShape(lathe, 'low');
+      let agree = 0;
+      for (let index = 0; index < built.indices.length; index += 3) {
+        const [a, b, c] = [0, 1, 2].map((corner) => built.indices[index + corner] * 3);
+        const edge = (from, to) => [0, 1, 2].map((axis) => built.positions[to + axis] - built.positions[from + axis]);
+        const [u, v] = [edge(a, b), edge(a, c)];
+        const face = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        agree += Math.sign(face[0] * built.normals[a] + face[1] * built.normals[a + 1] + face[2] * built.normals[a + 2]);
+      }
+      return agree;
+    };
+    const skirtUp = { kind: 'lathe', profile: [[0.1, 0], [0.06, 0.2]], at: [0, 0, 0], axis: 1 };
+    const skirtDown = { kind: 'lathe', profile: [[0.06, 0], [0.1, -0.2]], at: [0, 0, 0], axis: 1 };
+    assert.ok(outward(skirtUp) > 0, 'control: a rising profile winds outward');
+    assert.ok(outward(skirtDown) > 0, 'a falling profile winds outward too');
+  });
+  test('palette atlas: a freed block is used again (control: without free the next load takes new rows)', () => {
+    const atlas = Kit.palette.atlas({ rows: 64 });
+    const first = atlas.load(Kit.palette.SETS.ember);
+    const second = atlas.load(Kit.palette.SETS.tide);
+    assert.notStrictEqual(second.offset, first.offset, 'control: two loads, two blocks');
+    atlas.free(first);
+    same(atlas.load(Kit.palette.SETS.tide).offset, first.offset, 'the freed rows are taken by the next load of that size');
   });
 };

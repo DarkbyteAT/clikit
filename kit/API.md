@@ -63,7 +63,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [pack.js](#packjs) (4) - Kit pack: small records as bytes, and bytes as text.
 - [palette.js](#palettejs) (14) - Kit palette: colour ramps as data.
 - [surface.js](#surfacejs) (8) - Kit surface: where things sit on the surface of a simple solid.
-- [region.js](#regionjs) (4) - Kit region: areas of a surface as data.
+- [region.js](#regionjs) (8) - Kit region: areas of a surface as data.
 - [rig.js](#rigjs) (11) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
 - [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
 - [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
@@ -92,6 +92,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
+- [body-portrait.js](#body-portraitjs) (4) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
 - [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
 - [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
 - [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
@@ -6352,6 +6353,15 @@ _Undocumented: add a JSDoc block in the source._
 
 _Undocumented: add a JSDoc block in the source._
 
+#### `Kit.palette.atlas().free(block)`
+
+Gives a block's rows back: the next `load` of a palette with as many ramps takes them. Materials still
+pointing at the rows would be recoloured by that load, so free a block only once nothing draws with it.
+
+- `block` *PaletteBlock* - from `load`; freeing it twice, or a block of another atlas, does nothing
+
+**Complexity** O(blocks loaded)
+
 #### `Kit.palette.atlas().colorAt(row, column)`
 
 _Undocumented: add a JSDoc block in the source._
@@ -6398,6 +6408,7 @@ _Undocumented: add a JSDoc block in the source._
   - `toneCount` *number* - tones currently written per ramp
   - `version` *number* - rises with every write, so a texture knows when to upload again
   - `load` *function(PaletteSet\|Ramp[]): PaletteBlock* - reserve rows for a palette and write them
+  - `free` *function(PaletteBlock): void* - give a block's rows back for the next load of the same size
   - `write` *function(PaletteBlock, PaletteSet\|Ramp[]): void* - replace a block's colours with another palette of the same ramps
   - `writeRamp` *function(PaletteBlock, string, RampSpec\|string\|number): void* - replace one ramp of a block
   - `retone` *function(number): void* - rebuild every loaded block at a new tone count
@@ -6566,7 +6577,8 @@ Kit.surface.polygonDistance([[0, 0], [1, 0], [0, 1]], 0.2, 0.2) // -0.2
 > back and high at the front, with a fringe"; a belly patch is "facing forward and down".
 >
 > Owns:  `Kit.region.compile` (tree -> a test function, checked once), `Kit.region.at` (which of several
->        painted layers covers a point: the topmost wins) and the `OPS` table (one row per predicate).
+>        painted layers covers a point: the topmost wins), `Kit.region.bake` / `sample` (layers -> a small texel
+>        map over (around, along) that a renderer reads per fragment) and the `OPS` table (one row per predicate).
 > Does not own: where the coordinates come from (kit/surface.js `along` works them out for a primitive; a body
 >        bone's are in kit/body-surface.js), what a layer paints, or drawing.
 >
@@ -6591,6 +6603,18 @@ The predicates, name -> (argument, compile) -> test. Adding a predicate means ad
 
 `at` returns this when no layer covers the point.
 
+### `Kit.region.MAP_OWN`
+
+The byte a map holds where no layer paints (channel 0) or no layer draws a line (channel 1): the surface keeps its own.
+
+### `Kit.region.MAP_SIZE`
+
+Default map size, texels: around the solid by along it. Powers of two, so the around axis can wrap on any GPU.
+
+### `Kit.region.MAP_OCCLUDES`
+
+Bit of channel 3 set where a layer that hides surface stamps (hair over a brow) covers the texel.
+
 ### `Kit.region.compile(region)`
 
 Turns a region tree into a test function. Every node is checked here, so a mistake in a content table is
@@ -6607,24 +6631,54 @@ const sleeve = Kit.region.compile({ band: { s: [0, 0.6] } });
 sleeve(0.3, 0, 0, 0, 1) // true
 ```
 
-### `Kit.region.at(layers, along, angle, normalX, normalY, normalZ)`
+### `Kit.region.bake(layers, options = {})`
 
-Which of several layers covers a point: the last one (the topmost) whose test passes.
+Bakes painted layers into a small map over (around, along), so a renderer answers "what paints this point"
+with one texture read per fragment instead of walking predicate trees. A texel is raised as far as the most
+raised layer covering it (a belt painted on a tunic sits on the tunic, not in a groove). The outward normal
+handed to the tests is the radial direction at the texel's angle (exact on a round solid's side, approximate
+on its caps), so `facing` predicates are approximate here.
 
-- `layers` *ReadonlyArray\<{test: RegionTest}\>* - in paint order, bottom first
-- `along` *number* - s, 0 to 1
-- `angle` *number* - radians, 0 at the front
-- `normalX` *number*
-- `normalY` *number*
-- `normalZ` *number*
+- `layers` *ReadonlyArray\<MapLayer\>* - in paint order, bottom first
+- `[options]` *{width?: number, height?: number, front?: number, side?: number}* - the map's size (default `MAP_SIZE`), and which axes (0 = x, 1 = y, 2 = z) the angle is measured in (default z and x, a solid along y)
 
-**Returns** *number* the layer's index, or -1 (`NONE`) when none covers the point
+**Returns** *RegionMap*
 
-**Complexity** O(layers x nodes) per point, no allocation; a renderer calls it per vertex or texel at bake time, not per frame
+**Complexity** O(width x height x layers x nodes) time, O(width x height) space; about a millisecond for three layers at the default size. Once per distinct set of layers, never per frame.
 
 ```js
-Kit.region.at([{ test: skinTest }, { test: sleeveTest }], 0.3, 0, 0, 0, 1) // 1
+Kit.region.bake([{ test: Kit.region.compile({ band: { s: [0, 0.5] } }), slot: 6, raise: 0.01 }]).shells // [0.01]
 ```
+
+### `Kit.region.sample(map, along, angle)`
+
+Reads a baked map at a point, as the renderer's nearest texel does.
+
+- `map` *RegionMap* - from `bake`
+- `along` *number* - s, 0 to 1
+- `angle` *number* - radians, 0 at the front
+
+**Returns** *{slot: number, inkSlot: number, shell: number, occludes: boolean}* `slot` and `inkSlot` are -1 (`NONE`) where the surface keeps its own
+
+**Complexity** O(1)
+
+```js
+Kit.region.sample(map, 0.25, 0).slot // 6
+```
+
+### Types
+
+- **MapLayer** - One painted layer of a surface, bottom first in its list.
+  - `test` *RegionTest*
+  - `slot` *number* - 0..254: what the layer paints with (an index a renderer turns into a colour row)
+  - `[ink=true]` *boolean* - false for a pattern inside a garment (stripes, stipple): it changes the colour but draws no line round itself, so the line class stays that of the layer beneath
+  - `[raise=0]` *number* - metres the layer stands proud of the surface (cloth over skin, hair over a scalp)
+  - `[occludes=false]` *boolean* - the layer hides stamps on the surface beneath it (hair hides a brow)
+- **RegionMap**
+  - `width` *number* - texels around the solid: column c holds the angle ((c + 0.5) / width - 0.5) x 2 pi
+  - `height` *number* - texels along it: row r holds s = (r + 0.5) / height
+  - `data` *Uint8Array* - 4 bytes per texel, row 0 first: [slot of the topmost layer or 255, slot of the topmost layer that draws a line or 255, shell index (0: flush; k: `shells[k - 1]`), flags (`MAP_OCCLUDES`)]
+  - `shells` *number[]* - the distinct raises in the map, metres, ascending: a renderer draws one offset shell of the solid per entry and shows on it the texels whose shell index names it
 
 ## rig.js
 
@@ -7335,7 +7389,9 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > Owns:  `Kit.body.surfaceLayout(plan)` (validate and index a plan's features and regions; cached per plan) and
 >        `Kit.body.surfaceOf(...)` (one individual's placements and painted layers, with `regionAt`), plus the
->        `FeatureSpec` and `RegionSpec` shapes and `FRAME_SETS`.
+>        `FeatureSpec` and `RegionSpec` shapes and `FRAME_SETS`; and the figure renderer's two hooks for a bake,
+>        `Kit.body.FIGURE_HOOKS` (`featuresOf`: a bone's face as one stamps piece plus feature solids, kept per
+>        placed list; `regionMapOf`: a bone's regions baked to a small map, kept per outfit).
 > Does not own: the maths of placing on a solid (kit/surface.js), the predicates (kit/region.js), how features
 >        and regions travel with parts (kit/body-parts.js), or drawing them (renderers; kit/body-debug.js marks them).
 >
@@ -7346,6 +7402,9 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 - **StampLayer**
   - `outline` *number[][]* - [[u, v], ...] in the stamp's own square, -1 to 1 each way (`Kit.surface.ellipse` draws one); u runs across (towards the body's left on a front-facing stamp), v up
   - `paint` *{channel: string, shade: number}* - a colour channel of the species and a shade of its ramp (0 is the darkest); the shade is clamped to the ramp
+  - `[least]` *number* - the fewest target texels the layer's smaller side may cover: a renderer grows a layer that would be smaller (a glint, a pupil), so it survives a low-resolution target
+  - `[drop]` *number* - the layer is left out while its smaller side covers fewer target texels than this: detail (the white of an eye, a pupil) that would only be noise on a small sprite. Not with `least`.
+  - `[fixed]` *boolean* - the layer is not mirrored on the right copy of a pair: a glint sits on the lit side of both eyes
 - **FeatureSpec**
   - `id` *string* - what dials and animators call it ('eye', 'mouth'); several features may share an id
   - `[bone]` *string* - the bone it sits on (a part's features default to the bone of the socket it is in)
@@ -7360,6 +7419,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[shape]` *Object* - a solid in the feature's own frame, metres at the authored size (`Kit.body.SHAPES` row: +X across, +Y along `up`, +Z out along the normal), for a nose or an ear that has a silhouette. A capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
   - `[paint]` *string* - the colour channel of the solid (default 'skin')
   - `[glow]` *boolean* - draw it as a glow (eyes): a renderer leaves it out of outlines
+  - `[under=0]` *number* - stamps of a feature with a higher `under` are drawn beneath the others on its bone whatever order the parts were attached in: blush and freckles go under the eyes
+  - `[outlined=true]` *boolean* - false for a solid that should not get an outline of its own (a nose inside the face's silhouette), while still shading and inking as part of its bone
   - `[part]` *string* - set by kit/body-parts.js: the part that brought it
 - **RegionSpec**
   - `id` *string* - what it is ('sleeve', 'hairline')
@@ -7369,6 +7430,9 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `where` *Object* - a `Kit.region` predicate tree over the bone's along / around coordinates
   - `paint` *string* - the colour channel it paints with
   - `[layer=0]` *number* - stacking order: higher covers lower (skin marks 1, clothes 2, outerwear 3, hair 4)
+  - `[ink=true]` *boolean* - false for a pattern inside a garment (stripes, stipple): a renderer draws no line round it
+  - `[raise=0]` *number* - metres the painted area stands proud of the bone's surface: a renderer draws it on a shell of the bone's own (dialled) shape, so cloth and hair have thickness and follow every dial
+  - `[occludes=false]` *boolean* - the area hides face stamps beneath it (hair over a brow); a beard or stubble leaves it false so the mouth still shows
   - `[part]` *string* - set by kit/body-parts.js: the part that brought it
 - **FeaturePlacement** - One copy of a feature on an individual: everything a renderer needs to stamp or build it.
   - `id` *string*
@@ -7387,6 +7451,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `ramp` *number* - the solid's ramp index (-1 when none)
   - `part` *?string* - the part it came from, null for the plan's own
   - `glow` *boolean* - the feature asked to be drawn as a glow (eyes): never outlined
+  - `outlined` *boolean* - false when the solid should get no outline of its own
+  - `lift` *number* - metres `point` stands off the surface (already applied to it)
 
 ## body-recipe.js
 
@@ -7772,7 +7838,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
 > colour up in the palette texture; a hull material draws the mesh's outline in its ramp's ink colour.
 >
 > Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
->        lookup, hull extrusion) as named strings; `Kit.look.shading`: the uniforms every material of one look
+>        lookup, hull extrusion, region maps and their boundary lines, stamps) as named strings; `Kit.look.shading`: the uniforms every material of one look
 >        shares, `dress(mesh, part)` to put a mesh in the look, and `apply(settings, frame)` to change the look
 >        of every dressed mesh at once.
 > Does not own: colours (kit/palette.js), screen-space ink and low-resolution targets (look-ink.js), or
@@ -7797,6 +7863,19 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `[tone]` *number* - a fixed tone, 0 (darkest) .. 1 (lightest) of the ramp, instead of shading
   - `[anchor]` *{value: THREE.Vector2}* - from `shading.follow(root)`: the figure this part's dither moves with
   - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
+  - `[inkClass=0]` *number* - 0..15. Where two classes meet on one surface (a sleeve and the skin below it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
+  - `[regions]` *LookRegions* - the mesh is painted from a baked region map instead of one ramp
+  - `[blockRow]` *number* - with `regions` or `stamps`: the atlas row of the figure's ramp slot 0 (slots are rows from there)
+  - `[shell]` *number* - with `regions`: 0 (default) draws the whole mesh; k draws only the texels raised to shell k
+  - `[stamps]` *boolean* - the geometry has `stampPaint` and `stampCentre` attributes (kit/figure-shapes.js `stamps`): each vertex names its slot and tone, and it is never outlined
+  - `[outlined=true]` *boolean* - false: no hull outline of its own, though it keeps its ink group
+- **LookRegions**
+  - `texture` *THREE.Texture* - a `RegionMap` (kit/region.js) as RGBA bytes, nearest-filtered, wrapping around
+  - `width` *number* - texels around
+  - `height` *number* - texels along
+  - `end` *number[]* - [x, y, z] the far end of the mesh's long axis in its own space (s is 1 there)
+  - `front` *number* - the axis (0 = x, 1 = y, 2 = z) the around-angle is measured from
+  - `side` *number* - the axis it grows towards
 - **DressedMesh**
   - `mesh` *THREE.Mesh*
   - `toon` *THREE.Material*
@@ -8010,8 +8089,10 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
 >
 > Owns:  `Kit.figure.LEVELS` (segment counts per level of detail), `Kit.figure.ACROSS_AXIS` (the extrude
 >        convention), `describeShapes` (a bone of a plan -> its canonical shape descriptors), `shapeKey`,
->        `buildShape` and the builders behind it (`BUILDERS`), `triangulate` (ear clipping for extrude
->        outlines) and `writeBoneMatrix` (a bone's world transform as a column-major 4 x 4 matrix).
+>        `buildShape` and the builders behind it (`BUILDERS`, including `stamps`: the flat polygons of a face),
+>        the three things any built solid may then have done to it (`scale`, `basis`, `inflate`),
+>        `smoothProfile`, `triangulate` (ear clipping for extrude and stamp outlines) and `writeBoneMatrix` (a
+>        bone's world transform as a column-major 4 x 4 matrix).
 > Does not own: the shape data (kit/body-plan.js and a catalogue's plans and parts), which bones get drawn and
 >        in what colour (kit/figure-layout.js), or anything THREE (kit/figure.js wraps these arrays in
 >        BufferGeometry).
@@ -8037,10 +8118,23 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `[across]` *number* - extrude: the axis the outline's first coordinate lies along
   - `at` *number[]* - [x, y, z] offset in bone space
   - `[scale]` *number[]* - [x, y, z] stretch about `at` (an egg-shaped head, a torso deeper than wide); absent = none
+  - `[basis]` *number[][]* - three unit vectors [across, up, out] in bone space: the solid, built and stretched along the bone's axes, is then turned about `at` so its x, y and z lie along them (an ear that leans back, a nose on a tilted face); absent = the bone's own axes
+  - `[inflate]` *number* - metres every vertex is pushed out along its normal after all of the above: the shell a raised region is drawn on (cloth over a limb, hair over a scalp); absent = none
+  - `[smooth]` *boolean* - lathe: round the authored profile (a curve through its points) instead of joining them with straight runs; `LEVELS[level].smoothSteps` points per run
+  - `[layers]` *StampLayer[]* - stamps: flat polygons lying on the bone's surface, drawn in order
+- **StampLayer** - One flat polygon of a `stamps` shape: a layer of an eye, a brow, a lip, a freckle.
+  - `points` *number[]* - x, y, z per vertex, in bone space, counter-clockwise seen from outside
+  - `normal` *number[]* - unit [x, y, z], out of the surface
+  - `slot` *number* - which of the figure's ramps paints it
+  - `tone` *number* - a fixed tone, 0 (darkest) .. 1 (lightest) of that ramp
+  - `[least=0]` *number* - the fewest target texels its smaller side may cover: the look grows a layer that would be smaller (a glint, a pupil) so it survives a low-resolution target
+  - `[drop=0]` *number* - leave the layer out while its smaller side covers fewer target texels than this
 - **ShapeArrays** - A surface as plain arrays, ready for a BufferGeometry.
   - `positions` *Float32Array* - 3 per vertex, bone space, metres
   - `normals` *Float32Array* - 3 per vertex, unit length, outward
   - `indices` *Uint16Array\|Uint32Array* - 3 per triangle, counter-clockwise from outside
+  - `[paint]` *Float32Array* - stamps only, 4 per vertex: ramp slot, tone 0..1, size rule in texels (positive: the least size, grow to it; negative: drop the layer below that size), order of the layer (later layers draw over earlier ones)
+  - `[centres]` *Float32Array* - stamps only, 4 per vertex: its layer's centre (x, y, z) and smaller half extent, metres
 - **BoneSurface**
   - `shape` *ShapeDescriptor*
   - `child` *number* - -1 for the bone's own (first) surface; else the child bone an extra link reaches
@@ -8059,9 +8153,10 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
 > Does not own: surfaces (kit/figure-shapes.js), THREE objects (kit/figure.js), bakes and what changed in the
 >        individual (kit/body-recipe.js, `editor.changes` in kit/body-edit.js), or colours (kit/palette.js).
 >
-> Two extension points are left open on purpose (see `layout`): surface features (eyes, a mouth) arrive as
-> extra pieces per bone, and surface regions (clothing, hair) as a lookup that splits a piece's triangles by
-> ramp. Neither is implemented here; each says exactly what it expects.
+> Two extension points (see `layout`): surface features (eyes, a mouth, a nose) arrive as extra pieces per
+> bone, and surface regions (clothing, hair) as a baked map per bone that the look reads per fragment, plus one
+> shell piece per raised layer. The body system fills both (`Kit.body.FIGURE_HOOKS`), and they are the default
+> for a bake that has a `surface`; anything else with the same shapes can fill them too.
 >
 > Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-figure.js.
 
@@ -8078,6 +8173,19 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `[shiny]` *boolean* - passed to the look (`LookPart.shiny`)
   - `[emissive]` *boolean* - passed to the look
   - `[tone]` *number* - passed to the look: a fixed tone 0..1
+  - `[regions]` *RegionMapOnBone* - the baked regions of the piece's bone: the look paints the piece from it
+  - `[shell]` *number* - 0 or absent: the bone's own surface; k: the shell of `regions.shells[k - 1]`, which shows only the texels raised that far (id '<bone>~<k>')
+  - `[stamps]` *boolean* - the piece is a `stamps` shape: each vertex carries its paint
+  - `[outlined]` *boolean* - false: no hull outline of its own
+- **RegionMapOnBone** - EXTENSION POINT (surface regions: clothing and hair as predicates over bone-local coordinates).
+  - `key` *string* - equal keys are equal maps (they share one texture)
+  - `width` *number* - texels around
+  - `height` *number* - texels along
+  - `data` *Uint8Array* - a `RegionMap` of kit/region.js: per texel [ramp slot or 255, line-class slot or 255, shell index, flags]
+  - `shells` *number[]* - raises in metres, ascending; shell index k in `data` is `shells[k - 1]`
+  - `end` *number[]* - [x, y, z] the far end of the bone's long axis in bone space: s runs 0 at the joint to 1 there
+  - `front` *number* - the axis (0 = x, 1 = y, 2 = z) the around-angle is measured from
+  - `side` *number* - the axis it grows towards
 - **FeaturePiece** - EXTENSION POINT (surface features: eyes, a mouth, a nose, horns).
   - `shape` *Object* - a `ShapeDescriptor` in the bone's space (already placed on the surface: its `at`)
   - `[ramp]` *number* - index into the bake's `ramps`; default the bone's own
@@ -8085,7 +8193,9 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `[shiny]` *boolean*
   - `[emissive]` *boolean*
   - `[tone]` *number*
-- **RegionLookup** - EXTENSION POINT (surface regions: clothing, hair as predicates over bone-local coordinates).
+  - `[stamps]` *boolean* - the shape is of kind 'stamps' (flat polygons that carry their own paint): it is drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
+  - `[outlined]` *boolean* - false: the piece gets no hull outline of its own (a nose inside a face)
+- **RegionLookup** - A point lookup `regionOf(plan, bone, x, y, z)` -> ramp index (`Kit.body.figureHooks(bake).regionOf`).
 - **FigureLayout**
   - `plan` *Object* - the bake's assembled `BodyPlan`
   - `level` *string* - the level of detail of every key
@@ -8119,7 +8229,8 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
 > kit/figure-shapes.js shared through a cache, its material from `view.shading.dress`, its colour from the
 > figure's rows of the view's palette atlas, and its matrix written each frame from the pose's world transforms.
 >
-> Owns:  `Kit.figure.geometryCache` (BufferGeometry per shape key, counted and shared), `Kit.figure.build`
+> Owns:  `Kit.figure.geometryCache` (BufferGeometry per shape key, counted and shared), `Kit.figure.regionTextures`
+>        (one texture per baked region map, counted and shared), `Kit.figure.build`
 >        (bake -> a figure in a view) and what it returns: `local` (the pose buffer a caller writes), `pose()`
 >        (one forward pass and the matrix writes, no allocation), `setBake` (incremental update from
 >        `editor.changes`), `measured` / `frame` (grounding and camera fitting) and `dispose`.
@@ -8141,6 +8252,11 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `positions` *function(Object): Float32Array* - a piece's bone-space positions (builds and caches them without a geometry)
   - `stats` *function(): {created: number, alive: number}* - geometries ever created, and alive now
   - `dispose` *function(): void* - free every geometry
+- **RegionTextureCache**
+  - `acquire` *function(Object): Object* - the `LookRegions` (kit/look-toon.js) of a `RegionMapOnBone`, its texture made on the first request
+  - `release` *function(string): void* - one user fewer; the texture is disposed when none is left
+  - `stats` *function(): {created: number, alive: number}*
+  - `dispose` *function(): void*
 - **Figure**
   - `root` *THREE.Group* - a direct child of `view.scene`; move and turn it to place the figure
   - `bake` *Object* - the bake drawn now
@@ -9039,6 +9155,76 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 >
 > Registered like a game (after the bodies and figures screens), so the shell gives it a HUD, a back button and
 > clean-up, and the smoke and play tools reach it like any other. It draws its own frame (`render`).
+
+## body-portrait.js
+
+> Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe
+> characters look. It shows the default person (`Kit.body.wardrobe.DEFAULT_PERSON`) and twelve seeded rolls
+> across the species, in three framings: `body` (everyone, head to toe, in a grid), `head` (head and shoulders,
+> a few to a page, with the camera really zoomed in rather than the figures scaled) and `compare` (the `look`
+> showcase's hand-built stand-ins beside the default person and one roll, in the same view and preset). The
+> look panel switches preset and knobs.
+>
+> Owns:  the screen: its cast, the three framings, the camera, and the numbers a tool can ask for
+>        (`Kit.currentGame.measure()`: draw calls, triangles and milliseconds per frame).
+> Does not own: the catalogue (kit/body-wardrobe.js), baking (kit/body-recipe.js), regions and faces
+>        (kit/body-surface.js), drawing (kit/figure*.js, kit/look-*.js) or the stand-ins (kit/look-show.js).
+>
+> Registered like a game, so the shell gives it a HUD, a back button and clean-up, and the play tool reaches it:
+>   node tools/dev.js play portrait --size 1400x800 "log (Kit.currentGame.apply({framing:'head',preset:'pixel'}),1)" "wait 1" "shot head-pixel"
+
+### `Kit.body.portrait.FRAMINGS`
+
+The framings, world units. `columns`: characters per row (0: as many whole cells as the screen is wide, so
+a close-up fills a phone held upright with one face and a wide window with seven); `rows`: rows per page (0:
+as many as the cast needs); `cellWidth` / `cellHeight`: the window each character gets; `top`: how far above the crown of the
+head the window starts (room for a hat); `anchor`: what sits at a fixed height in every cell ('feet' or 'crown').
+
+### `Kit.body.portrait.castRecipes(catalog)`
+
+The characters of the sheet as recipes: the default person with every dial at its default, then the rolls.
+
+- `catalog` *Object* - from `Kit.body.catalog`
+
+**Returns** *Object[]* recipes
+
+**Complexity** O(dials + rolls)
+
+```js
+const recipes = castRecipes(Kit.body.catalog(Kit.body.wardrobe.CATALOG));
+```
+
+### `Kit.body.portrait.slotPlace(framing, slot, count)`
+
+Which page a slot is on and where in the page's grid, for a framing.
+
+- `framing` *{columns: number, rows: number}* - a row of `FRAMINGS` with its columns settled (`columnsFor`)
+- `slot` *number* - index among the things shown in this framing
+- `count` *number* - how many things the framing shows
+
+**Returns** *{page: number, column: number, row: number, pages: number, rows: number}*
+
+**Complexity** O(1)
+
+```js
+slotPlace({ columns: 5, rows: 1 }, 7, 13) // { page: 1, column: 2, row: 0, pages: 3, rows: 1 }
+```
+
+### `Kit.body.portrait.columnsFor(framing, aspect)`
+
+How many columns a framing gets in a screen area: its own count, or (for 0) as many whole cells as fit
+across when one row of cells fills the area's height.
+
+- `framing` *{columns: number, cellWidth: number, cellHeight: number}* - a row of `FRAMINGS`
+- `aspect` *number* - width / height of the area
+
+**Returns** *number* at least 1
+
+**Complexity** O(1)
+
+```js
+columnsFor(FRAMINGS.head, 2) // 2
+```
 
 ## creator-rows.js
 

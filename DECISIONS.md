@@ -717,3 +717,47 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Revisit if** the panel's node count (591 at most, the Face tab) shows in a profile on a phone (swatch
   grids and option strips are the bulk: virtualise the strips); a part gets an icon in the catalogue (cards fall
   back to the group's icon until then); the character art lands and the camera table needs retuning.
+
+## Character art: regions, faces and proportions in 3D (portrait branch)
+
+- **Regions are read per fragment from a small map per bone.** A bone's regions bake once per outfit to a
+  128 x 64 RGBA map over (angle around, share along): ramp slot, line class, shell index, flags. The toon and
+  index shaders read it with a four-texel majority, so an edge is crisp at any mesh density and a garment edge
+  needs no vertices. Maps depend on the outfit, not on dials: a slider drag uploads nothing.
+  Rejected: **splitting the index buffer per ramp** (edges only as fine as the triangles, a draw call per
+  ramp per bone, geometry rebuilt on every outfit change); **a ramp attribute per vertex** (same edge limit,
+  and hull outlines would need the same attribute welded); **compiling regions to GLSL** (a program per
+  outfit: compile hitches while trying on clothes). Cost measured in software GL at 1400 x 800 with 13
+  characters: toon 1062 draw calls, 549k triangles, 694 ms per frame; pixel 546 calls, 276k triangles, 88 ms
+  (the `look` stand-ins alone were not re-measured in this pass). 16 programs toon, 21 with the indexed path.
+- **Thickness is a shell, not a second skeleton.** A region with `raise` draws the same bone shape inflated,
+  showing only that region's texels: hair caps, sleeves, boots and coats stand proud of the skin and follow
+  every dial for free. Rejected: separate garment bones (each needs its own dials and fights the body's).
+- **Lines between regions come from line classes.** A region's line class is its ramp slot; a pattern
+  (`ink: false`) keeps the class beneath, so stripes get no lines and a shirt edge does. Direct path: a
+  screen-space test on the map coordinates; indexed path: the tone byte carries the class and the resolve
+  pass inks where a neighbour's class is higher at the same depth. Rejected: an ink group per region (the
+  group byte is per mesh, and garments span bones).
+- **A face is one stamps piece per bone.** Every layer of every feature is a flat polygon settled onto the
+  surface, with per-vertex paint (slot, tone, size rule, order). The size rule is the readable-at-any-size
+  mechanism: `least` grows a layer about its centre to a number of target texels (pupil, glint), `drop`
+  leaves a layer out below one (the white, iris, lid), measured across the layer's narrowest width. The order
+  is a small depth pull per layer, because flat polygons on a curve sag under one another (blush fought the
+  eyes in the first browser frame). Stamps hide where the map says hair occludes. Rejected: a texture atlas
+  of faces (invents texels outside the palette and blurs under the pixel preset); one mesh per layer (the
+  first version: 20 draw calls a face, no order, no occlusion).
+- **Proportions are catalogue data.** About two and a third heads tall, head growth 1.4, chunky limbs, closed
+  rounded lathes for the trunk (the banding of the first sheet was hull outlines on flat lathe ends). Dial
+  ranges for jaw and chin were narrowed to what keeps the head a head. No special cases in code.
+- **Edit cost.** Placed features are kept per plan under a signature of the head's shapes and face dials, so
+  a body dial reuses them; outfits that differ only in surface parts share compiled bones;
+  `polygonDistance` reads by index. `tools/bench-body.js`, node 22, 4 cores, load about 0.9: face dial
+  (jaw) edit + bake 671 -> 202 us; body dial (height) 698 -> 68 to 86 us; first try-on of an eye style
+  about 1.18 -> 0.81 ms (noisy, one machine). In the creator (software GL) a slider's `setBake` is 3 ms median.
+- **tools/figure-preview.js** draws the same layout with a CPU rasteriser in two seconds. It was what made
+  data iteration possible on eight browser runs, and it was wrong twice (no layer order, a sandbox ten times
+  slower than a page): it is a sketch, and the `portrait` screen is the evidence.
+- **Revisit if** a phone shows the fragment cost of the map read (drop the four-tap majority to one tap under
+  `degrade`); faces at under about 25 texels across must carry expression (they do not: author a small-face
+  frame set); thumbnails of parts are wanted (render a figure to a small target with a shared view and
+  `atlas.free`).
