@@ -6,7 +6,8 @@
  *
  * Owns:  the stages `breathe` (the chest swells and the spine gives, faster when the body works), `sway` (a
  *        standing body's weight drifts over its feet), `blink` (drives the blink frames of a face on a seeded
- *        schedule), `gaze` (the head follows a point, or wanders, on a spring), their controls `lookAt` /
+ *        schedule), `gaze` (the head follows a point, or wanders, on a spring), `flutter` (wings ride a slow
+ *        wave with a seeded flick, and sweep back at speed), their controls `lookAt` /
  *        `lookAhead`, and `character` (the ready composition a game or the Character Maker uses: walk or swim,
  *        life, a performer with fidgets, and trailing chains).
  * Does not own: performances and the performer (kit/act.js), walking (kit/gait.js), swimming (kit/swim.js),

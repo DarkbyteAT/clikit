@@ -237,6 +237,121 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     });
   });
 
+  test('act: a save chooses its form by where the ball is against the body\'s own reach, says which, and gets a hand to a 5 by 3 goal of shots on four builds', () => {
+    const builds = [...['person', 'stout', 'lanky'].map((species) => wardrobe.bakery().bakeRecipe({ species, seed: 1 })), samples.bakery().bakeRecipe({ species: 'human', seed: 1 })];
+    builds.forEach((bake) => {
+      const measured = act.rig(bake.plan, bake.rest);
+      const { stature, high, headRadius } = measured;
+      const chosen = [];
+      [0.95, 0.5, 0.08].forEach((up) =>
+        [-0.95, -0.5, 0, 0.5, 0.95].forEach((across) => {
+          const point = [across * 2.03 * stature, up * 1.36 * stature, 0.15 * high];
+          const state = cast(bake);
+          run(state, 1);
+          const form = act.choose(state, 'save', { target: point });
+          assert.ok(act.play(state, 'save', { target: point, reach: { mark: 'contact', in: 0.5 } }));
+          assert.strictEqual(act.playing(state), form, 'what is playing is the form that was chosen');
+          run(state, 0.5);
+          const nearest = Math.min(distance(jointOf(state, 'handLeft'), point), distance(jointOf(state, 'handRight'), point));
+          assert.ok(nearest < 0.1 * Math.max(...measured.armLength), `${bake.plan.id} ${form}: the nearer hand is ${nearest} m from ${point}`);
+          // Hands lead: the ball is met by a hand, not by the head.
+          assert.ok(distance(jointOf(state, 'head'), point) > nearest + headRadius / 2, `${bake.plan.id} ${form}: the head is as near ${point} as the hand`);
+          chosen.push(form);
+        })
+      );
+      assert.strictEqual(
+        chosen.join(' '),
+        'diveStep dive catchHigh dive diveStep diveStep dive catch dive diveStep diveStep dive smother dive diveStep',
+        `${bake.plan.id}: corners are stepped to and dived at, the middle is jumped for, caught or dropped onto`
+      );
+    });
+    const state = cast(person);
+    assert.strictEqual(act.choose(cast(hound), 'save', { target: [0, 1, 0] }), null, 'a body that can do no form is told so');
+    assert.strictEqual(act.play(cast(hound), 'save', { target: [0, 1, 0] }), false);
+    assert.throws(() => act.choose(state, 'save', {}), /chooses by its point: give \{ target: \[x, y, z\] \}/);
+    assert.throws(() => act.marks('save'), /"save" is a family of performances.*Kit\.act\.choose/s);
+    assert.throws(() => act.defineFamily({ id: 'broken', forms: [{ play: 'nope' }] }), /plays "nope", which is not in the repertoire/);
+    assert.throws(() => act.defineFamily({ id: 'broken', forms: [{ play: 'wave' }] }), /takes no point named "target"/);
+    assert.throws(() => act.defineFamily({ id: 'broken', forms: [{ play: 'dive', aside: [2, 1] }] }), /`aside`.*\[from, to\)/);
+    // A family is data: a new one in a few lines picks between existing performances.
+    act.defineFamily({ id: 'testStop', forms: [{ play: 'parry', aside: [0, 1.5] }, { play: 'dive' }] });
+    assert.strictEqual(act.choose(state, 'testStop', { target: [0.2, 0.6, 0.1] }), 'parry');
+    assert.strictEqual(act.choose(state, 'testStop', { target: [1.5, 0.6, 0.1] }), 'dive');
+  });
+
+  test('act: in the air a leg is drawn up by its foot\'s keyed lift: a dive\'s upper leg is bent, its lower one trails (control: standing, both are long)', () => {
+    const state = cast(person);
+    run(state, 1);
+    const legs = Kit.gait.legs(person.plan, person.rest);
+    const measured = act.rig(person.plan, person.rest);
+    const folded = (side) => {
+      const leg = measured.footLeg[side];
+      const hip = legs.upper[leg] * 3;
+      const foot = jointOf(state, side ? 'footRight' : 'footLeft');
+      return distance(Array.from(state.world.translation.subarray(hip, hip + 3)), foot) / legs.length[leg];
+    };
+    assert.ok(folded(0) > 0.9 && folded(1) > 0.9, `control: standing, the legs are nearly straight (${folded(0)}, ${folded(1)})`);
+    act.play(state, 'dive', { target: defaultPoint(person, 'dive') });
+    run(state, act.marks('dive').contact);
+    assert.ok(folded(1) < 0.75, `the upper leg is bent in flight (${folded(1)} of its length)`);
+    assert.ok(folded(0) > folded(1) + 0.15, `the lower leg trails longer (${folded(0)})`);
+  });
+
+  test('act: an arm lowered from overhead comes down in front, not out through a T; a hand keyed inside the head is moved out of it (controls: a small move is direct, a long-armed body is untouched)', () => {
+    const handOut = (bake, spec, at) => {
+      const state = cast(bake);
+      run(state, 0.5);
+      act.play(state, act.performance(spec));
+      run(state, spec.seconds * at);
+      const shoulder = jointOf(state, 'upperArmLeft');
+      const hand = jointOf(state, 'handLeft');
+      return { aside: hand[0] - shoulder[0], ahead: hand[2] - shoulder[2], state };
+    };
+    const human = samples.bakery().bakeRecipe({ species: 'human', seed: 1 });
+    const arm = act.rig(human.plan, human.rest).armLength[0];
+    const lowering = { id: 'testLower', seconds: 1, keys: [{ at: 0.2, armLeft: [3, 0, 1, 0] }, { at: 0.8, armLeft: [0.2, 0, 1, 0] }] };
+    const middle = handOut(human, lowering, 0.5);
+    assert.ok(middle.ahead > 0.4 * arm, `half way down the hand is in front of the shoulder (${middle.ahead} m ahead, ${middle.aside} m aside)`);
+    assert.ok(middle.aside < 0.75 * arm, 'and not out at arm\'s length to the side');
+    const small = handOut(human, { id: 'testSmall', seconds: 1, keys: [{ at: 0.2, armLeft: [1.9, 0, 1, 0] }, { at: 0.8, armLeft: [1.2, 0, 1, 0] }] }, 0.5);
+    assert.ok(small.aside > 0.9 * arm && Math.abs(small.ahead) < 0.2 * arm, `control: a small move at the side stays at the side (${small.aside}, ${small.ahead})`);
+    // Straight up beside a big head on a short arm: the hand would be inside the head.
+    const up = { id: 'testUp', seconds: 1, hold: true, keys: [{ at: 0.5, armLeft: [3.05, 0, 1, 0] }] };
+    const measured = act.rig(person.plan, person.rest);
+    const raised = handOut(person, up, 1).state;
+    const head = jointOf(raised, 'head');
+    const centre = [head[0], head[1] + measured.headRadius, head[2]];
+    assert.ok(distance(jointOf(raised, 'handLeft'), centre) > 0.95 * measured.headRadius, `the hand is outside the head (${distance(jointOf(raised, 'handLeft'), centre)} m from its middle, radius ${measured.headRadius})`);
+  });
+
+  test('act: a ball further off than a step is run up to: both feet step in turn, the kick still lands on it (control: a near ball takes no run)', () => {
+    const { unit } = act.rig(person.plan, person.rest);
+    const kickAt = (ahead) => {
+      const state = cast(person);
+      run(state, 1);
+      const point = [-0.25 * unit, 0.25 * unit, ahead * unit];
+      act.play(state, 'kick', { target: point });
+      const lifted = [0, 0];
+      for (let time = 0; time < act.marks('kick').plant; time += FRAME) {
+        run(state, FRAME);
+        ['footLeft', 'footRight'].forEach((foot, side) => (lifted[side] = Math.max(lifted[side], jointOf(state, foot)[1] - person.rest.translation[1] * 0)));
+      }
+      run(state, act.marks('kick').contact - act.marks('kick').plant);
+      const miss = distance(jointOf(state, 'footRight'), point);
+      run(state, act.REPERTOIRE.kick.seconds);
+      const offset = [0, 0];
+      act.takeRootMotion(state, offset);
+      return { lifted, miss, forward: offset[1] };
+    };
+    const standing = jointOf(run(cast(person), 1) || cast(person), 'footLeft')[1];
+    const far = kickAt(3.4);
+    const near = kickAt(1.2);
+    assert.ok(far.miss < REACH_TOLERANCE, `the foot is ${far.miss} m from the far ball at contact`);
+    assert.ok(far.forward > 2 * unit, `the body has run ${far.forward} m to it`);
+    assert.ok(far.lifted[0] > standing + 0.1 * unit && far.lifted[1] > standing + 0.1 * unit, `both feet left the ground on the way (${far.lifted}, standing ${standing})`);
+    assert.ok(near.forward < far.forward / 2, `control: the near ball takes a step, not a run (${near.forward} m)`);
+  });
+
   test('act: a wave is layered over a walk: the feet land where they would have anyway (control: the hand does not)', () => {
     const plain = cast(person);
     const waving = cast(person);
