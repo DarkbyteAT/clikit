@@ -699,4 +699,33 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     );
     assert.ok(wardrobe.encode(recipe).length < 200, `a heavily edited character is still small: ${wardrobe.encode(recipe).length} bytes`);
   });
+
+  test('debug: drawSurface outlines dialled shapes, tints region spans and marks features (control: an undressed bake has fewer spans)', () => {
+    const calls = {};
+    const recorder = Object.fromEntries(body.debug.CONTEXT_METHODS.map((method) => [method, () => (calls[method] = (calls[method] || 0) + 1)]));
+    const bakery = wardrobe.bakery();
+    const view = { centerX: 100, groundY: 300, scale: 100 };
+    const drawn = (overrides) => {
+      const bake = bakery.bakeRecipe({ species: 'person', seed: 4, overrides });
+      const world = body.worldTransforms(bake.plan, bake.rest, body.createPose(bake.plan));
+      return { bake, counts: body.debug.drawSurface(recorder, bake, world, view) };
+    };
+    const dressed = drawn({ 'fill:top': 'longSleeve', 'fill:bottom': 'trousers', 'fill:hair': 'hairCrop' });
+    const drawable = dressed.bake.shapes.filter((shape) => !shape || shape.kind !== 'none').length;
+    same(dressed.counts.outlines, drawable, 'one outline per drawable bone');
+    same(dressed.counts.marks, dressed.bake.surface.features.length, 'one mark per placed feature');
+    assert.ok(dressed.counts.spans > 40, `tinted spans along the clothed bones (${dressed.counts.spans})`);
+    const bare = drawn({
+      'fill:top': 'cropTop',
+      'fill:bottom': 'shorts',
+      'fill:hair': null,
+      'fill:outerwear': null,
+      'fill:footwear': null,
+      'fill:gloves': null,
+      'fill:hat': null,
+      'fill:marks': null,
+      'fill:facialHair': null,
+    });
+    assert.ok(bare.counts.spans < dressed.counts.spans, 'control: less clothing, fewer spans');
+  });
 };
