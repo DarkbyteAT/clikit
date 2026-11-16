@@ -37,7 +37,8 @@
       needs: STANDING,
       side: 'right',
       sideBy: 'target',
-      defaults: { target: [-0.1, 0.1, 0.65] },
+      defaultsIn: 'legs',
+      defaults: { target: [-0.25, 0.25, 1.4] },
       keys: [
         // The step up: the plant foot lifts and goes to the ball's side while the arms take the opposite swing.
         { at: 0.14, ease: 'out', shift: [0, -0.05, 0], turn: [0.06, 0.05, 0], footLeft: [0, 0.14, 0.15, 0.25], armRight: [0.55, 1.35, 0.9, 0.1], armLeft: [0.5, -1, 0.9, 0.1] },
@@ -98,7 +99,7 @@
         { limb: 'head', target: 'target', in: [0.05, 0.3], out: [0.6, 0.8] },
       ],
       // The hips are carried to a short swing behind the ball: the step is as long as the ball is far, up to a stride.
-      travel: { target: 'target', start: 0.1, arrive: 0.44, keep: 0.24, most: 0.7, axes: [0.7, 0, 1] },
+      travel: { target: 'target', start: 0.1, arrive: 0.44, keep: 0.24, most: 1.6, stride: 1.1, axes: [0.7, 0, 1] },
     },
     {
       id: 'keeperReady',

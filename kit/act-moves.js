@@ -129,8 +129,8 @@
       needs: { atLeast: { legs: 2 } },
       keys: [
         // Crouch (anticipation), drive up against gravity, hang, fall with it, absorb the landing, settle.
-        { at: 0.24, ease: 'out', shift: [0, -0.3, 0], turn: [0.22, 0, 0], spine: [0.2, 0, 0], head: [-0.15, 0, 0], arms: [0.7, -0.9, 0.9, 0] },
-        { at: 0.34, ease: 'in', shift: [0, 0.04, 0], turn: [0.02, 0, 0], spine: [-0.05, 0, 0], arms: [1.7, AHEAD, 0.9, 0.2], feet: [0, 0, 0, 0.5] },
+        { at: 0.24, ease: 'out', shift: [0, -0.3, 0], turn: [0.22, 0, 0], spine: [0.2, 0, 0], head: [-0.15, 0, 0], arms: [0.7, -0.9, 0.9, 0], wings: [0.75, -0.2, 0] },
+        { at: 0.34, ease: 'in', shift: [0, 0.04, 0], turn: [0.02, 0, 0], spine: [-0.05, 0, 0], arms: [1.7, AHEAD, 0.9, 0.2], wings: [-0.55, 0.1, 0], feet: [0, 0, 0, 0.5] },
         {
           at: 0.52,
           ease: 'out',
@@ -141,10 +141,10 @@
           arms: [2.85, 0.7, 1, 0.2],
           feet: [0, 0.74, -0.05, 0.6],
           tail: [-0.4, 0, 0],
-          wings: [0.5, 0, 0],
+          wings: [0.7, 0, 0],
         },
-        { at: 0.68, ease: 'in', shift: [0, 0, 0], turn: [0.05, 0, 0], arms: [1.5, 0.6, 0.9, 0.3], feet: [0, 0, 0, 0.3] },
-        { at: 0.78, ease: 'out', shift: [0, -0.24, 0], turn: [0.18, 0, 0], spine: [0.16, 0, 0], head: [-0.1, 0, 0], arms: [0.8, 0.9, 0.8, 0.3] },
+        { at: 0.68, ease: 'in', shift: [0, 0, 0], turn: [0.05, 0, 0], arms: [1.5, 0.6, 0.9, 0.3], wings: [-0.4, 0, 0], feet: [0, 0, 0, 0.3] },
+        { at: 0.78, ease: 'out', shift: [0, -0.24, 0], turn: [0.18, 0, 0], spine: [0.16, 0, 0], head: [-0.1, 0, 0], wings: [0.3, -0.1, 0], arms: [0.8, 0.9, 0.8, 0.3] },
         { at: 0.92, ease: 'settle', shift: [0, 0.01, 0] },
       ],
     },

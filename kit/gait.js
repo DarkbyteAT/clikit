@@ -89,10 +89,12 @@
   /** Standing and reaching, in leg lengths unless noted. */
   const STANCE = Object.freeze({
     crouch: 0.025, // how far below a straight-legged stand the body rides at a walk
+    standCrouch: 0.004, // and standing still: a leg shortened by 2.5% already shows its knee a ninth of its length forward
+    walkCrouchFull: 0.08, // the Froude number by which the walking crouch has come in
     runCrouch: 0.06, // how much further down it rides at a run: a running leg is a spring, loaded all through its stance
     runCrouchFrom: 0.4, // the Froude numbers between which the extra crouch comes in
     runCrouchFull: 1.4,
-    stretch: 0.99, // the furthest a leg is allowed to straighten: a dead-straight limb has no bend direction
+    stretch: 0.996, // the furthest a leg is allowed to straighten: a dead-straight limb has no bend direction
     landShare: 0.4, // of a stance's travel that lies ahead of the hip at touchdown; the rest is behind it, reached by rolling onto the toe
     riseRate: 0.14, // leg lengths per second the body may come back up after a leg pulled it down, so a dip has a rounded far side
     settleTolerance: 0.06, // a standing foot further than this from under its hip steps back
@@ -901,7 +903,8 @@
     feet.shift.target = plantedCount ? (supportLeft / plantedCount) * STANCE.shiftShare : 0;
     const left = Kit.dynamics.stepSpring(feet.shift, dt);
     const runShare = clamp((clock.froude - STANCE.runCrouchFrom) / (STANCE.runCrouchFull - STANCE.runCrouchFrom), 0, 1);
-    const up = rig.standLift - (STANCE.crouch + STANCE.runCrouch * runShare) * rig.legLength + Kit.dynamics.stepSpring(feet.bob, dt) + feet.air;
+    const walkShare = clamp(clock.froude / STANCE.walkCrouchFull, 0, 1);
+    const up = rig.standLift - (STANCE.standCrouch + (STANCE.crouch - STANCE.standCrouch) * walkShare + STANCE.runCrouch * runShare) * rig.legLength + Kit.dynamics.stepSpring(feet.bob, dt) + feet.air;
     poseTorso(motion, clock);
     shiftCarrierPose(motion, rig, left, up);
     motion.isWorldCurrent = false;

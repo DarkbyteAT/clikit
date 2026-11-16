@@ -51,7 +51,8 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
   const isFinitePose = (state) => state.pose.rotation.every(Number.isFinite) && state.pose.translation.every(Number.isFinite);
   /** A performance's default point for a bake, in metres from where it stands; `mirror` -1 puts it on the other side. */
   const defaultPoint = (bake, id, mirror = 1) => {
-    const { high } = act.rig(bake.plan, bake.rest);
+    const measured = act.rig(bake.plan, bake.rest);
+    const high = act.REPERTOIRE[id].defaultsInLegs ? measured.unit : measured.high;
     const [left, up, forward] = act.REPERTOIRE[id].defaults;
     return [left * high * mirror, up * high, forward * high];
   };
@@ -287,6 +288,59 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       run(state, 0.3, FRAME, 3);
     });
     assert.notDeepStrictEqual(cloakTurn(swinging), cloakTurn(rigid), 'a cloak swings behind a body that sets off');
+  });
+
+  test('dynamics: a chain is kept above its floor and out of its balls, its long links included (control: without them it falls through)', () => {
+    const hang = (withSolids) => {
+      const rope = Kit.dynamics.chain({ count: 3, lengths: 0.5, balls: 1, thickness: 0.02 });
+      Kit.dynamics.placeChain(rope, 0, 1, 0, 1, 0, 0);
+      if (withSolids) {
+        rope.floor = 0.4;
+        rope.balls.set([0.25, 0.75, 0, 0.2]);
+        rope.ballCount = 1;
+      }
+      let deepest = Infinity;
+      let nearest = Infinity;
+      for (let frame = 0; frame < 240; frame++) {
+        Kit.dynamics.stepChain(rope, FRAME, 0, 1, 0);
+        for (let point = 1; point < 3; point++) {
+          deepest = Math.min(deepest, rope.positions[point * 3 + 1]);
+          nearest = Math.min(nearest, Math.hypot(rope.positions[point * 3] - 0.25, rope.positions[point * 3 + 1] - 0.75, rope.positions[point * 3 + 2]));
+        }
+      }
+      return { deepest, nearest };
+    };
+    const kept = hang(true);
+    assert.ok(kept.deepest >= 0.4 + 0.02 - 1e-4, `no point under the floor (${kept.deepest})`);
+    assert.ok(kept.nearest >= 0.2 + 0.02 - 0.01, `no point inside the ball (${kept.nearest})`);
+    const free = hang(false);
+    assert.ok(free.deepest < 0.2 && free.nearest < 0.15, 'control: with no floor and no ball the rope swings through both places');
+  });
+
+  test('motion: a cloak lies on the ground behind a body that sits and stays behind a body that jumps; soft kinds come from the part data', () => {
+    const cloak = person.plan.boneIndex('outerwear/cloak');
+    const tipOf = (state) => Kit.body.tailPosition(state.plan, state.world, cloak, [0, 0, 0]);
+    const sitter = cast(person);
+    run(sitter, 1);
+    act.play(sitter, 'sit');
+    let lowest = Infinity;
+    for (let frame = 0; frame < 240; frame++) {
+      run(sitter, FRAME);
+      lowest = Math.min(lowest, tipOf(sitter)[1]);
+    }
+    assert.ok(lowest > 0, `the cloak's hem never went under the ground (${lowest})`);
+    assert.ok(jointOf(sitter, 'pelvis')[1] < 0.1 && tipOf(sitter)[2] < jointOf(sitter, 'pelvis')[2] && tipOf(sitter)[1] < 0.06, `sat down, the cloak is laid on the ground behind (${tipOf(sitter)})`);
+    const jumper = cast(person);
+    run(jumper, 1);
+    act.play(jumper, 'jump');
+    for (let frame = 0; frame < 84; frame++) {
+      run(jumper, FRAME);
+      assert.ok(tipOf(jumper)[2] < jointOf(jumper, 'pelvis')[2], `frame ${frame}: the cloak stays behind the hips`);
+    }
+    assert.strictEqual(person.plan.stiffness[cloak], Kit.body.SOFT_KINDS.cloak.stiffness, 'the cloak is soft by its kind');
+    const skirt = person.plan.boneIndex('bottom/skirt');
+    assert.ok(person.plan.stiffness[skirt] < motion.LOOSE_DEFAULTS.below && person.plan.stiffness[person.plan.boneIndex('chest')] > motion.LOOSE_DEFAULTS.below, 'a hem is loose, a chest is not');
+    assert.throws(() => Kit.body.plan({ id: 'bad', bones: [{ name: 'root', roles: ['root'] }, { name: 'lock', parent: 'root', soft: 'jelly' }] }), /soft.*jelly.*hair/s);
   });
 
   test('act: the per-frame path builds no typed arrays and calls no array-building methods (control: a stage that copies an array each frame is caught)', () => {

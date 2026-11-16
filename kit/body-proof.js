@@ -161,12 +161,17 @@
   /** Why a bake cannot do an act: the stage's refusal, or the act's own. */
   const refusalOf = (act, bake) => Kit.motion.refusal(act.stage(), bake.plan, bake.rest) || (act.refusal ? act.refusal(bake) : null);
 
-  /** A performance of `Kit.act.REPERTOIRE` as an act: a whole character standing on the spot, the performance played from its start. */
-  const performanceAct = (id) => ({
+  /** Where the far ball of the `kickRunUp` act lies, in leg lengths ahead. */
+  const FAR_BALL_LEGS = 3.4;
+  /** The low shot of the `diveLow` act, in statures: to the body's right, near the ground. */
+  const LOW_SHOT = Object.freeze({ aside: 1.3, up: 0.16 });
+
+  /** A performance of `Kit.act.REPERTOIRE` as an act: a whole character standing on the spot, the performance played from its start; `pointOf` (an `ActRig` -> [x, y, z]) gives its target when the default is not wanted. */
+  const performanceAct = (id, pointOf) => ({
     stage: () => Kit.act.character({ fidgets: [] }),
     speed: () => 0,
     cycle: () => Kit.act.REPERTOIRE[id].seconds,
-    begin: (motion) => Kit.act.play(motion, id),
+    begin: (motion) => Kit.act.play(motion, id, pointOf ? { target: pointOf(Kit.act.rig(motion.plan, motion.rest)) } : undefined),
     refusal: (bake) => Kit.act.refusal(id, bake.plan, bake.rest),
     // A kick's step or a dive's flight would leave the cell: the pose is shown, not the distance covered.
     anchor: (motion, local) => Kit.act.keepInPlace(motion, local),
@@ -195,6 +200,9 @@
       refusal: (bake) => Kit.act.refusal('wave', bake.plan, bake.rest),
     };
     Object.keys(Kit.act.REPERTOIRE).forEach((id) => (ACTS[id] = performanceAct(id)));
+    // The same rows with their point somewhere else: a ball three strides away is run up to, a low shot is dived at low.
+    ACTS.kickRunUp = performanceAct('kick', (measured) => [-0.25 * measured.unit, 0.25 * measured.unit, FAR_BALL_LEGS * measured.unit]);
+    ACTS.diveLow = performanceAct('dive', (measured) => [-LOW_SHOT.aside * measured.stature, LOW_SHOT.up * measured.stature, 0.1 * measured.stature]);
   }
 
   /**

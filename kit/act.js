@@ -113,6 +113,10 @@
   const SIDES = Object.freeze(['left', 'right']);
   /** +1 for the left side, -1 for the right: the sign of "out" along the body's left axis. */
   const SIDE_SIGN = Object.freeze([1, -1]);
+  /** The `front` of an arm channel that points straight ahead, radians. */
+  const AHEAD = Math.PI / 2;
+  /** Metres under which a flat offset has no direction. */
+  const TINY = 1e-6;
   /** Joints an arm needs to be posed as an arm: shoulder, elbow, hand. */
   const ARM_JOINTS = 3;
 
@@ -139,6 +143,11 @@
     /** The lowest a `travel` that rises takes the hips at its arrival, in statures above the ground: a body flying flat, not yet landed. */
     lowestFlight: 0.2,
     legStretch: 0.985, // the furthest a leg is asked to straighten (a dead-straight limb has no bend direction)
+    stepLift: 0.22, // leg lengths a foot rises at the middle of a step of a stepped travel
+    arcFrom: 1.1, // radians of raise an arm must cover between two keys before its hand is routed on an arc in front
+    arcFront: 0.75, // how far towards straight ahead the arc pulls the arm at its middle, 0..1
+    arcBend: 0.3, // and how much shorter the reach is there (the elbow bends): the hand never sweeps out through a T
+    headClear: 1.05, // a hand keyed inside the head is moved out to this many head radii from its middle
     hangPitch: 2.4, // radians a foot's toes drop per leg length it has been lifted clear by the body
     mostHangPitch: 0.9,
     armShortest: 0.18, // arm lengths: a hand is never asked closer to its shoulder than this
@@ -186,6 +195,8 @@
    * @property {number} [most=1] the furthest it goes sideways and forwards, in statures (the body's standing height)
    * @property {number} [mostUp=0.4] the highest it rises, in statures
    * @property {number[]} [axes=[1, 1, 1]] which of left, up, forward it travels along
+   * @property {number} [stride] leg lengths one step covers: a travel longer than this is run in steps, the feet
+   *   landing in turn ahead of the body, the last step taken by the foot a `ground` reach plants (default: one lunge)
    */
 
   /**
@@ -206,6 +217,8 @@
    *   point is when the caller gives none, so a default is within reach of a long body and a squat one alike
    * @property {Object<string, number>} [marks] named moments on its own timeline, each 0..1 through it (`contact`,
    *   `release`, `land`): a game reads them with `Kit.act.marks` and can ask `play` to meet one at a given time
+   * @property {string} [defaultsIn='high'] what the defaults are measured in: 'high' (hand-reach heights) or 'legs'
+   *   (leg lengths: for a point a foot must meet, such as a ball to kick)
    * @property {PerformanceKey[]} keys
    * @property {PerformanceReach[]} [reaches]
    * @property {PerformanceTravel} [travel]
@@ -354,6 +367,7 @@
       side: spec.side ? SIDES.indexOf(spec.side) : -1,
       sideBy: spec.sideBy === undefined ? -1 : targets.indexOf(spec.sideBy),
       leanBySide: Boolean(spec.leanBySide) && spec.sideBy !== undefined,
+      defaultsInLegs: spec.defaultsIn === 'legs',
       keyCount: keys.length,
       times: Float32Array.from(keys, (key) => key.at),
       eases: keys.map((key) => EASES[key.ease || 'smooth']),
@@ -407,6 +421,7 @@
    * @property {?Object} legs the `LegRig` of kit/gait.js, or null for a body that cannot stand on legs
    * @property {number} unit metres a `shift` of 1 moves the body: its leg length (half its height without legs)
    * @property {number} stature metres from its lowest point to its highest at rest: what travel caps scale by
+   * @property {number} headRadius metres: half the head bone's height, the ball a keyed hand is kept out of (0 without a head)
    * @property {number} high metres from its lowest point to as high as a hand reaches (the stature without arms): what default points scale by
    * @property {number} reach metres from the hips to the end of an outstretched arm (0 without arms)
    * @property {Int16Array} spine the spine's bones above the carrier
@@ -493,6 +508,7 @@
       legs,
       unit: legs ? legs.legLength : (Math.max(...heights) - Math.min(...heights)) / 2 || 1,
       stature: Math.max(...tops) - Math.min(...heights, ...tops) || 1,
+      headRadius: head >= 0 ? Math.max(0, tops[head] - heights[head]) / 2 : 0,
       high: Math.max(...armLength) > 0 ? shoulderHeight - Math.min(...heights, ...tops) + Math.max(...armLength) : Math.max(...tops) - Math.min(...heights, ...tops) || 1,
       reach: Math.max(...armLength) > 0 ? shoulderHeight - at(carrier, 1) + Math.max(...armLength) : 0,
       spine: Int16Array.from(spine),
@@ -671,6 +687,8 @@
       rate: 1,
       leadUntil: 0,
       sideways: 1,
+      steps: 1,
+      lastFoot: 0,
       leadRate: 1,
       isMirrored: false,
       values: new Float32Array(VALUE_COUNT),
@@ -731,7 +749,7 @@
         acting.points[at + 2] = given[2];
         continue;
       }
-      const { high } = acting.rig;
+      const high = compiled.defaultsInLegs ? acting.rig.unit : acting.rig.high;
       toWorld(motion, compiled.defaults[at] * high, compiled.defaults[at + 2] * high);
       acting.points[at] = scratchPoint[0];
       acting.points[at + 1] = motion.y + compiled.defaults[at + 1] * high;
@@ -771,6 +789,13 @@
     const flat = Math.hypot(left, forward);
     const cap = flat > travel.most * measured.stature ? (travel.most * measured.stature) / flat : 1;
     acting.travel[0] = left * cap;
+    // A travel longer than a stride is run in steps; the foot that plants beside the point takes the last one.
+    acting.steps = travel.stride > 0 && measured.legs ? Math.max(1, Math.round((Math.min(flat, travel.most * measured.stature)) / (travel.stride * measured.unit))) : 1;
+    acting.lastFoot = 0;
+    for (let index = 0; index < acting.now.reaches.length; index++) {
+      const reach = acting.now.reaches[index];
+      if (reach.foot && reach.ground) acting.lastFoot = acting.isMirrored ? 1 - reach.foot[0] : reach.foot[0];
+    }
     // A low point is dived at low: the hips come down towards it, though never to the ground before the landing.
     acting.travel[1] = travel.land < 0 ? 0 : clamp(up, Math.min(0, TUNING.lowestFlight * measured.stature - hipHeight), travel.mostUp * measured.stature);
     acting.travel[2] = forward * cap;
@@ -806,6 +831,14 @@
         if (!Number.isNaN(first) && !Number.isNaN(second)) continue;
         const rest = measured.armRest[restAt + index];
         out[channel + index] = lerp(Number.isNaN(first) ? rest : first, Number.isNaN(second) ? rest : second, amount);
+      }
+      // An arm raised or lowered a long way goes by an arc in front of the body, elbow bent, not out through a T.
+      const raiseFrom = Number.isNaN(values[fromAt + channel]) ? measured.armRest[restAt] : values[fromAt + channel];
+      const raiseTo = Number.isNaN(values[toAt + channel]) ? measured.armRest[restAt] : values[toAt + channel];
+      const arc = Math.sin(Math.PI * amount) * clamp((Math.abs(raiseTo - raiseFrom) - TUNING.arcFrom) / TUNING.arcFrom, 0, 1);
+      if (arc > 0) {
+        out[channel + 1] = lerp(out[channel + 1], AHEAD, arc * TUNING.arcFront);
+        out[channel + 2] *= 1 - TUNING.arcBend * arc;
       }
     }
     if (acting.sideways < 1) for (let index = 0; index < SIDEWAYS_VALUES.length; index++) out[SIDEWAYS_VALUES[index]] *= acting.sideways;
@@ -920,24 +953,53 @@
     translation[at + 2] += forward / measured.stretch[2];
   };
 
+  /** Where each side's foot is in a stepped travel: how far along it its standing place has got, how high it is lifted, and whether a reach may take it yet. */
+  const stepped = { carry: new Float32Array(2), lift: new Float32Array(2), gate: new Float32Array(2), keyed: 1 };
+
+  /**
+   * Fills `stepped` for a travel `along` (0..1, linear in time) its way. The travel's time is cut into as many
+   * equal steps as it has; the feet take them in turn, each landing where the body will be when its step ends,
+   * and the planting foot takes the last. With one step the feet are left to the `carry` channel.
+   */
+  const stepFeet = (acting, along) => {
+    const { steps } = acting;
+    if (steps <= 1) return;
+    const step = Math.min(steps - 1, Math.floor(along * steps));
+    const within = along >= 1 ? 1 : along * steps - step;
+    for (let side = 0; side < SIDES.length; side++) {
+      const isStepping = ((steps - 1 - step) % 2 === 0) === (side === acting.lastFoot);
+      if (isStepping) {
+        stepped.carry[side] = Kit.blend.smooth(lerp(Math.max(0, step - 1) / steps, (step + 1) / steps, Kit.blend.smooth(within)));
+        stepped.lift[side] = Math.sin(Math.PI * within);
+      } else stepped.carry[side] = Kit.blend.smooth(step / steps);
+    }
+    // The planting foot goes to its point on its last step, not before; and what the keys ask of the feet (a wind-up)
+    // waits for that step too: until then they are running.
+    stepped.gate[acting.lastFoot] = step === steps - 1 ? Kit.blend.smooth(within) : 0;
+    stepped.keyed = stepped.gate[acting.lastFoot];
+  };
+
   /** Solves every leg to its foot: where it stands at rest, moved by its side's foot channel, the travel it has followed and any reach. */
   const poseLegs = (motion, acting, values, travelLeft, travelForward) => {
     const measured = acting.rig;
     const { legs } = measured;
     const { translation } = motion.world;
-    const carry = values[OFFSET.carry];
+    const keyedCarry = values[OFFSET.carry];
     for (let leg = 0; leg < legs.count; leg++) {
       const side = legs.side[leg] === 2 ? 1 : 0;
       const isMoved = measured.footLeg[side] === leg;
+      const carry = Math.max(keyedCarry, stepped.carry[side]);
       const channel = side ? OFFSET.footRight : OFFSET.footLeft;
       const length = legs.length[leg];
-      const out = isMoved ? values[channel] * SIDE_SIGN[side] * length : 0;
-      const forward = isMoved ? values[channel + 2] * length : 0;
+      // While the body is still running up (a stepped travel before its last step) the keys' foot poses wait.
+      const keyed = isMoved ? (keyedCarry < 1 ? stepped.keyed : 1) : 0;
+      const out = values[channel] * SIDE_SIGN[side] * length * keyed;
+      const forward = values[channel + 2] * length * keyed;
       toWorld(motion, legs.homeX[leg] + out + travelLeft * carry + acting.carried[0], legs.homeZ[leg] + forward + travelForward * carry + acting.carried[1]);
       let targetX = scratchPoint[0];
-      let targetY = motion.y + legs.sole[leg] + (isMoved ? values[channel + 1] * length : 0);
+      let targetY = motion.y + legs.sole[leg] + values[channel + 1] * length * keyed + stepped.lift[side] * TUNING.stepLift * length * (1 - keyedCarry);
       let targetZ = scratchPoint[2];
-      const pull = isMoved ? pulls.foot[side] : 0;
+      const pull = isMoved ? pulls.foot[side] * (acting.steps > 1 && pulls.footGround[side] && keyedCarry < 1 ? stepped.gate[side] : 1) : 0;
       if (pull > 0) {
         reachPoint(motion, acting, pulls.footPoint[side], pulls.footOffset[side], side, length);
         targetX = lerp(targetX, scratchPoint[0], pull);
@@ -954,7 +1016,7 @@
       const pulledIn = distance > longest ? longest / distance : 1;
       Kit.gait.reachLeg(motion, legs, leg, translation[hip] + offsetX * pulledIn, translation[hip + 1] + offsetY * pulledIn, translation[hip + 2] + offsetZ * pulledIn);
       const lifted = Math.max(0, distance - longest) / length;
-      Kit.gait.levelFoot(motion, legs, leg, motion.heading, (isMoved ? values[channel + 3] : 0) + Math.min(TUNING.mostHangPitch, lifted * TUNING.hangPitch));
+      Kit.gait.levelFoot(motion, legs, leg, motion.heading, values[channel + 3] * keyed + Math.min(TUNING.mostHangPitch, lifted * TUNING.hangPitch));
     }
   };
 
@@ -1003,6 +1065,25 @@
     let targetX = shoulderX + scratchPoint[0];
     let targetY = shoulderY + scratchPoint[1];
     let targetZ = shoulderZ + scratchPoint[2];
+    if (measured.headRadius > 0) {
+      // A keyed hand is kept out of the head: a short arm raised beside a big head goes up and out round it.
+      const headAt = measured.head * VECTOR_STRIDE;
+      const centreY = world.translation[headAt + 1] + measured.headRadius * measured.stretch[1];
+      const clear = measured.headRadius * TUNING.headClear;
+      const offX = targetX - world.translation[headAt];
+      const offY = targetY - centreY;
+      const offZ = targetZ - world.translation[headAt + 2];
+      const inside = Math.hypot(offX, offY, offZ);
+      if (inside < clear) {
+        // Out sideways (or forwards), at its own height: the level circle of the ball there.
+        const level = Math.sqrt(Math.max(0, clear * clear - offY * offY));
+        const flat = Math.hypot(offX, offZ);
+        const outX = flat > TINY ? offX / flat : Math.cos(motion.heading) * outSign;
+        const outZ = flat > TINY ? offZ / flat : -Math.sin(motion.heading) * outSign;
+        targetX = world.translation[headAt] + outX * level;
+        targetZ = world.translation[headAt + 2] + outZ * level;
+      }
+    }
     const pull = pulls.hand[side];
     if (pull > 0) {
       reachPoint(motion, acting, pulls.handPoint[side], pulls.handOffset[side], side, length);
@@ -1092,10 +1173,15 @@
     const { rotation } = motion.pose;
     let travelLeft = 0;
     let travelForward = 0;
+    stepped.carry.fill(0);
+    stepped.lift.fill(0);
+    stepped.gate.fill(1);
+    stepped.keyed = 1;
     if (compiled && compiled.travel) {
       const { travel } = compiled;
       if (progress <= travel.start) measureTravel(motion, acting);
       const along = Kit.blend.smooth(clamp((progress - travel.start) / (travel.arrive - travel.start), 0, 1));
+      stepFeet(acting, clamp((progress - travel.start) / (travel.arrive - travel.start), 0, 1));
       // Upwards a thrown body decelerates to its highest point and accelerates back down: two halves of a parabola.
       const rising = clamp((progress - travel.start) / (travel.arrive - travel.start), 0, 1);
       const falling = travel.land > 0 ? clamp((progress - travel.arrive) / (travel.land - travel.arrive), 0, 1) : 0;
