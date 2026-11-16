@@ -529,7 +529,7 @@
    */
 
   /** Work arrays of `sample`, kept between calls and grown when a grid needs more: a bake allocates only what it returns. */
-  const scratch = { nodes: 0, isBusy: false };
+  const scratch = { nodes: 0, isBusy: false, isMeshing: false };
   /** Fresh work arrays for a grid of `count` nodes. */
   const scratchOf = (count) => ({
     nodes: count,
@@ -997,20 +997,33 @@
    *   `depth`: metres (default 0.002), used only with a `cut`; `near`: per solid of the field, non-zero when the
    *   cut can hold at points nearest that solid (a sleeve's cut holds only near the arm's solids): the cut is
    *   then not asked anywhere else, which is most of a body
-   * @returns {SurfaceArrays}
+   * @returns {Generator<undefined, SurfaceArrays, undefined>} yields between its stages (marking, vertices, triangles,
+   *   settling, normals), so a caller can spread one large surface over frames; its return value is the mesh
    * @complexity O(nodes of the field's band) time (a `cut` is called once per band node within the shell, and 7
    *   times per grid edge it crosses); O(surface cells) memory for the mesh
-   * @example const skin = Kit.sculpt.surface(field); const sleeve = Kit.sculpt.surface(field, { offset: 0.008, cut: isSleeve });
+   * @example const steps = Kit.sculpt.surfaceSteps(field, { offset: 0.008, cut: isSleeve }); let step = steps.next(); while (!step.done) step = steps.next(); const sleeve = step.value;
    * @example const cover = new Uint8Array(field.values.length); const coat = Kit.sculpt.surface(field, { offset: 0.02, cut: isCoat, cover }); const skin = Kit.sculpt.surface(field, { under: cover });
    */
-  const surface = (field, { offset = 0, cut = null, near = null, depth = 0.002, walls = true, cover = null, under = null } = {}) => {
+  function* surfaceSteps(field, { offset = 0, cut = null, near = null, depth = 0.002, walls = true, cover = null, under = null } = {}) {
     const { values, size, origin, cell, band, nearest } = field;
     if (offset > field.margin + EPSILON) fail('surface', `an offset of ${offset} m is past the field's margin of ${field.margin} m; sample the field with { margin: ${offset} } or more.`);
     const [sizeX, sizeY, sizeZ] = size;
     const [stepY, stepZ] = [sizeX, sizeX * sizeY];
     const [originX, originY, originZ] = origin;
     const count = values.length;
-    const { inside, vertexOf, isListed } = scratchFor(count);
+    // While one surface is half made (a pause), another made meanwhile works in arrays of its own.
+    const isOwner = !scratch.isMeshing;
+    const { inside, vertexOf, isListed } = isOwner ? scratchFor(count) : scratchOf(count);
+    if (isOwner) scratch.isMeshing = true;
+    try {
+      return yield* meshSteps();
+    } finally {
+      // Also when the caller gives the steps up half way.
+      if (isOwner) scratch.isMeshing = false;
+    }
+
+    /** The meshing itself, in the work arrays chosen above; pauses between its stages. */
+    function* meshSteps() {
     /** A cut solid is hollow below this value of the field. */
     const floor = -depth - cell * ROOT_THREE;
     /** How far a node's value may be from that of a surface through one of its cells: a diagonal, with room for a blend steeper than a true distance. */
@@ -1079,6 +1092,7 @@
       }
     }
 
+    yield undefined;
     /** Where along a grid edge (0 at `from`, 1 at `to`) the cut's boundary crosses it, by bisection. */
     const cutCrossing = (startsInside, fromX, fromY, fromZ, toX, toY, toZ) => {
       let low = 0;
@@ -1175,6 +1189,7 @@
       rims.push(cutCrossings && isOnSurface ? 1 : 0);
     }
 
+    yield undefined;
     const indices = growingList(Uint32Array, 1 << 14);
     /** Per triangle: 1 when it lies along the field's surface, 0 when it is a cut's wall (or a shell's floor). */
     const alongs = growingList(Uint8Array, 1 << 12);
@@ -1227,11 +1242,29 @@
     const faces = cut ? keptFaces(field, positions.taken(), indices.taken(), alongs.taken(), -depth, walls) : { indices: indices.taken(), alongs: null };
     const mesh = compact(positions.taken(), rims.taken(), faces.indices);
     const isAlong = walls ? faces.alongs : null;
+    yield undefined;
     settle(field, mesh.positions, offset, smoothVertices(mesh.positions.length / VECTOR, mesh.indices, isAlong), mesh.rims);
+    yield undefined;
     const { normals, isSmooth } = normalsOf(mesh.positions, mesh.indices, isAlong);
     const passes = Math.max(NORMAL_SMOOTHING.least, Math.min(NORMAL_SMOOTHING.most, Math.round(NORMAL_SMOOTHING.reach / cell)));
     for (let pass = 0; pass < passes; pass++) smoothNormals(normals, mesh.indices, isSmooth);
     return { positions: mesh.positions, normals, indices: mesh.positions.length / VECTOR > MOST_SHORT_INDEX ? mesh.indices : Uint16Array.from(mesh.indices) };
+    }
+  }
+
+  /**
+   * `surfaceSteps` run to its end in one go (see it for the method and the options).
+   * @param {Field} field
+   * @param {{offset?: number, cut?: function(number, number, number): boolean, near?: ArrayLike<number>, depth?: number, walls?: boolean, cover?: Uint8Array, under?: Uint8Array}} [options]
+   * @returns {SurfaceArrays}
+   * @complexity as `surfaceSteps`
+   * @example const skin = Kit.sculpt.surface(field); const sleeve = Kit.sculpt.surface(field, { offset: 0.008, cut: isSleeve });
+   */
+  const surface = (field, options) => {
+    const steps = surfaceSteps(field, options);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    return step.value;
   };
 
   /** A vertex off a cut's rim is on the smooth part of a surface when the field there is within this share of a cell of the surface. */
@@ -1430,6 +1463,8 @@
   const { XX, XY, XZ, XD, YY, YZ, YD, ZZ, ZD, DD } = QUADRIC_TERMS;
   /** Numbers of a quadric. */
   const QUADRIC = Object.keys(QUADRIC_TERMS).length;
+  /** Triangles given their planes, or vertices first queued, in the time one collapse takes: the setup pauses as often as the collapsing. */
+  const SETUP_PER_COLLAPSE = 4;
   /** Neighbours of a vertex there is room for at first (the list grows for a busier one). */
   const AROUND_START = 32;
 
@@ -1570,6 +1605,7 @@
     };
     const normal = new Float64Array(VECTOR);
     for (let face = 0; face < faces.length; face += VECTOR) {
+      if (face % (SIMPLIFY.slice * SETUP_PER_COLLAPSE * VECTOR) === 0 && face > 0) yield undefined;
       faceNormal(positions, faces[face] * VECTOR, faces[face + 1] * VECTOR, faces[face + 2] * VECTOR, normal);
       const twiceArea = Math.sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
       if (twiceArea < EPSILON * EPSILON) continue;
@@ -1625,6 +1661,8 @@
     };
     /** How much of the ownership differs between two vertices: 0 the same owners in the same shares, 1 none in common. */
     const shareStep = (first, second) => {
+      // Most vertices have one owner: the same one, or not.
+      if (skin.weights[first * OWNERS] === 1 && skin.weights[second * OWNERS] === 1) return skin.owners[first * OWNERS] === skin.owners[second * OWNERS] ? 0 : 1;
       let common = 0;
       for (let slot = 0; slot < OWNERS; slot++) {
         const share = skin.weights[first * OWNERS + slot];
@@ -1740,6 +1778,8 @@
     const cheapestTo = new Int32Array(vertexCount).fill(-1);
     const cheapestCost = new Float64Array(vertexCount).fill(Infinity);
     const isParked = new Uint8Array(vertexCount);
+    /** Per vertex: moves up to this cost were refused since its surroundings last changed, and are not tried again until they do. */
+    const refusedUpTo = new Float64Array(vertexCount).fill(-1);
     /** Queues a vertex at a cost, replacing any entry it has. */
     const queueAt = (vertex, target, cost) => {
       cheapestTo[vertex] = target;
@@ -1748,9 +1788,10 @@
       stampOf[vertex] += 1;
       if (target >= 0 && isWanted(cost)) heap.push(cost, vertex, stampOf[vertex]);
     };
-    /** Finds a vertex's cheapest move among its neighbours and queues it. */
-    const queue = (vertex) => {
-      gather(vertex);
+    /** Finds a vertex's cheapest move among its neighbours and queues it; `isGathered`: `around` already holds its neighbours. */
+    const queue = (vertex, isGathered = false) => {
+      if (!isGathered) gather(vertex);
+      refusedUpTo[vertex] = -1;
       let target = -1;
       let cheapest = Infinity;
       for (let index = 0; index < aroundCount; index++) {
@@ -1761,7 +1802,10 @@
       }
       queueAt(vertex, target, cheapest);
     };
-    for (let vertex = 0; vertex < vertexCount; vertex++) if (head[vertex] >= 0 && !(locked && locked[vertex])) queue(vertex);
+    for (let vertex = 0; vertex < vertexCount; vertex++) {
+      if (vertex % (SIMPLIFY.slice * SETUP_PER_COLLAPSE) === 0 && vertex > 0) yield undefined;
+      if (head[vertex] >= 0 && !(locked && locked[vertex])) queue(vertex);
+    }
     yield undefined;
 
     let worst = 0;
@@ -1774,7 +1818,10 @@
       if (heap.stamp !== stampOf[vertex]) continue;
       if (!isWanted(heap.cost)) break;
       const liveFaces = gather(vertex);
-      for (let index = 0; index < aroundCount; index++) aroundCost[index] = errorAt(vertex, around[index]);
+      for (let index = 0; index < aroundCount; index++) {
+        const move = errorAt(vertex, around[index]);
+        aroundCost[index] = move <= refusedUpTo[vertex] ? Infinity : move;
+      }
       // The cheapest neighbour the surface allows. When that one is refused the next may cost much more, so the
       // vertex goes back in the queue at that cost and waits its turn: collapses are made strictly cheapest first.
       let target = -1;
@@ -1794,6 +1841,7 @@
           cost = aroundCost[pick];
           break;
         }
+        refusedUpTo[vertex] = aroundCost[pick];
         aroundCost[pick] = Infinity;
       }
       if (isQueuedAgain) continue;
@@ -1831,11 +1879,13 @@
       if (again.length < aroundCount) again = new Int32Array(aroundCount * 2);
       again.set(around.subarray(0, aroundCount));
       const count = aroundCount;
-      queue(target);
+      queue(target, true);
       for (let index = 0; index < count; index++) {
         const neighbour = again[index];
         if (cheapestTo[neighbour] === vertex || isParked[neighbour]) queue(neighbour);
         else {
+          // What was refused beside a changed target may be allowed now.
+          refusedUpTo[neighbour] = -1;
           const onto = errorAt(neighbour, target);
           if (onto < cheapestCost[neighbour]) queueAt(neighbour, target, onto);
         }
@@ -1972,6 +2022,7 @@
     slopeAt,
     nearestAt,
     surface,
+    surfaceSteps,
     simplify,
     simplifySteps,
     pick,

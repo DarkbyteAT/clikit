@@ -696,11 +696,12 @@
         const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
         // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
         const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
-        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: Math.max(SCULPT.buriedDepth, cell * SCULPT.wallShare), walls: !isPaint, cover, under: cover });
+        const cloth = yield* Kit.sculpt.surfaceSteps(field, { offset, cut, near, depth: Math.max(SCULPT.buriedDepth, cell * SCULPT.wallShare), walls: !isPaint, cover, under: cover });
+        yield undefined;
         if (cloth.indices.length) cloths[index] = layerOf(`region:${garment.key}`, garment.ramp, cloth, offset);
         yield undefined;
       }
-      const bare = Kit.sculpt.surface(field, { under: cover });
+      const bare = yield* Kit.sculpt.surfaceSteps(field, { under: cover });
       yield undefined;
       const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
       skin.faceShare = shareOf(skin, isHeadBone);
@@ -927,7 +928,7 @@
       });
       if (!kept.length) continue;
       const solids = kept.map(({ part }) => part);
-      const mesh = Kit.sculpt.surface(yield* Kit.sculpt.sampleSteps(solids, { cell: ownCell }));
+      const mesh = yield* Kit.sculpt.surfaceSteps(yield* Kit.sculpt.sampleSteps(solids, { cell: ownCell }));
       if (!mesh.indices.length) continue;
       yield undefined;
       const [first] = kept;
