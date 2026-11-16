@@ -181,6 +181,8 @@
    * match starts on the first frame and the bodies arrive over the next few, with no frame held.
    */
   const BUILD_SLICE_MS = 5;
+  /** The coarsest level a character of the cast is drawn at: the keeper seen from the spot is small, and still someone with a face and hair. */
+  const CAST_LEAST_LEVEL = 'low';
   /**
    * The supporters near enough to be seen as people: the front `tiers` of each end are sculpted figures (one
    * instanced surface per look, kit/figure.js `crowd`), one look for each shirt colour of the ground, rolled
@@ -715,7 +717,7 @@
        */
       addFigure(recipe, standing) {
         const texels = Kit.seat.span(solveSeat(SEATS[standing.seat], size), { z: standing.z, to: FIGURE_HEIGHT }, grid.rows);
-        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { level: 'auto', pixels: texels, sculpt: 'steps' });
+        const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe), { level: 'auto', least: CAST_LEAST_LEVEL, pixels: texels, sculpt: 'steps' });
         figure.root.scale.setScalar(FIGURE_SCALE);
         figure.footing = figure.root.position;
         figures.push(figure);
