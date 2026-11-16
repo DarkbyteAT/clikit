@@ -597,6 +597,28 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     });
   });
 
+  test('sculpt: a dressed person is within the budget of every level: triangles, one skinned mesh, bytes', () => {
+    const { SCULPT_BUDGETS, checkSculptBudgets } = require('./dev/budgets');
+    const { catalog } = catalogs[0];
+    const bakery = catalog.bakery({ capacity: 4 });
+    assert.deepStrictEqual(Object.keys(SCULPT_BUDGETS).sort(), Object.keys(sculpt.DETAIL).sort(), 'every level has a budget');
+    // Seeds 12 and 6: eight layers each; 6 wears a wide hat and a long coat, the dearest things in the wardrobe to mesh.
+    [12, 6].forEach((seed) => {
+      const bake = bakery.bakeRecipe({ species: catalog.speciesIds()[0], seed });
+      Object.keys(SCULPT_BUDGETS).forEach((level) => {
+        figure.sculptCache.clear();
+        const { surface, bytes } = figure.sculptLayers(bake, figure.layout(bake, { level }));
+        assert.deepStrictEqual(checkSculptBudgets(level, { triangles: surface.indices.length / VECTOR, meshes: 1, bytes }), [], `seed ${seed}`);
+      });
+    });
+    figure.sculptCache.clear();
+    // The control: the same person sculpted as before (nothing culled, nothing simplified) is far over.
+    const bake = bakery.bakeRecipe({ species: catalog.speciesIds()[0], seed: 12 });
+    const dense = figure.sculptLayers(bake, figure.layout(bake, { level: 'low' }), { cull: false, simplify: false });
+    assert.ok(checkSculptBudgets('low', { triangles: dense.surface.indices.length / VECTOR, meshes: 1, bytes: dense.bytes }).length >= 2);
+    figure.sculptCache.clear();
+  });
+
   test('sculpt: kept bakes are bounded by bytes as well as by count, and what they take is known', () => {
     const { catalog } = catalogs[1];
     const editor = Kit.body.editor(catalog);

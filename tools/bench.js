@@ -51,6 +51,11 @@ const KIT_FILES = [
   'body-recipe',
   'body-store',
   'body-samples',
+  'figure-shapes',
+  'figure-layout',
+  'sculpt',
+  'figure-detail',
+  'figure-sculpt',
 ];
 /** Timing: each sample runs the operation in batches for about this long; each benchmark takes ROUNDS rounds. */
 const SAMPLE_MS = 80;
@@ -65,6 +70,12 @@ const MS_PER_SECOND = 1000;
 
 /** Sizes of the benchmark inputs, chosen to match what games actually build. */
 const SIZES = { gridSide: 32, wallChance: 0.2, linePoints: 200, statModifiers: 40, netKeys: 50, seed: 7 };
+
+/** A samples human and its layout at a level of detail: what the sculpt benchmarks sculpt. */
+const sculptCase = (Kit, level) => {
+  const bake = Kit.body.catalog(Kit.body.samples.CATALOG).bakery({ capacity: 4 }).bakeRecipe({ species: 'human', seed: SIZES.seed });
+  return { bake, layout: Kit.figure.layout(bake, { level }) };
+};
 
 /** Loads the pure kit modules into a sandbox, as tools/test-kit.js does. */
 const loadKit = () => {
@@ -227,6 +238,51 @@ const BENCHMARKS = {
       const [hip, knee, ankle] = ['thighLeft', 'shinLeft', 'footLeft'].map((name) => plan.boneIndex(name));
       let phase = 0;
       return () => Kit.reach.twoBone(plan.parent, pose, world, hip, knee, ankle, 0.1, 0.2 + 0.1 * Math.sin((phase += 0.1)), 0.2, 0.1, 0.5, 2, plan.jointLimits);
+    },
+  },
+  'sculpt.figure.low': {
+    about: 'a samples human sculpted afresh at low detail: fields, layers, culling, one simplified surface',
+    cost: 'O(surface area / cell^2) distance calls + O(vertices log vertices) to simplify',
+    setup: (Kit) => {
+      const { bake, layout } = sculptCase(Kit, 'low');
+      return () => {
+        Kit.figure.sculptCache.clear();
+        return Kit.figure.sculptLayers(bake, layout);
+      };
+    },
+  },
+  'sculpt.figure.far': {
+    about: 'the same human at far detail (the grid of low, simplified to a crowd member)',
+    cost: 'as sculpt.figure.low',
+    setup: (Kit) => {
+      const { bake, layout } = sculptCase(Kit, 'far');
+      return () => {
+        Kit.figure.sculptCache.clear();
+        return Kit.figure.sculptLayers(bake, layout);
+      };
+    },
+  },
+  'sculpt.simplify': {
+    about: 'Kit.sculpt.simplify of that human meshed at medium (about 16 k triangles) to the medium tolerance, skin guarded',
+    cost: 'O(vertices log vertices)',
+    setup: (Kit) => {
+      const { bake, layout } = sculptCase(Kit, 'medium');
+      const { surface } = Kit.figure.sculptLayers(bake, layout, { simplify: false });
+      const tolerance = Kit.sculpt.DETAIL.medium.cell * Kit.sculpt.DETAIL.medium.error;
+      return () => Kit.sculpt.simplify(surface, { tolerance, skin: surface });
+    },
+  },
+  'figure.detailFor': {
+    about: 'the level of detail for a height in pixels, with the level shown (asked per figure per frame)',
+    cost: 'O(bands)',
+    setup: (Kit) => {
+      let pixels = 40;
+      let shown = 'low';
+      return () => {
+        pixels = pixels > 900 ? 40 : pixels + 7;
+        shown = Kit.figure.detailFor(pixels, shown);
+        return shown;
+      };
     },
   },
 };

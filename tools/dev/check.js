@@ -174,7 +174,7 @@ const smokeRows = (ids, seconds) => {
   const rows = names.map((id) => {
     const result = results[id];
     if (!result) return { name: `smoke ${id}`, status: 'FAIL', detail: `no result (exit ${status}): ${lastLine(output)}` };
-    const breaches = result.probe ? checkBudgets(result.probe) : [];
+    const breaches = result.probe ? checkBudgets(result.probe, id) : [];
     const problems = [...result.errors, ...breaches.map((breach) => `over budget: ${breach}`)];
     const notes = result.warnings.length ? ` | ${result.warnings.length} kit warning(s): ${result.warnings[0]}` : '';
     const cost = result.probe ? ` | ${result.probe.calls} calls, ${result.probe.triangles} tris, ${result.probe.meshes} meshes` : '';
