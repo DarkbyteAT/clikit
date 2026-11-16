@@ -17,6 +17,8 @@
   /** The two sides `mirror` knows, and which role each one swaps with. */
   const OPPOSITE_SIDE = Object.freeze({ left: 'right', right: 'left' });
   const DIAL_KEY = 'dial:';
+  /** The editor group of a colour channel that no `controls` row places. */
+  const DEFAULT_COLOR_GROUP = 'colors';
   const COLOR_KEY = 'color:';
   const FILL_KEY = 'fill:';
   /** Problems that mean "this locked or mirrored field cannot be kept after the change"; such fields are dropped. */
@@ -25,6 +27,24 @@
   const fail = (where, message) => {
     throw new Error(`Kit.body.editor.${where}: ${message}`);
   };
+
+  /**
+   * The fields a control metadata row may set, field -> a check of its value. A species states rows in its
+   * definition, `controls: { 'dial:height': { label: 'Height', group: 'body', order: 1, hint: '...', step: 0.01,
+   * icon: 'ruler' } }`, and `groups: { body: { label: 'Body', order: 1, icon: 'figure' } }`; both inherit through
+   * the lineage like any other value, so a variant can relabel or regroup a control.
+   */
+  const META_FIELDS = Object.freeze({
+    label: (value) => typeof value === 'string',
+    group: (value) => typeof value === 'string',
+    order: Number.isFinite,
+    hint: (value) => typeof value === 'string',
+    step: (value) => Number.isFinite(value) && value > 0,
+    icon: (value) => typeof value === 'string',
+  });
+  const GROUP_FIELDS = Object.freeze(['label', 'order', 'icon', 'hint']);
+  /** Where a control or group with no `order` sorts: after every ordered one, in the order it was listed. */
+  const UNORDERED = 1e6;
 
   /** 'legLength' -> 'Leg length'; 'handRight/gem' -> 'Hand right / gem'. */
   const labelOf = (name) => {
@@ -54,6 +74,9 @@
    * @property {?string} base for a dial made by `sided: true`, the id both sides share ('eyeSize'); `setDial`
    *   with it moves both
    * @property {?boolean} linked for such a dial: do both sides hold the same value (show one slider)?
+   * @property {number} order where it sorts within its group (from the species' `controls` rows, else list order)
+   * @property {?string} hint a sentence for a tooltip, from `controls`
+   * @property {?string} icon an icon name, from `controls`
    */
 
   /**
@@ -64,6 +87,10 @@
    * @property {string} palette the catalogue palette the channel draws from
    * @property {Object[]} ramps the choices: `Ramp` rows { id, shades: [dark ... light] }
    * @property {number} value the index of the ramp the individual uses
+   * @property {string} group from `controls`, else 'colors'
+   * @property {number} order
+   * @property {?string} hint
+   * @property {?string} icon
    */
 
   /**
@@ -78,6 +105,12 @@
    * @property {boolean} allowsEmpty false for a required socket
    * @property {?string} mirror the key of the same socket on the other side, when there is one
    * @property {?string} side 'left' or 'right' for a sided socket (its own bone's side, or its parent socket's)
+   * @property {Array<{id: ?string, label: string, icon: ?string, hint: ?string}>} choices what the socket can
+   *   hold, as a list a picker shows: 'none' (id null) first when it may be empty, then every option with the
+   *   part's own `label`, `icon` and `hint`
+   * @property {number} order
+   * @property {?string} hint
+   * @property {?string} icon
    */
 
   /**
@@ -96,6 +129,58 @@
     /** @type {Map<string, {affects: Array<Array<{channel: string, bones: string[]}>>, groups: string[], sides: Array<?string>, mirrors: Array<?string>}>} */
     const dialFacts = new Map();
     const channelNames = Object.keys(Kit.body.CHANNELS);
+
+    /** Checks every species' control rows once, when the editor is made: a misspelt key is named at load. */
+    catalog.speciesIds().forEach((speciesId) => {
+      const kind = catalog.species(speciesId);
+      const where = `editor: species "${speciesId}"`;
+      const controls = kind.definition.controls || {};
+      const knownKeys = new Set([
+        ...kind.dialRows.flatMap((row) => [`${DIAL_KEY}${row.id}`, ...(row.base ? [`${DIAL_KEY}${row.base}`] : [])]),
+        ...kind.colorIds.map((channel) => `${COLOR_KEY}${channel}`),
+      ]);
+      Object.keys(controls).forEach((key) => {
+        // A fill key may name a nested socket that exists only under some parts, so any path is accepted.
+        if (!key.startsWith(FILL_KEY) && !knownKeys.has(key))
+          fail(where, `controls has a row for "${key}", which is not a dial or colour of this species. Keys look like 'dial:height', 'color:skin' or 'fill:hat'.`);
+        Object.keys(controls[key]).forEach((field) => {
+          if (!META_FIELDS[field]) fail(where, `controls."${key}" sets "${field}"; a control row sets ${Object.keys(META_FIELDS).join(', ')}.`);
+          if (!META_FIELDS[field](controls[key][field])) fail(where, `controls."${key}".${field} = ${JSON.stringify(controls[key][field])} is not a valid ${field}.`);
+        });
+      });
+      Object.keys(kind.definition.groups || {}).forEach((group) =>
+        Object.keys(kind.definition.groups[group]).forEach((field) => {
+          if (!GROUP_FIELDS.includes(field)) fail(where, `groups.${group} sets "${field}"; a group row sets ${GROUP_FIELDS.join(', ')}.`);
+        })
+      );
+    });
+
+    /** A control's metadata row: its own key first, then (for one side of a sided dial) its base key. */
+    const metaOf = (kind, key, baseKey) => ({ ...((kind.definition.controls || {})[baseKey] || {}), ...((kind.definition.controls || {})[key] || {}) });
+    /** The fields every control gets from its metadata row, with the defaults a creator can rely on. */
+    const metaFields = (meta, listOrder) => ({ order: meta.order === undefined ? UNORDERED + listOrder : meta.order, hint: meta.hint || null, icon: meta.icon || null });
+    /** What a socket can hold, as picker rows. */
+    const choicesOf = (options, allowsEmpty) => [
+      ...(allowsEmpty ? [{ id: null, label: 'None', icon: null, hint: null }] : []),
+      ...options.map((partId) => {
+        const partSpec = catalog.parts[partId].spec;
+        return { id: partId, label: partSpec.label || labelOf(partId), icon: partSpec.icon || null, hint: partSpec.hint || null };
+      }),
+    ];
+    /** Every group the controls use, as rows in display order. */
+    const groupsOf = (kind, controls) => {
+      const rows = kind.definition.groups || {};
+      const used = [...new Set(controls.map((control) => control.group))];
+      return used
+        .map((group, listOrder) => ({
+          id: group,
+          label: (rows[group] || {}).label || labelOf(group),
+          order: (rows[group] || {}).order === undefined ? UNORDERED + listOrder : rows[group].order,
+          icon: (rows[group] || {}).icon || null,
+          hint: (rows[group] || {}).hint || null,
+        }))
+        .sort((first, second) => first.order - second.order);
+    };
 
     /** What each dial of a species touches on the bare plan, its group, its side and its opposite: worked out once. */
     const dialFactsOf = (kind) => {
@@ -185,7 +270,8 @@
      * species order, sockets parents-first. Generate the editor's controls from this; nothing about a species
      * needs to be written into the editor.
      * @param {Object} recipe a `Recipe`; nested sockets are listed for what it currently wears
-     * @returns {{species: string, dials: DialControl[], colors: ColorControl[], sockets: SocketControl[]}}
+     * @returns {{species: string, dials: DialControl[], colors: ColorControl[], sockets: SocketControl[], groups: Array<{id: string, label: string, order: number, icon: ?string, hint: ?string}>}}
+     *   `groups` lists every group the controls use, sorted by the species' `groups` rows (then first use)
      * @throws {Error} as `catalog.resolve`
      * @complexity O(dials + channels + sockets x parts) time and space; cheap enough to rebuild after every edit
      * @example editor.schema({ species: 'human', seed: 7 }).sockets.map((socket) => socket.label) // ['Back', 'Hand left', ...]
@@ -194,40 +280,53 @@
       const individual = catalog.resolve(recipe);
       const kind = catalog.species(individual.species);
       const facts = dialFactsOf(kind);
-      return {
+      const controls = {
         species: kind.id,
-        dials: kind.dialRows.map((row, dial) => ({
-          key: `${DIAL_KEY}${row.id}`,
-          id: row.id,
-          label: row.label || labelOf(row.id),
-          group: facts.groups[dial],
-          min: row.min,
-          max: row.max,
-          step: (row.max - row.min) / Kit.body.DIAL_STEPS,
-          default: row.default === undefined ? 1 : row.default,
-          value: individual.dials[dial],
-          affects: facts.affects[dial],
-          mirror: facts.mirrors[dial],
-          side: facts.sides[dial],
-          base: row.base || null,
-          // A sided pair is linked while both sides hold the same value: one slider moves both.
-          linked: row.twin ? individual.dials[dial] === individual.dials[kind.dialIds.indexOf(row.twin)] : null,
-        })),
-        colors: kind.colorIds.map((channel, index) => ({
-          key: `${COLOR_KEY}${channel}`,
-          id: channel,
-          label: labelOf(channel),
-          palette: kind.paletteNames[index],
-          ramps: kind.palettes[index],
-          value: individual.colors[index],
-        })),
-        sockets: catalog.socketsOf(individual).map((socket) => {
+        dials: kind.dialRows.map((row, dial) => {
+          const meta = metaOf(kind, `${DIAL_KEY}${row.id}`, row.base ? `${DIAL_KEY}${row.base}` : null);
+          return {
+            key: `${DIAL_KEY}${row.id}`,
+            id: row.id,
+            label: meta.label || row.label || labelOf(row.base || row.id),
+            group: meta.group || facts.groups[dial],
+            ...metaFields(meta, dial),
+            min: row.min,
+            max: row.max,
+            // A slider step: the species' own, never finer than one stored step.
+            step: Math.max(meta.step || 0, (row.max - row.min) / Kit.body.DIAL_STEPS),
+            default: row.default === undefined ? 1 : row.default,
+            value: individual.dials[dial],
+            affects: facts.affects[dial],
+            mirror: facts.mirrors[dial],
+            side: facts.sides[dial],
+            base: row.base || null,
+            // A sided pair is linked while both sides hold the same value: one slider moves both.
+            linked: row.twin ? individual.dials[dial] === individual.dials[kind.dialIds.indexOf(row.twin)] : null,
+          };
+        }),
+        colors: kind.colorIds.map((channel, index) => {
+          const meta = metaOf(kind, `${COLOR_KEY}${channel}`, null);
+          return {
+            key: `${COLOR_KEY}${channel}`,
+            id: channel,
+            label: meta.label || labelOf(channel),
+            group: meta.group || DEFAULT_COLOR_GROUP,
+            ...metaFields(meta, index),
+            palette: kind.paletteNames[index],
+            ramps: kind.palettes[index],
+            value: individual.colors[index],
+          };
+        }),
+        sockets: catalog.socketsOf(individual).map((socket, index) => {
           const { side, path: mirrorPath } = mirrorOf(kind, individual.fills, socket.path);
+          const meta = metaOf(kind, `${FILL_KEY}${socket.path}`, null);
           return {
             key: `${FILL_KEY}${socket.path}`,
             path: socket.path,
-            label: socket.label || labelOf(socket.path),
-            group: socketPlacement(kind, socket.path.split(Kit.body.SOCKET_PATH_SEPARATOR)[0]).group,
+            label: meta.label || socket.label || labelOf(socket.path),
+            group: meta.group || socketPlacement(kind, socket.path.split(Kit.body.SOCKET_PATH_SEPARATOR)[0]).group,
+            ...metaFields(meta, index),
+            choices: choicesOf(socket.fits, !socket.required),
             type: socket.type,
             part: socket.part,
             options: socket.fits,
@@ -237,6 +336,7 @@
           };
         }),
       };
+      return { ...controls, groups: groupsOf(kind, [...controls.dials, ...controls.colors, ...controls.sockets]) };
     };
 
     /** A recipe with some overrides replaced; `drop` removes keys first. Normalised, so it is valid or it throws. */

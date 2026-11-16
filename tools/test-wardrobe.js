@@ -542,4 +542,84 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     );
     body.catalog(SURFACED); // control
   });
+
+  // ---- control metadata as data ----
+  const LABELLED = sampleVariant((spec) => {
+    spec.nodes.humanoid.set.controls = {
+      'dial:height': { label: 'Stature', group: 'shape', order: 2, hint: 'Overall size, feet to crown.', icon: 'ruler', step: 0.01 },
+      'dial:handSize': { label: 'Hands', group: 'shape', order: 1 },
+      'color:cloth': { label: 'Fabric', group: 'outfit', icon: 'swatch' },
+      'fill:headTop': { label: 'Hat', group: 'outfit', order: 0 },
+    };
+    spec.nodes.humanoid.set.groups = { outfit: { label: 'Outfit', order: 2, icon: 'shirt' }, shape: { label: 'Shape', order: 1 } };
+    spec.parts.hat.label = 'Wide hat';
+    spec.parts.hat.icon = 'hat';
+  }, SIDED);
+
+  test('control metadata: labels, groups, order, hints, steps and icons come from data rows (control: unlabelled ones are generated)', () => {
+    const labelled = body.catalog(LABELLED);
+    const editor = body.editor(labelled);
+    const schema = editor.schema({ species: 'human', seed: 7 });
+    const height = schema.dials.find((dial) => dial.id === 'height');
+    same([height.label, height.group, height.order, height.hint, height.icon, height.step], ['Stature', 'shape', 2, 'Overall size, feet to crown.', 'ruler', 0.01]);
+    same(
+      schema.dials.filter((dial) => dial.base === 'handSize').map((dial) => [dial.label, dial.group, dial.order]),
+      [
+        ['Hands', 'shape', 1],
+        ['Hands', 'shape', 1],
+      ],
+      'a base row labels both sides'
+    );
+    const legs = schema.dials.find((dial) => dial.id === 'legLength');
+    same([legs.label, legs.group, legs.hint, legs.icon], ['Leg length', 'legs', null, null], 'control: a dial with no row keeps its generated label and group');
+    assert.ok(legs.order >= 1e6, 'and sorts after the ordered ones');
+    close(legs.step, 0.35 / 255, 1e-9, 'and its step is one stored step');
+    const cloth = schema.colors.find((color) => color.id === 'cloth');
+    same([cloth.label, cloth.group, cloth.icon, schema.colors.find((color) => color.id === 'skin').group], ['Fabric', 'outfit', 'swatch', 'colors']);
+    const hat = schema.sockets.find((socket) => socket.path === 'headTop');
+    same(
+      [hat.label, hat.group, hat.order, hat.choices],
+      [
+        'Hat',
+        'outfit',
+        0,
+        [
+          { id: null, label: 'None', icon: null, hint: null },
+          { id: 'hat', label: 'Wide hat', icon: 'hat', hint: null },
+        ],
+      ]
+    );
+    same(
+      schema.groups.slice(0, 2).map((group) => [group.id, group.label, group.icon]),
+      [
+        ['shape', 'Shape', null],
+        ['outfit', 'Outfit', 'shirt'],
+      ],
+      'groups sorted by their rows'
+    );
+    assert.ok(
+      schema.groups.some((group) => group.id === 'legs' && group.label === 'Legs'),
+      'a group with no row is listed with a generated label'
+    );
+  });
+  test('control metadata: a row for a field the species lacks, or an unknown field, is named when the editor is made', () => {
+    const broken = (edit) => () => body.editor(body.catalog(sampleVariant(edit, LABELLED)));
+    throwsWith(
+      broken((spec) => (spec.nodes.humanoid.set.controls['dial:wingspan'] = { label: 'Wings' })),
+      /controls has a row for "dial:wingspan", which is not a dial or colour/
+    );
+    throwsWith(
+      broken((spec) => (spec.nodes.humanoid.set.controls['dial:height'].colour = 'red')),
+      /sets "colour"; a control row sets label, group, order, hint, step, icon/
+    );
+    throwsWith(
+      broken((spec) => (spec.nodes.humanoid.set.controls['dial:height'].step = -1)),
+      /step = -1 is not a valid step/
+    );
+    throwsWith(
+      broken((spec) => (spec.nodes.humanoid.set.groups.shape.colour = 'red')),
+      /groups.shape sets "colour"/
+    );
+    body.editor(body.catalog(LABELLED)); // control
+  });
 };
