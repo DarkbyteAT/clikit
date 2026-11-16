@@ -407,6 +407,59 @@
   };
 
   /**
+   * @typedef {Object} SweptMeasure
+   * @property {number[]} center [x, y, z] the middle of the measured pieces' box, in the space of `world`
+   * @property {number} radius the furthest any measured point is from `center`, metres: a ball that holds them however they are turned
+   * @property {number} sweep the furthest any measured point is from the vertical axis through the origin, metres:
+   *   what a figure turning about that axis sweeps
+   * @property {number} lowestY
+   * @property {number} highestY
+   */
+
+  /**
+   * Measures chosen pieces of a figure as it is posed, worn things included: the ball that holds them and the
+   * cylinder they sweep when the figure turns about its own axis. `measureRest` grounds and centres a body by
+   * its own surfaces; this is for framing what is seen (a head with its ears, a body with its wings and hat).
+   * @param {FigureLayout} figureLayout
+   * @param {{translation: Float32Array, rotation: Float32Array, scale: Float32Array}} world the pose's world transforms (a figure's `world`)
+   * @param {function(Object): Float32Array} positionsOf a piece's surface points in its bone's space
+   * @param {function(Object): boolean} [includes] which pieces count (default all)
+   * @returns {?SweptMeasure} null when no piece counts
+   * @complexity O(vertices of the pieces that count), two passes
+   * @example const head = Kit.figure.measureSwept(figure.layout, figure.world, cache.positions, (piece) => piece.bone === headBone);
+   */
+  const measureSwept = (figureLayout, world, positionsOf, includes = () => true) => {
+    const matrix = new Float32Array(16);
+    const pieces = figureLayout.pieces.filter(includes);
+    const low = [Infinity, Infinity, Infinity];
+    const high = [-Infinity, -Infinity, -Infinity];
+    const center = [0, 0, 0];
+    let [radius, sweep] = [0, 0];
+    /** Calls `visit(x, y, z)` for every point of the pieces, in the space of `world`. */
+    const eachPoint = (visit) =>
+      pieces.forEach((piece) => {
+        Kit.figure.writeBoneMatrix(world, piece.bone, matrix);
+        const positions = positionsOf(piece);
+        // Measured hot loop over typed arrays (thousands of vertices): plain index arithmetic.
+        for (let offset = 0; offset < positions.length; offset += VECTOR) {
+          const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
+          visit(matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12], matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13], matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]);
+        }
+      });
+    eachPoint((x, y, z) => {
+      [x, y, z].forEach((value, axis) => {
+        low[axis] = Math.min(low[axis], value);
+        high[axis] = Math.max(high[axis], value);
+      });
+      sweep = Math.max(sweep, Math.hypot(x, z));
+    });
+    if (low[0] === Infinity) return null;
+    center.forEach((_unused, axis) => (center[axis] = (low[axis] + high[axis]) / 2));
+    eachPoint((x, y, z) => (radius = Math.max(radius, Math.hypot(x - center[0], y - center[1], z - center[2]))));
+    return { center, radius, sweep, lowestY: low[1], highestY: high[1] };
+  };
+
+  /**
    * @typedef {Object} ViewWindow
    * An orthographic camera's window onto a figure: the world point at its centre and its half extents.
    * @property {number} centerX world units across the camera (0: the figure's vertical axis)
@@ -439,5 +492,5 @@
     return { centerX: 0, centerY: (bottom + top) / 2, halfWidth: halfHeight * aspect, halfHeight };
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { INK_GROUPS, PART_GROUPS, SHINY_CHANNELS, resolveRamps, resolveChannels, inkKeyOf, inkGroupOf, layout, planUpdate, measureRest, fitView });
+  Kit.figure = Object.assign(Kit.figure || {}, { INK_GROUPS, PART_GROUPS, SHINY_CHANNELS, resolveRamps, resolveChannels, inkKeyOf, inkGroupOf, layout, planUpdate, measureRest, measureSwept, fitView });
 })();

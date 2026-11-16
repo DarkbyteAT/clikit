@@ -61,7 +61,8 @@
    * dozen marks costs a few extra distances near each and none elsewhere.
    * @param {Object} base a `Solid`; its owner, group, fillet and anything else it carries are kept
    * @param {ReliefMark[]} marks
-   * @returns {Object} a `Solid`: the base's fields with `distance`, `min` and `max` of the whole
+   * @returns {Object} a `Solid`: the base's fields with `distance`, `min` and `max` of the whole, and `plain`,
+   *   the base's own distance (what lies on the base, like cloth, may ask how far a mark stands off it)
    * @throws {Error} when a mark has no solid
    * @complexity O(1) to make; each distance is the base's plus those of the marks whose bounds are within reach of the point
    * @example const head = Kit.sculpt.relief(skull, [{ solid: nose, blend: 0.012 }, { solid: socket, blend: 0.01, carve: true }]);
@@ -97,7 +98,7 @@
       }
       return nearest;
     };
-    return { ...base, distance, min, max };
+    return { ...base, distance, min, max, plain: baseDistance };
   };
 
   Kit.sculpt = Object.assign(Kit.sculpt || {}, { relief, smoothMax, RELIEF });

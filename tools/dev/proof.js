@@ -42,13 +42,15 @@ async function stack(session, strips, file) {
 
 /**
  * Photographs suites.
- * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number, count?: number, rigid?: boolean, level?: string}} options `count`: how many
+ * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], only?: string[], framing?: string, out?: string, pages?: number, count?: number, rigid?: boolean, level?: string}} options `only`: the
+ *   socket paths (options suite) or dial ids (extremes suite) to show, default all; `framing`: 'head' or 'body' instead of
+ *   the suite's own (face options and dials are judged close up); `count`: how many
  *   individuals the rolls and faces suites roll (their default when left out); `rigid`: the rigid path (files are
  *   named `-rigid`), for a before / after pair; `level`: a level of detail instead of the one the cell size asks for
  * @returns {Promise<{files: string[], problems: string[]}>}
  * @example await makeProof({ suites: ['turn', 'rolls'], catalog: 'wardrobe', preset: 'pixel' });
  */
-async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages, count, rigid = false, level }) {
+async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], only = [], framing, out = OUT, pages: mostPages = PAGE.mostPages, count, rigid = false, level }) {
   const session = await openArcade({ size: { width: PAGE.cellWidth * 8, height: 1200 } });
   const files = [];
   const problems = [];
@@ -67,7 +69,7 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         strips = [];
       };
       /** What every page of the suite is drawn with; `rigid` and `level` are the screen's own switches. */
-      const job = { suite, catalog, preset, species, count, rigid, level, cellPixels: PAGE.cellWidth };
+      const job = { suite, catalog, preset, species, only, framing, count, rigid, level, cellPixels: PAGE.cellWidth };
       // One row is drawn once to learn the suite's framing; every page after that is drawn exactly once.
       const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { ...job, page: 0, rows: 1 });
       const rows = probe.framing === 'head' ? 1 : PAGE.rows;
@@ -76,7 +78,7 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         pageCount = first.pages;
         await session.page.setViewportSize({ width: first.columns * PAGE.cellWidth, height: Math.round((first.columns * PAGE.cellWidth) / first.aspect) });
         await session.page.waitForTimeout(PAGE.settleMs);
-        const numbered = (count) => `${catalog}-${suite}-${preset}${rigid ? '-rigid' : ''}${count > 1 ? `-${String(filed + 1).padStart(2, '0')}` : ''}.png`;
+        const numbered = (count) => `${catalog}-${suite}${framing ? `-${framing}` : ''}-${preset}${rigid ? '-rigid' : ''}${count > 1 ? `-${String(filed + 1).padStart(2, '0')}` : ''}.png`;
         if (rows === 1) {
           strips.push(await session.page.screenshot({ timeout: SHOT_MS }));
           if (strips.length === PAGE.rows || page === Math.min(pageCount, mostPages) - 1) {

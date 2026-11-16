@@ -460,15 +460,15 @@
   };
 
   /**
-   * A feature's frame tipped out of the surface by its `lean`: about `up` first (the solid's outward axis swings
-   * towards its across axis: an ear stands off the head), then about `across` (outward swings towards up: a
-   * nose tip turns up). The right copy of a pair has its across axis mirrored, so it leans the mirrored way.
+   * A feature's frame tipped out of the surface by its `lean`: about `up` first (the solid's across axis swings
+   * outward: an ear stands off the head), then about `across` (its outward axis swings towards up: a nose tip
+   * turns up). The right copy of a pair has its across axis mirrored, so it leans the mirrored way.
    */
   const leaned = (frame, lean) => {
     if (!lean || (lean[0] === 0 && lean[1] === 0)) return frame;
     const { mirror } = frame;
     const turn = (first, second, angle) => [combine([0, 0, 0], [[first, Math.cos(angle)], [second, Math.sin(angle)]]), combine([0, 0, 0], [[second, Math.cos(angle)], [first, -Math.sin(angle)]])];
-    const [swungNormal, swungAcross] = turn(frame.normal, frame.across.map((value) => value * mirror), lean[1]);
+    const [swungAcross, swungNormal] = turn(frame.across.map((value) => value * mirror), frame.normal, lean[1]);
     const [normal, up] = turn(swungNormal, frame.up, lean[0]);
     return { across: swungAcross.map((value) => value * mirror), up, normal, mirror };
   };

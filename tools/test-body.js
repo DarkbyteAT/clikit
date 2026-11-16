@@ -32,6 +32,7 @@ const FILES = [
   'body-edit',
   'body-store',
   'body-face',
+  'body-hair',
   'body-samples',
   'body-debug',
 ];

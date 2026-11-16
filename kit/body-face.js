@@ -114,11 +114,11 @@
 
   /**
    * @typedef {Object} EarRow
-   * An ear as a plate standing off the head, hollowed on its outer face, with an optional lobe and point.
+   * An ear as a plate standing off the head, with an optional lobe and point.
    * @property {number} height metres, top to bottom
    * @property {number} width metres, front to back
-   * @property {number} [thickness=0.0075] metres
-   * @property {number} [flare=32] degrees the plate stands off the head (its back edge out)
+   * @property {number} [thickness=0.011] metres
+   * @property {number} [flare=38] degrees the plate stands off the head (its back edge out)
    * @property {boolean} [lobe=true]
    * @property {?{length: number, back: number, radius: number}} [point] a tip drawn out of the top: metres up,
    *   metres towards the back of the head, and its radius where it leaves the plate
@@ -127,14 +127,14 @@
   /** Ear styles. Adding a style means adding a row. @type {Object<string, EarRow>} */
   const EARS = Object.freeze({
     round: { height: 0.05, width: 0.03 },
-    small: { height: 0.038, width: 0.024, flare: 26 },
-    large: { height: 0.066, width: 0.04, flare: 42 },
+    small: { height: 0.038, width: 0.024, flare: 30 },
+    large: { height: 0.066, width: 0.04, flare: 48 },
     pointed: { height: 0.046, width: 0.029, lobe: false, point: { length: 0.04, back: 0.012, radius: 0.0085 } },
-    long: { height: 0.04, width: 0.028, flare: 38, lobe: false, point: { length: 0.062, back: 0.062, radius: 0.0085 } },
+    long: { height: 0.04, width: 0.028, flare: 42, lobe: false, point: { length: 0.062, back: 0.062, radius: 0.0085 } },
   });
 
   /**
-   * A pair of ears' features on the 'ear' anchor: the plate and its hollow have the id 'ear', a point has the id
+   * A pair of ears' features on the 'ear' anchor: the plate and its lobe have the id 'ear', a point has the id
    * 'earTip', so one dial sizes the ear and another draws out its point.
    * @param {string|EarRow} style a key of `EARS` or a row of the same shape
    * @param {{scale?: number, paint?: string}} [options]
@@ -145,20 +145,16 @@
    */
   const ears = (style, { scale = 1, paint = 'skin' } = {}) => {
     const row = rowOf(EARS, style, 'ears');
-    const thickness = row.thickness || 0.0075;
-    const flare = row.flare === undefined ? 32 : row.flare;
+    const thickness = row.thickness || 0.011;
+    const flare = row.flare === undefined ? 38 : row.flare;
     const [halfWidth, halfHeight] = [row.width / 2, row.height / 2];
     const common = { anchor: 'ear', size: scaled([row.width, row.height], scale), paint, lean: [0, flare], blend: 0.006 * scale };
-    // The plate's front edge is at the anchor, sunk in the head; the rest swings out by the flare.
-    const plateAt = [halfWidth * 0.8, 0, 0];
-    const features = [
-      { ...common, id: 'ear', shape: pressed([halfWidth, halfHeight, thickness / 2], plateAt, scale) },
-      // The hollow of the outer face: it leaves a rim round the ear, which is what reads as an ear from the front.
-      { ...common, id: 'ear', carve: true, blend: 0.004 * scale, shape: pressed([halfWidth * 0.55, halfHeight * 0.6, thickness * 0.45], [plateAt[0] + halfWidth * 0.1, -halfHeight * 0.05, thickness * 0.62], scale) },
-    ];
-    if (row.lobe !== false) features.push({ ...common, id: 'ear', shape: pressed([halfWidth * 0.42, halfHeight * 0.3, thickness * 0.62], [halfWidth * 0.55, -halfHeight * 0.82, 0], scale) });
+    // The plate turns about its front edge, which stays sunk in the head at the anchor; the rest swings out by the flare.
+    const plateAt = [halfWidth, 0, -thickness * SUNK];
+    const features = [{ ...common, id: 'ear', shape: pressed([halfWidth, halfHeight, thickness / 2], plateAt, scale) }];
+    if (row.lobe !== false) features.push({ ...common, id: 'ear', shape: pressed([halfWidth * 0.5, halfHeight * 0.34, thickness * 0.6], [halfWidth * 0.75, -halfHeight * 0.8, plateAt[2]], scale) });
     if (row.point) {
-      const from = [plateAt[0], halfHeight * 0.45, 0];
+      const from = [plateAt[0], halfHeight * 0.45, plateAt[2]];
       features.push({ ...common, id: 'earTip', size: scaled([row.width, row.point.length], scale), shape: { kind: 'capsule', at: scaled(from, scale), end: scaled([row.point.back, row.point.length, 0], scale), radius: row.point.radius * scale, taper: 0.22 } });
     }
     return features;

@@ -51,6 +51,9 @@
   const subjectOf = (species) => ({ species, seed: DEFAULT_SEED });
   const turned = (label, recipe, extra = {}) => DIRECTIONS.map((yaw) => ({ label: `${label} ${Math.round(yaw * 360)}`, recipe, yaw, ...extra }));
 
+  /** The rows whose `key` is in `only`, or all of them when nothing is named: how a sheet is narrowed to the sockets or dials under review. */
+  const named = (rows, key, only) => (only && only.length ? rows.filter((row) => only.includes(row[key])) : rows);
+
   /**
    * The suites. Each is `(catalog, editor, options) -> ProofSheet`; `options.species` narrows a suite to one species.
    * Adding a suite here adds it to the tool.
@@ -67,24 +70,24 @@
     },
     /** The same rolls close on the head. */
     faces: (catalog, editor, options) => ({ ...SUITES.rolls(catalog, editor, options), title: 'Faces', framing: 'head' }),
-    /** Every choice of every socket of each species' subject, from three directions. */
-    options: (_catalog, editor, { species }) => ({
+    /** Every choice of every socket of each species' subject (or only of the sockets named in `only`), from three directions. */
+    options: (_catalog, editor, { species, only }) => ({
       title: 'Options',
       columns: THREE_VIEWS.length * 3,
       framing: 'body',
       cells: species.flatMap((id) =>
-        editor.schema(subjectOf(id)).sockets.flatMap((socket) =>
+        named(editor.schema(subjectOf(id)).sockets, 'path', only).flatMap((socket) =>
           socket.choices.flatMap((choice) => THREE_VIEWS.map((yaw) => ({ label: `${id} ${socket.path}: ${choice.id || 'none'}`, recipe: editor.setSocket(subjectOf(id), socket.path, choice.id), yaw })))
         )
       ),
     }),
-    /** Every dial of each species' subject at its least and its most. */
-    extremes: (_catalog, editor, { species }) => ({
+    /** Every dial of each species' subject (or only the dials named in `only`) at its least and its most. */
+    extremes: (_catalog, editor, { species, only }) => ({
       title: 'Dial extremes',
       columns: 8,
       framing: 'body',
       cells: species.flatMap((id) =>
-        editor.schema(subjectOf(id)).dials.flatMap((dial) => [
+        named(editor.schema(subjectOf(id)).dials, 'id', only).flatMap((dial) => [
           { label: `${id} ${dial.id} least`, recipe: editor.setDial(subjectOf(id), dial.id, dial.min), yaw: THREE_VIEWS[0] },
           { label: `${id} ${dial.id} most`, recipe: editor.setDial(subjectOf(id), dial.id, dial.max), yaw: THREE_VIEWS[0] },
         ])
@@ -114,7 +117,8 @@
    * The cells of a suite for a catalogue.
    * @param {string} name a key of `SUITES`
    * @param {Object} catalog from `Kit.body.catalog`
-   * @param {{species?: string[], count?: number, acts?: string[]}} [options] `species`: which (default all)
+   * @param {{species?: string[], count?: number, acts?: string[], only?: string[]}} [options] `species`: which (default all);
+   *   `only`: the socket paths (options) or dial ids (extremes) to show, default all
    * @returns {ProofSheet}
    * @throws {Error} for an unknown suite or species
    * @complexity O(cells); the options and extremes suites call `editor.schema` once per species
@@ -203,9 +207,15 @@
   /** Palette rows: an options page of 36 figures at `Kit.figure.RAMP_SLOTS` rows each, with room to spare (the indexed looks address the first `Kit.look.INDEXED_ROWS`, a page of 32). */
   const ATLAS_ROWS = 1024;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
-  /** Room round a figure in its cell, as shares of the largest figure's size; `head` shows this share of the height, from the top. */
-  /** `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail); `mostAspect`: the widest a cell is made for a long body, in body heights. */
-  const CELL = Object.freeze({ sideMargin: 1.15, topMargin: 1.22, headShare: 0.42, headTop: 0.12, leastWidth: 0.5, figureShare: 1.3, mostAspect: 1.3 });
+  /**
+   * Room round a figure in its cell. A body cell holds everything the figure sweeps when it turns (wings, a hat,
+   * a staff), plus `sideMargin` and `topMargin` as shares of that; `floor` is the share of the cell left under
+   * its feet. A head cell is a square `headMargin` times the ball that holds the head bone's own surfaces
+   * (ears and nose included), so every species' head fills its cell, with room for hair, horns and a hat.
+   * `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail);
+   * `mostAspect`: the widest a long body is drawn, in body heights.
+   */
+  const CELL = Object.freeze({ sideMargin: 1.06, topMargin: 1.12, floor: 0.04, headMargin: 1.3, leastWidth: 0.5, figureShare: 1.3, mostAspect: 1.3 });
 
   Kit.register({
     id: 'proof',
@@ -237,7 +247,7 @@
 
       /**
        * Draws one page of a sheet.
-       * @param {{catalog?: string, suite?: string, cells?: ProofCell[], species?: string[], columns?: number, framing?: string, preset?: string, page?: number, rows?: number, rigid?: boolean, level?: string, cellPixels?: number}} job
+       * @param {{catalog?: string, suite?: string, cells?: ProofCell[], species?: string[], only?: string[], columns?: number, framing?: string, preset?: string, page?: number, rows?: number, rigid?: boolean, level?: string, cellPixels?: number}} job
        *   `rigid`: draw one rigid piece per bone shape instead of sculpted surfaces (the before of a before / after pair);
        *   `level`: a level of detail, else chosen from `cellPixels` (a cell's width in target pixels) by `Kit.figure.levelFor`
        *   `suite` (with `catalog`) or explicit `cells`; `rows` per page (default 4)
@@ -282,19 +292,59 @@
           entry.figure.root.scale.setScalar(entry.scale);
         });
         const isHead = framing === 'head';
-        const cellHeight = isHead ? tallest * CELL.headShare : tallest * CELL.topMargin;
-        const cellWidth = isHead ? cellHeight : widest * CELL.sideMargin;
         const rows = Math.max(1, Math.ceil(shown.length / columns));
+        if (isHead) frameHeads(columns, rows);
+        else frameBodies(columns, rows);
+        labels.value = { columns, rows, texts: shown.map((entry) => (entry.refusal ? `${entry.cell.label} (cannot)` : entry.cell.label)) };
+        return { pages, cells: shown.length, columns, rows, framing, aspect: (columns * grid.cellWidth) / (rows * grid.cellHeight), refusals };
+      };
+
+      const headMask = Kit.body.roleMask(['head']);
+      /** Is a piece the head's own surface (its skull, nose and ears; not what is worn on it)? */
+      const isOfHead = (plan) => (piece) => !piece.isProp && (plan.roles[piece.bone] & headMask) !== 0;
+
+      /**
+       * Body framing: every cell is as wide and as tall as the largest figure sweeps when it turns, so wings, a
+       * brim or a held staff never reach into the next cell. Feet stand a little above the cell's floor.
+       */
+      const frameBodies = (columns, rows) => {
+        const swept = shown.map((entry) => Kit.figure.measureSwept(entry.figure.layout, entry.figure.world, cache.positions) || { sweep: 0, lowestY: 0, highestY: 0 });
+        const cellWidth = Math.max(CELL.leastWidth, ...swept.map((measure, index) => measure.sweep * 2 * shown[index].scale)) * CELL.sideMargin;
+        const below = Math.max(0, ...swept.map((measure, index) => -measure.lowestY * shown[index].scale));
+        const cellHeight = (Math.max(...swept.map((measure, index) => measure.highestY * shown[index].scale)) + below) * CELL.topMargin;
         grid = { columns, rows, cellWidth, cellHeight };
         shown.forEach((entry, index) => {
           const [column, row] = [index % columns, Math.floor(index / columns)];
-          const cellBottom = (rows - 1 - row) * cellHeight;
           entry.figure.root.position.x = (column - (columns - 1) / 2) * cellWidth;
-          // Body: feet near the cell's floor. Head: the crown a little under the cell's top.
-          entry.figure.root.position.y = isHead ? cellBottom + cellHeight * (1 - CELL.headTop) - entry.figure.measured.highestY * entry.scale : cellBottom + cellHeight * 0.04;
+          entry.figure.root.position.y = (rows - 1 - row) * cellHeight + cellHeight * CELL.floor + below;
         });
-        labels.value = { columns, rows, texts: shown.map((entry) => (entry.refusal ? `${entry.cell.label} (cannot)` : entry.cell.label)) };
-        return { pages, cells: shown.length, columns, rows, framing, aspect: (columns * cellWidth) / (rows * cellHeight), refusals };
+      };
+
+      /**
+       * Head framing: each cell is centred on the ball that holds its figure's head, and every species' head is
+       * drawn the same size (individuals of one species keep theirs against each other), so a hound's or a
+       * fish's head fills its cell as a person's does. A body with no head bone is framed by its whole self.
+       */
+      const frameHeads = (columns, rows) => {
+        const heads = shown.map((entry) => {
+          const all = () => Kit.figure.measureSwept(entry.figure.layout, entry.figure.world, cache.positions);
+          return Kit.figure.measureSwept(entry.figure.layout, entry.figure.world, cache.positions, isOfHead(entry.figure.bake.plan)) || all() || { center: [0, 0, 0], radius: CELL.leastWidth };
+        });
+        const largest = new Map();
+        shown.forEach((entry, index) => largest.set(entry.cell.recipe.species, Math.max(largest.get(entry.cell.recipe.species) || 0, heads[index].radius)));
+        const radius = Math.max(...largest.values());
+        const side = radius * 2 * CELL.headMargin;
+        grid = { columns, rows, cellWidth: side, cellHeight: side };
+        shown.forEach((entry, index) => {
+          const [column, row] = [index % columns, Math.floor(index / columns)];
+          entry.scale = radius / largest.get(entry.cell.recipe.species);
+          entry.figure.root.scale.setScalar(entry.scale);
+          // The head's middle, turned with the figure about its own axis, lands on the middle of the cell.
+          const turn = entry.cell.yaw * TURN;
+          const [x, y, z] = heads[index].center;
+          entry.figure.root.position.x = (column - (columns - 1) / 2) * side - (x * Math.cos(turn) + z * Math.sin(turn)) * entry.scale;
+          entry.figure.root.position.y = (rows - 1 - row + 0.5) * side - y * entry.scale;
+        });
       };
 
       /** The crowd drawn by `crowd`, if any (a sheet replaces it and the reverse). */

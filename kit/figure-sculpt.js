@@ -53,6 +53,8 @@
      */
     thickenedCells: 1.9,
     leastThinShare: 0.4,
+    /** A painted layer lies on a bone's own surface: where a relief mark stands further off it than this (an ear, a nose), the mark shows through. */
+    proud: 0.018,
     /** A draped object's vertex is shared between the body solids within this many metres of being its nearest. */
     drapeSpread: 0.16,
     /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
@@ -460,9 +462,11 @@
    * @param {Garment} garment
    * @param {Object} field a `Field` of kit/sculpt.js whose solids carry `inverse`
    * @param {Object[]} frames `Kit.body.surfaceLayout(plan).frames`
+   * @param {number} [mostProud] metres: the cut leaves out points further than this from the bone's own surface
+   *   (`Solid.plain`, set by `Kit.sculpt.relief`), so an ear or a nose shows through what is painted round it
    * @returns {function(number, number, number): boolean}
    */
-  const cutOf = (garment, field, frames) => {
+  const cutOf = (garment, field, frames, mostProud = Infinity) => {
     const { solids } = field;
     /** Per solid of the field: the garment's predicates on its bone, or null (most solids: answered at once). */
     const testsOf = solids.map((part) => garment.tests.get(part.owner) || null);
@@ -472,6 +476,8 @@
       const tests = index >= 0 ? testsOf[index] : null;
       if (!tests) return false;
       const part = solids[index];
+      // Over a relief mark that stands well off the bone (an ear under a hairline), the garment gives way.
+      if (part.plain && part.plain(x, y, z) > mostProud) return false;
       const inverse = part.inverse;
       const localX = inverse[0] * x + inverse[1] * y + inverse[2] * z + inverse[3];
       const localY = inverse[4] * x + inverse[5] * y + inverse[6] * z + inverse[7];
@@ -627,19 +633,23 @@
     meshed.forEach((entry) => {
       const own = marks.get(entry.piece);
       if (!own) return;
+      // A mark pressed on is thickened to what the grid can hold, like any solid; one too thin even for that stays a rigid piece.
+      const fitted = own.map((piece) => ({ piece, solid: piece.carve ? solidOf(piece, matrices, limbLead) : fittedSolid(piece, matrices, limbLead, cell) })).filter(({ solid }) => solid);
       entry.part = Kit.sculpt.relief(
         entry.part,
-        own.map((piece) => ({ solid: solidOf(piece, matrices, limbLead), blend: piece.blend, carve: piece.carve }))
+        fitted.map(({ piece, solid }) => ({ solid, blend: piece.blend, carve: piece.carve }))
       );
-      own.forEach((piece) => replaced.add(piece.id));
+      fitted.forEach(({ piece }) => replaced.add(piece.id));
     });
     // The shells the layout made for raised regions are replaced along with the surfaces they were copies of.
     figureLayout.pieces.filter((piece) => piece.shell && replaced.has(piece.id.split('~')[0])).forEach((piece) => replaced.add(piece.id));
     /** Body solids by ramp: each paint of the body is one blended skin. */
     const groups = new Map();
     meshed.forEach(({ piece, part }) => {
-      const group = groups.get(piece.ramp) || { ramp: piece.ramp, inkGroup: piece.inkGroup, solids: [] };
+      const group = groups.get(piece.ramp) || { ramp: piece.ramp, inkGroup: piece.inkGroup, solids: [], dressed: [] };
       group.solids.push(part);
+      // Garments are worn by a bone's own surface, never by a feature lying on it in another paint (a moustache).
+      if (!piece.isFeature) group.dressed.push(part.owner);
       groups.set(piece.ramp, group);
     });
 
@@ -657,7 +667,7 @@
     const isHeadBone = Uint8Array.from({ length: plan.boneCount }, (_unused, bone) => (Kit.figure.inkGroupOf(Kit.figure.inkKeyOf(plan, bone)) === headGroup ? 1 : 0));
     const layers = [];
     for (const group of groups.values()) {
-      const bones = [...new Set(group.solids.map((part) => part.owner))];
+      const bones = [...new Set(group.dressed)];
       const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
       const field = yield* Kit.sculpt.sampleSteps(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
       const layerOf = (id, ramp, mesh, offset) => ({
@@ -675,7 +685,7 @@
       layers.push(skin);
       yield undefined;
       for (const { garment, offset, host, isPaint } of specs) {
-        const own = cutOf(garment, field, frames);
+        const own = cutOf(garment, field, frames, offset + SCULPT.proud);
         const within = host ? cutOf(host, field, frames) : null;
         const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
         // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
