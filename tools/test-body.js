@@ -20,11 +20,14 @@ const FILES = [
   'seeded',
   'pack',
   'palette',
+  'surface',
+  'region',
   'rig',
   'reach',
   'dynamics',
   'body-plan',
   'body-parts',
+  'body-surface',
   'body-recipe',
   'body-edit',
   'body-store',
@@ -662,7 +665,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     same([recoloured.rebuild, recoloured.colors, recoloured.bones], [false, ['cloth'], []], 'a colour change touches no bone');
     const hatted = editor.changes(shown, bakery.bakeRecipe(editor.setSocket(start, 'headTop', before.fills.headTop ? null : 'hat')));
     same([hatted.rebuild, hatted.sockets], [true, ['headTop']], 'a part change rebuilds the skeleton');
-    same(editor.changes(shown, shown), { rebuild: false, species: false, dials: [], colors: [], sockets: [], bones: [] }, 'control: nothing changed');
+    same(editor.changes(shown, shown), { rebuild: false, species: false, dials: [], colors: [], sockets: [], bones: [], shapes: [], features: [] }, 'control: nothing changed');
   });
 
   // ---- instances and the debug renderer ----
@@ -734,4 +737,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.ok(body.debug.project(0, 0, 3, tilted, point)[1] > 100, 'the camera stands at +Z, so +Z ground is nearer and lower on the canvas');
     assert.ok(body.debug.project(0, 0, -3, tilted, point)[1] < 100, 'far ground is higher');
   });
+
+  // The character-creator cases (surface, regions, features, sided dials, the wardrobe catalogue) live in their own file.
+  require('./test-wardrobe.js')({ Kit, sandbox, test, assert });
 };

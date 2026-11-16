@@ -21,7 +21,9 @@
 (() => {
   if (typeof THREE === 'undefined') return;
   /** Rows a figure reserves in the atlas: enough for any species of a catalogue, so a species change rewrites rows in place. */
-  const RAMP_SLOTS = 8;
+  // 16, not 8: the wardrobe catalogue (kit/body-wardrobe.js) paints with 14 channels (skin, hair, eyes, eye
+  // whites, lips, marks, five garments, headwear, gear, accent).
+  const RAMP_SLOTS = 16;
   const MATERIALS_PER_DRESS = 2; // the look's toon and hull materials
   /** Floats per vertex position or normal, and per matrix. */
   const VECTOR = 3;

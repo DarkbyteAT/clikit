@@ -77,6 +77,7 @@
    * @property {number} [axis] lathe and extrude: the long axis, 0 = x, 1 = y, 2 = z
    * @property {number} [across] extrude: the axis the outline's first coordinate lies along
    * @property {number[]} at [x, y, z] offset in bone space
+   * @property {number[]} [scale] [x, y, z] stretch about `at` (an egg-shaped head, a torso deeper than wide); absent = none
    */
 
   /**
@@ -387,6 +388,20 @@
     return placeInFrame(arrays, [acrossVector, alongVector, cross(acrossVector, alongVector)], shape.at);
   };
 
+  /** Stretches built arrays about `at` by [x, y, z]; normals by the inverse stretch, then made unit again. */
+  const stretch = (arrays, scale, at) => {
+    const { positions, normals } = arrays;
+    for (let offset = 0; offset < positions.length; offset += VECTOR) {
+      for (let axis = 0; axis < VECTOR; axis++) {
+        positions[offset + axis] = at[axis] + (positions[offset + axis] - at[axis]) * scale[axis];
+        normals[offset + axis] /= scale[axis];
+      }
+      const size = Math.hypot(normals[offset], normals[offset + 1], normals[offset + 2]) || 1;
+      for (let axis = 0; axis < VECTOR; axis++) normals[offset + axis] /= size;
+    }
+    return arrays;
+  };
+
   /** Builders by shape kind. `none` has none: nothing is drawn. */
   const BUILDERS = Object.freeze({ capsule: buildCapsule, sphere: buildSphere, box: buildBox, lathe: buildLathe, extrude: buildExtrude });
 
@@ -464,17 +479,20 @@
    * sword's mount on a hand) and which children are in the bone's region (`isSameRegion`, for tapering).
    * @param {Object} plan a `BodyPlan`
    * @param {number} bone bone index
-   * @param {{isHidden?: function(number): boolean, skipChild?: function(number, number): boolean, isSameRegion?: function(number, number): boolean}} [rules]
+   * @param {{isHidden?: function(number): boolean, skipChild?: function(number, number): boolean, isSameRegion?: function(number, number): boolean, shapes?: ReadonlyArray<?Object>}} [rules]
+   *   `shapes`: per bone, the rows to describe instead of `plan.shapes` (a bake's dialled shapes)
    * @returns {BoneSurface[]} empty for a `none` shape or a hidden bone
    * @complexity O(bones in the subtree) for default capsules (to find the children), else O(shape size)
    * @example Kit.figure.describeShapes(plan, plan.boneIndex('thighLeft'))[0].shape // { kind: 'capsule', end: [0, -0.45, 0], radius: 0.05, endRadius: 0.04, at: [0, 0, 0] } with a capsule shin in the same region
    */
   const describeShapes = (plan, bone, rules = {}) => {
     if (rules.isHidden && rules.isHidden(bone)) return [];
-    const row = plan.shapes[bone] || DEFAULT_SHAPE_ROW;
+    // A bake's shapes carry its shape dials (Kit.body.shapesWithDials); the plan's are the shapes as drawn.
+    const row = (rules.shapes ? rules.shapes[bone] : plan.shapes[bone]) || DEFAULT_SHAPE_ROW;
     const describe = DESCRIBERS[row.kind];
     if (!describe) fail('describeShapes', `bone ${plan.boneNames[bone]} has a shape of kind "${row.kind}", which has no builder. Kinds: ${Object.keys(BUILDERS).join(', ')}, none.`);
-    return describe(plan, bone, row, row.at ? row.at.slice() : [0, 0, 0], rules);
+    const surfaces = describe(plan, bone, row, row.at ? row.at.slice() : [0, 0, 0], rules);
+    return row.scale ? surfaces.map((surface) => ({ ...surface, shape: { ...surface.shape, scale: row.scale.slice() } })) : surfaces;
   };
 
   /**
@@ -508,7 +526,8 @@
     const builder = BUILDERS[shape.kind];
     if (!builder) fail('buildShape', `no builder for the shape kind "${shape.kind}". Kinds: ${Object.keys(BUILDERS).join(', ')}.`);
     if (!LEVELS[level]) fail('buildShape', `no level "${level}". Levels: ${Object.keys(LEVELS).join(', ')}.`);
-    return builder(shape, level);
+    const arrays = builder(shape, level);
+    return shape.scale ? stretch(arrays, shape.scale, shape.at) : arrays;
   };
 
   // ---- matrices -------------------------------------------------------------------------------------------------------

@@ -101,7 +101,12 @@
    *   lathe:   profile [[radius, along], ...] spun about the long axis (a hat, a bottle, a torso)
    *   extrude: outline [[across, along], ...] in the plane of the long axis, and depth, its thickness (a blade, a fin)
    *   none:    nothing is drawn (a mount, a ground point)
-   * Any shape may add `at` [x, y, z], an offset in the bone's space.
+   * Any shape may add `at` [x, y, z], an offset in the bone's space, and `scale` [x, y, z], a stretch about `at`
+   * (an egg-shaped head is a sphere with a scale). A capsule may add `radius` (default girth / 2) and `taper`
+   * (the far end's radius over the near end's, default 1). A lathe's `along` and an extrude's run along the bone's
+   * positive long axis (a skirt that hangs down states negative heights); an extrude's `across` is
+   * `Kit.figure.ACROSS_AXIS` of the long axis (x for a bone along y, y otherwise) unless the shape states `across`,
+   * and its depth is the remaining axis. These are the conventions of the figure renderer (kit/figure-shapes.js). Dials may change any number in a shape (`shapesWithDials`).
    */
   const SHAPES = Object.freeze({ capsule: [], sphere: ['radius'], box: ['size'], lathe: ['profile'], extrude: ['outline', 'depth'], none: [] });
 
@@ -155,8 +160,23 @@
   const PHYSICAL_DEFAULTS = Object.freeze({ density: 1000, stiffness: 120, damping: 1 });
   const CYLINDER_AREA_FACTOR = Math.PI / 4;
 
-  /** Dial channels: what one dial does to a bone it affects. */
-  const CHANNELS = Object.freeze({ length: 0, girth: 1, size: 2 });
+  /** Dial channels: what one dial does to a bone it affects. `pitch` turns the bone about its x axis by
+   * (value - default) x amount degrees (a posture dial); the others multiply. */
+  const CHANNELS = Object.freeze({ length: 0, girth: 1, size: 2, pitch: 3 });
+  /**
+   * How a shape or feature dial changes the number it drives: `scale` multiplies it by 1 + (value - 1) x amount,
+   * as the bone channels do; `offset` adds (value - default) x amount (a tilt in degrees, a shift in metres).
+   */
+  const PARAM_MODES = Object.freeze({
+    scale: (current, value, _preset, amount) => current * (1 + (value - 1) * amount),
+    offset: (current, value, preset, amount) => current + (value - preset) * amount,
+  });
+  const DEFAULT_PARAM_MODE = 'scale';
+  /** Joins a sided dial's id and its side: 'eyeSize@left'. */
+  const SIDE_SEPARATOR = '@';
+  const SIDES = Object.freeze(['left', 'right']);
+  /** Separates the steps of a shape or feature parameter path: 'profile.2.0' is point 2's radius. */
+  const PARAM_PATH_SEPARATOR = '.';
   const { AXES, VECTOR_STRIDE, QUATERNION_STRIDE } = Kit.rig;
   /** The largest bone count a plan may have: parents are stored as Int16, with -1 for "no parent". */
   const MOST_BONES = 32767;
@@ -280,6 +300,10 @@
    *   'hover'); the role-derived ones are worked out and must not be listed
    * @property {number} [density] kilograms per cubic metre, for bones that state no `mass` (default 1000)
    * @property {Object<string, string>} [filled] socket name -> part id, written by `Kit.body.assemble`
+   * @property {Object[]} [features] surface features (eyes, a nose, a scar) placed on bones by azimuth and
+   *   elevation: `FeatureSpec` rows of kit/body-surface.js, kept as data on `spec` and laid out by that file
+   * @property {Object[]} [regions] painted areas of bones (a sleeve, a hairline, stripes): `RegionSpec` rows of
+   *   kit/body-surface.js, kept as data on `spec`
    */
 
   /**
@@ -900,12 +924,23 @@
 
   /**
    * @typedef {Object} DialEffect
+   * An effect does one of three things: a bone `channel`, a number in the bones' `shape`, or a number of a
+   * surface `feature` (kit/body-surface.js). The last two never change a bone's transform.
    * @property {string[]} [roles] affect every bone carrying ALL of these roles (['leg', 'hind'])
    * @property {string[]} [bones] affect these bones by name; names the plan lacks are skipped, so one dial table
    *   can serve several plans
-   * @property {('length'|'girth'|'size')} channel `length` stretches the bone along its long axis (moving what
-   *   hangs off it), `girth` thickens it across, `size` scales the bone and everything below it
-   * @property {number} [amount=1] how strongly the dial acts: the bone is multiplied by 1 + (value - 1) x amount
+   * @property {string} [part] with `bones`: the bones of that part wherever it is attached ('hatWide' + ['brim']
+   *   is 'headTop/brim' when the hat sits in headTop); alone: every bone of the part
+   * @property {('length'|'girth'|'size'|'pitch')} [channel] `length` stretches the bone along its long axis
+   *   (moving what hangs off it), `girth` thickens it across, `size` scales the bone and everything below it,
+   *   `pitch` leans it forwards
+   * @property {string} [shape] a path to a number in each matched bone's shape: 'radius', 'scale.2',
+   *   'profile.2.0' (the radius of profile point 2), 'at.1'
+   * @property {string} [feature] the id of a surface feature, with `param`
+   * @property {string} [param] a path to a number of that feature: 'azimuth', 'elevation', 'spacing', 'size.0'
+   * @property {('left'|'right')} [side] for a feature effect: only the copy of a pair on that side
+   * @property {('scale'|'offset')} [mode='scale'] for `shape` and `feature`: see `PARAM_MODES`
+   * @property {number} [amount=1] how strongly the dial acts: a bone is multiplied by 1 + (value - 1) x amount
    */
 
   /**
@@ -917,6 +952,12 @@
    * @property {DialEffect[]} affects what the dial does
    * @property {string} [label] what an editor calls it (default: worked out from the id)
    * @property {string} [group] the editor group it is listed under (default: from the roles it affects)
+   * @property {boolean} [sided] true for a dial that may differ left and right (an eye, an ear): `sidedDials`
+   *   turns it into one dial per side, '<id>@left' and '<id>@right'
+   * @property {string} [base] set by `sidedDials`: the id both sides share (they are drawn from it, so a rolled
+   *   body is symmetric until someone unlinks it)
+   * @property {('left'|'right')} [side] set by `sidedDials`
+   * @property {string} [twin] set by `sidedDials`: the id of the other side
    */
 
   /**
@@ -930,6 +971,10 @@
    * @property {Int16Array} opBone per operation: which bone
    * @property {Uint8Array} opChannel per operation: a `CHANNELS` value
    * @property {Float32Array} opAmount per operation
+   * @property {Array<{dial: number, bone: number, path: Array<string|number>, amount: number, mode: string}>} shapeOps
+   *   per shape operation: which dial changes which number of which bone's shape
+   * @property {Array<{dial: number, feature: string, path: Array<string|number>, amount: number, mode: string, side: ?string}>} featureOps
+   *   per feature operation: resolved against the features of an assembled body by kit/body-surface.js
    * @property {string[]} unused ids of dials that touch no bone of this plan (often a misspelt role)
    * @property {function(string): number} indexOf id -> dial index; throws naming the known dials
    */
@@ -953,21 +998,46 @@
     const where = `dials("${bodyPlan.id}")`;
     const ids = rows.map((row) => row.id);
     const operations = [];
+    const shapeOps = [];
+    const featureOps = [];
     const unused = [];
     rows.forEach((row, dial) => {
       const preset = row.default === undefined ? 1 : row.default;
       if (typeof row.id !== 'string' || !row.id) fail(where, 'every dial needs a string `id`.');
       if (ids.indexOf(row.id) !== dial) fail(where, `two dials are named "${row.id}".`);
       if (!(row.min <= preset && preset <= row.max)) fail(where, `dial "${row.id}" needs min <= default <= max, got min ${row.min}, default ${preset}, max ${row.max}.`);
-      const before = operations.length;
+      const before = operations.length + shapeOps.length;
+      let drivesFeature = false;
       (row.affects || []).forEach((effect) => {
-        if (!(effect.channel in CHANNELS)) fail(where, `dial "${row.id}" has the channel ${JSON.stringify(effect.channel)}; use one of ${Object.keys(CHANNELS).join(', ')}.`);
-        if (!effect.roles && !effect.bones) fail(where, `an effect of dial "${row.id}" names neither \`roles\` nor \`bones\`, so it would touch nothing.`);
-        const byRole = effect.roles ? bonesWithRoles(bodyPlan, roleMask(effect.roles)) : [];
-        const byName = (effect.bones || []).filter((name) => bodyPlan.boneNames.includes(name)).map((name) => bodyPlan.boneIndex(name));
-        [...new Set([...byRole, ...byName])].forEach((bone) => operations.push({ dial, bone, channel: CHANNELS[effect.channel], amount: effect.amount === undefined ? 1 : effect.amount }));
+        const amount = effect.amount === undefined ? 1 : effect.amount;
+        const mode = effect.mode === undefined ? DEFAULT_PARAM_MODE : effect.mode;
+        if ((effect.shape !== undefined || effect.feature !== undefined) && !(mode in PARAM_MODES))
+          fail(where, `dial "${row.id}" has the mode ${JSON.stringify(effect.mode)}; use one of ${Object.keys(PARAM_MODES).join(', ')}.`);
+        if (effect.feature !== undefined) {
+          if (typeof effect.param !== 'string' || !effect.param) fail(where, `the feature effect of dial "${row.id}" on "${effect.feature}" needs a \`param\` such as 'spacing'.`);
+          drivesFeature = true;
+          featureOps.push({ dial, feature: effect.feature, path: parseParamPath(effect.param), amount, mode, side: effect.side || null });
+          return;
+        }
+        if (effect.shape === undefined && !(effect.channel in CHANNELS))
+          fail(where, `dial "${row.id}" has the channel ${JSON.stringify(effect.channel)}; use one of ${Object.keys(CHANNELS).join(', ')}, or give \`shape\` or \`feature\`.`);
+        if (!effect.roles && !effect.bones && !effect.part) fail(where, `an effect of dial "${row.id}" names neither \`roles\`, \`bones\` nor \`part\`, so it would touch nothing.`);
+        const matched = bonesOfEffect(bodyPlan, effect);
+        if (effect.shape === undefined) {
+          matched.forEach((bone) => operations.push({ dial, bone, channel: CHANNELS[effect.channel], amount }));
+          return;
+        }
+        const path = parseParamPath(effect.shape);
+        matched.forEach((bone) => {
+          if (!Number.isFinite(numberAtPath(bodyPlan.shapes[bone], path)))
+            fail(
+              where,
+              `dial "${row.id}" drives shape.${effect.shape} of bone "${bodyPlan.boneNames[bone]}", whose shape ${bodyPlan.shapes[bone] ? `(${bodyPlan.shapes[bone].kind}) has no number there` : 'is the default capsule; give the bone a `shape`'}.`
+            );
+          shapeOps.push({ dial, bone, path, amount, mode });
+        });
       });
-      if (operations.length === before) unused.push(row.id);
+      if (operations.length + shapeOps.length === before && !drivesFeature) unused.push(row.id);
     });
     return Object.freeze({
       ids,
@@ -979,6 +1049,8 @@
       opBone: Int16Array.from(operations, (operation) => operation.bone),
       opChannel: Uint8Array.from(operations, (operation) => operation.channel),
       opAmount: Float32Array.from(operations, (operation) => operation.amount),
+      shapeOps,
+      featureOps,
       unused,
       indexOf(id) {
         const index = ids.indexOf(id);
@@ -1008,6 +1080,11 @@
       const value = Math.min(dialSet.max[dial], Math.max(dialSet.min[dial], values[dial]));
       const factor = 1 + (value - 1) * dialSet.opAmount[operation];
       const channel = dialSet.opChannel[operation];
+      if (channel === CHANNELS.pitch) {
+        // Turning a rotation by itself is safe: Kit.rig.turn reads the base before it writes.
+        Kit.rig.turn(out.rotation, out.rotation, bone, AXES.x, (value - dialSet.defaults[dial]) * dialSet.opAmount[operation] * DEGREES_TO_RADIANS);
+        continue;
+      }
       if (channel === CHANNELS.size) {
         out.uniform[bone] *= factor;
         continue;
@@ -1019,6 +1096,93 @@
       }
     }
     return out;
+  };
+
+  /**
+   * Splits every `sided` dial row into a left and a right row, '<id>@left' and '<id>@right': role effects gain the
+   * side's role, feature effects gain `side`. Other rows pass through unchanged. Compile the result with `dials`.
+   * @param {Object[]} rows `DialRow`s
+   * @returns {Object[]} `DialRow`s; sided rows carry `base`, `side` and `twin`
+   * @throws {Error} for an id containing '@', or a sided effect that selects bones by name or by part (a side
+   *   cannot be added to a name; use roles)
+   * @complexity O(rows x effects)
+   * @example Kit.body.sidedDials([{ id: 'earSize', sided: true, min: 0.8, max: 1.3, affects: [{ feature: 'ear', param: 'size' }] }]).map((row) => row.id) // ['earSize@left', 'earSize@right']
+   */
+  const sidedDials = (rows) =>
+    rows.flatMap((row) => {
+      if (String(row.id).includes(SIDE_SEPARATOR)) fail('sidedDials', `the dial id "${row.id}" contains '${SIDE_SEPARATOR}', which joins a sided dial and its side. Rename it.`);
+      if (!row.sided) return [row];
+      return SIDES.map((side, index) => ({
+        ...row,
+        id: `${row.id}${SIDE_SEPARATOR}${side}`,
+        base: row.id,
+        side,
+        twin: `${row.id}${SIDE_SEPARATOR}${SIDES[1 - index]}`,
+        affects: (row.affects || []).map((effect) => {
+          if (effect.feature !== undefined) return { ...effect, side };
+          if (effect.bones || effect.part || !effect.roles)
+            fail('sidedDials', `the sided dial "${row.id}" has an effect that picks bones by name or part; a sided effect picks them by \`roles\` (the side role is added) or drives a \`feature\`.`);
+          return { ...effect, roles: [...effect.roles, side] };
+        }),
+      }));
+    });
+
+  /** 'profile.2.0' -> ['profile', 2, 0]: array steps become numbers so a copy can tell lists from objects. */
+  const parseParamPath = (text) =>
+    String(text)
+      .split(PARAM_PATH_SEPARATOR)
+      .map((key) => (/^\d+$/.test(key) ? Number(key) : key));
+  /** The value at a parsed path, or undefined when a step is missing. */
+  const numberAtPath = (value, path) => path.reduce((inner, key) => (inner === null || inner === undefined ? undefined : inner[key]), value);
+
+  /** The bones a dial effect names: by roles, by name, and by name inside a part wherever that part is attached. */
+  const bonesOfEffect = (bodyPlan, effect) => {
+    const byRole = effect.roles ? bonesWithRoles(bodyPlan, roleMask(effect.roles)) : [];
+    // A part's bones are named '<socket path>/<bone>' once attached (kit/body-parts.js).
+    const prefixes = effect.part
+      ? Object.keys(bodyPlan.filled)
+          .filter((path) => bodyPlan.filled[path] === effect.part)
+          .map((path) => `${path}/`)
+      : [''];
+    const wanted = effect.part && !effect.bones ? null : effect.bones || [];
+    const byName = bodyPlan.boneNames
+      .map((name, bone) => ({ name, bone }))
+      .filter(({ name }) => prefixes.some((prefix) => name.startsWith(prefix) && (wanted === null ? !name.slice(prefix.length).startsWith('@') : wanted.includes(name.slice(prefix.length)))))
+      .map(({ bone }) => bone);
+    return [...new Set([...byRole, ...(effect.part || effect.bones ? byName : [])])];
+  };
+
+  /** A copy of a shape row deep enough to write numbers into: objects and lists are copied, numbers kept. */
+  const copyShape = (value) =>
+    Array.isArray(value) ? value.map(copyShape) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).map((key) => [key, copyShape(value[key])])) : value;
+
+  /**
+   * Every bone's shape with the shape dials applied: what a renderer draws for an individual. Bones no dial
+   * touches share the plan's own shape row; touched ones get a fresh copy, so the plan is never written.
+   * @param {BodyPlan} bodyPlan the plan the dial set was compiled against
+   * @param {DialSet} dialSet
+   * @param {ArrayLike<number>} values one per dial, clamped to each dial's range
+   * @returns {ReadonlyArray<?Object>} one per bone: a shape row, or null for the default capsule
+   * @complexity O(bones) when a shape op exists (plus the copies of touched shapes), O(1) and no allocation when none does
+   * @example
+   * const shapes = Kit.body.shapesWithDials(plan, dialSet, values);
+   * shapes[plan.boneIndex('head')].profile[2][0]   // the jaw radius this individual has
+   */
+  const shapesWithDials = (bodyPlan, dialSet, values) => {
+    if (!dialSet.shapeOps.length) return bodyPlan.shapes;
+    const shapes = [...bodyPlan.shapes];
+    const copied = new Set();
+    dialSet.shapeOps.forEach(({ dial, bone, path, amount, mode }) => {
+      if (!copied.has(bone)) {
+        shapes[bone] = copyShape(shapes[bone]);
+        copied.add(bone);
+      }
+      const value = Math.min(dialSet.max[dial], Math.max(dialSet.min[dial], values[dial]));
+      const holder = numberAtPath(shapes[bone], path.slice(0, -1));
+      const key = path[path.length - 1];
+      holder[key] = PARAM_MODES[mode](holder[key], value, dialSet.defaults[dial], amount);
+    });
+    return Object.freeze(shapes);
   };
 
   Kit.body = Object.assign(Kit.body || {}, {
@@ -1055,5 +1219,11 @@
     centerOfMass,
     dials,
     applyDials,
+    shapesWithDials,
+    sidedDials,
+    SIDE_SEPARATOR,
+    PARAM_MODES,
+    parseParamPath,
+    numberAtPath,
   });
 })();

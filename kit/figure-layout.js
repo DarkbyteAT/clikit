@@ -213,7 +213,7 @@
 
   /**
    * Lays out a bake as pieces.
-   * @param {{plan: Object, boneRamp: Int16Array, ramps: ReadonlyArray<Object>}} bake from a bakery (kit/body-recipe.js);
+   * @param {{plan: Object, boneRamp: Int16Array, ramps: ReadonlyArray<Object>, shapes?: ReadonlyArray<?Object>}} bake from a bakery (kit/body-recipe.js);
    *   a part alone works too: `{ plan: part.plan, boneRamp: new Int16Array(n).fill(-1), ramps: [ramp] }`
    * @param {{level?: string, featuresOf?: function(Object, number, ?Object): FeaturePiece[], regionOf?: RegionLookup}} [options]
    *   `level`: a key of `Kit.figure.LEVELS` (default 'high'). `featuresOf` and `regionOf` are the two extension
@@ -235,7 +235,7 @@
     const mountSuffix = `${Kit.body.SOCKET_PATH_SEPARATOR}${Kit.body.MOUNT_BONE}`;
     const isHidden = (bone) => plan.boneNames[bone].endsWith(mountSuffix);
     const inkKeys = Array.from({ length: plan.boneCount }, (_unused, bone) => inkKeyOf(plan, bone));
-    const rules = { isHidden, skipChild: (from, child) => isProp(child) !== isProp(from) || isHidden(child), isSameRegion: (bone, child) => inkKeys[bone] === inkKeys[child] };
+    const rules = { isHidden, skipChild: (from, child) => isProp(child) !== isProp(from) || isHidden(child), isSameRegion: (bone, child) => inkKeys[bone] === inkKeys[child], shapes: bake.shapes };
     const pieces = [];
     for (let bone = 0; bone < plan.boneCount; bone++) {
       const surfaces = Kit.figure.describeShapes(plan, bone, rules);

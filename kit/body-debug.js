@@ -3,10 +3,12 @@
  * person can see that a plan, a pose, an attachment or a dial does what the numbers say, and as the smallest
  * possible example of a renderer: project the world transforms, draw the bones.
  *
- * Owns:  `Kit.body.debug.project` (orthographic projection of a world point for a view angle) and
- *        `Kit.body.debug.draw` (bones as lines, bone ends, joints, socket markers).
- * Does not own: real rendering (shapes, shading, palettes: the pixel and 3D renderers read the same plan and
- *        world transforms), the canvas or its size, or posing.
+ * Owns:  `Kit.body.debug.project` (orthographic projection of a world point for a view angle),
+ *        `Kit.body.debug.draw` (bones as lines, bone ends, joints, socket markers) and
+ *        `Kit.body.debug.drawSurface` (a bake's dialled shapes as outlines, its painted regions as tinted spans
+ *        along each bone, and its surface features as marks), enough to check shapes, faces and outfits by eye.
+ * Does not own: real rendering (solids, shading, stamps: the pixel and 3D renderers read the same bake), the
+ *        canvas or its size, or posing.
  *
  * Runs in node too: `draw` only calls the 2D-context methods listed in CONTEXT_METHODS, so a test passes a
  * recorder object instead of a canvas.
@@ -141,5 +143,137 @@
     }
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { debug: { STYLE, CONTEXT_METHODS, project, draw } });
+  /** Surface drawing tunables: outline points per curve, region spans per bone, mark sizes in CSS pixels. */
+  const SURFACE_STYLE = Object.freeze({ curvePoints: 16, spansPerBone: 10, spanWidthShare: 0.4, markRadius: 2.2, outlineWidth: 1, outlineShade: 1, fillShade: 2, unpainted: '#5b6787' });
+  const FRONT_ANGLE = 0;
+
+  /** The shade of the bake's ramp `index`, or a neutral colour when there is none. */
+  const colorOf = (bake, rampIndex, shade) => {
+    const ramp = bake.ramps[rampIndex];
+    return ramp ? ramp.shades[Math.min(shade, ramp.shades.length - 1)] : SURFACE_STYLE.unpainted;
+  };
+
+  /**
+   * A shape's outline as bone-space points in the bone's XY plane (its silhouette seen from the front): enough
+   * to see a profile dial work. Allocates; this is a debug view.
+   */
+  const outlineOf = (shape, end) => {
+    const at = shape.at || [0, 0, 0];
+    const scale = shape.scale || [1, 1, 1];
+    const axisSizes = end.map(Math.abs);
+    const axis = axisSizes.indexOf(Math.max(...axisSizes));
+    const placed = (x, y, z = 0) => [at[0] + x * scale[0], at[1] + y * scale[1], at[2] + z * scale[2]];
+    /** A point at `across` sideways and `along` the positive long axis (the renderer's convention). Across is x, or y when the bone lies along x. */
+    const alongAxis = (across, along) => {
+      const point = [0, 0, 0];
+      point[axis === 0 ? 1 : 0] = across;
+      point[axis] = along;
+      return placed(...point);
+    };
+    const circle = (radius) =>
+      Array.from({ length: SURFACE_STYLE.curvePoints }, (_unused, index) =>
+        placed(Math.cos((index / SURFACE_STYLE.curvePoints) * FULL_TURN) * radius, Math.sin((index / SURFACE_STYLE.curvePoints) * FULL_TURN) * radius)
+      );
+    if (shape.kind === 'sphere') return circle(shape.radius);
+    if (shape.kind === 'box')
+      return [
+        [-1, -1],
+        [1, -1],
+        [1, 1],
+        [-1, 1],
+      ].map(([x, y]) => placed((x * shape.size[0]) / 2, (y * shape.size[1]) / 2));
+    if (shape.kind === 'lathe') return [...shape.profile.map(([radius, along]) => alongAxis(radius, along)), ...[...shape.profile].reverse().map(([radius, along]) => alongAxis(-radius, along))];
+    if (shape.kind === 'extrude') return shape.outline.map(([across, along]) => alongAxis(across, along));
+    if (shape.kind === 'capsule') {
+      const length = Math.hypot(...end) || 1;
+      const radius = shape.radius === undefined ? 0 : shape.radius;
+      const taper = shape.taper === undefined ? 1 : shape.taper;
+      // Sideways in the XY plane, across the bone; a bone along z (a foot) goes sideways along x.
+      const side = Math.hypot(end[0], end[1]) > 0 ? [-end[1] / Math.hypot(end[0], end[1]), end[0] / Math.hypot(end[0], end[1]), 0] : [1, 0, 0];
+      const edge = (sign, radiusAt, along) => placed(end[0] * along + side[0] * radiusAt * sign, end[1] * along + side[1] * radiusAt * sign, end[2] * along);
+      return length ? [edge(1, radius, 0), edge(1, radius * taper, 1), edge(-1, radius * taper, 1), edge(-1, radius, 0)] : [];
+    }
+    return [];
+  };
+
+  /** Strokes a closed polyline of bone-space points carried into the world and projected. */
+  const strokeOutline = (context, world, bone, points, view, color) => {
+    if (points.length < 2) return;
+    context.strokeStyle = color;
+    context.lineWidth = SURFACE_STYLE.outlineWidth;
+    context.beginPath();
+    points.forEach((point, index) => {
+      Kit.rig.carryPoint(world, bone, point, 0, worldPoint);
+      project(worldPoint[0], worldPoint[1], worldPoint[2], view, screenTo);
+      if (index) context.lineTo(screenTo[0], screenTo[1]);
+      else context.moveTo(screenTo[0], screenTo[1]);
+    });
+    context.closePath();
+    context.stroke();
+  };
+
+  /**
+   * Draws what a bake puts on its bones, over (or instead of) the stick figure: every bone's dialled shape as an
+   * outline in its paint colour, a row of spans along each bone tinted by the region that paints its front
+   * (none: nothing drawn, the outline shows the bone's own paint), and a dot at every placed surface feature in
+   * the colour of its first stamp layer or solid.
+   * @param {Object} context a CanvasRenderingContext2D (or a recorder with `CONTEXT_METHODS`)
+   * @param {Object} bake from a catalogue's bakery: `plan`, `shapes`, `surface`, `ramps`, `boneRamp`
+   * @param {Object} world the `out` of `Kit.body.worldTransforms` for the bake's plan
+   * @param {DebugView} view
+   * @param {{shapes?: boolean, regions?: boolean, features?: boolean}} [options] what to draw (default all)
+   * @returns {{outlines: number, spans: number, marks: number}} how many of each were drawn (for tests)
+   * @complexity O(bones x outline points + bones x spans x region nodes + features); allocates (debug only)
+   * @example Kit.body.debug.drawSurface(context, bake, world, { centerX: 120, groundY: 400, scale: 200 });
+   */
+  const drawSurface = (context, bake, world, view, { shapes = true, regions = true, features = true } = {}) => {
+    const { plan, surface } = bake;
+    const counts = { outlines: 0, spans: 0, marks: 0 };
+    const layout = Kit.body.surfaceLayout(plan);
+    for (let bone = 0; bone < plan.boneCount; bone++) {
+      const end = layout.frames[bone].end;
+      const shape = bake.shapes[bone] || { kind: 'capsule', radius: (plan.girth[bone] || 0) / 2 };
+      if (shapes && shape.kind !== 'none') {
+        strokeOutline(context, world, bone, outlineOf(shape, end), view, colorOf(bake, bake.boneRamp[bone], SURFACE_STYLE.outlineShade));
+        counts.outlines += 1;
+      }
+      if (!regions || !surface.regions[bone].length) continue;
+      // Spans up the bone's axis, each the colour of the region covering the front at its middle.
+      for (let span = 0; span < SURFACE_STYLE.spansPerBone; span++) {
+        const middle = (span + 0.5) / SURFACE_STYLE.spansPerBone;
+        const rampIndex = surface.regionAt(bone, middle, FRONT_ANGLE, 0, 0, 1);
+        if (rampIndex < 0) continue;
+        const from = [0, 1, 2].map((axis) => (end[axis] * span) / SURFACE_STYLE.spansPerBone);
+        const to = [0, 1, 2].map((axis) => (end[axis] * (span + 1)) / SURFACE_STYLE.spansPerBone);
+        Kit.rig.carryPoint(world, bone, from, 0, worldPoint);
+        project(worldPoint[0], worldPoint[1], worldPoint[2], view, screenFrom);
+        Kit.rig.carryPoint(world, bone, to, 0, worldPoint);
+        project(worldPoint[0], worldPoint[1], worldPoint[2], view, screenTo);
+        strokeLine(
+          context,
+          screenFrom,
+          screenTo,
+          colorOf(bake, rampIndex, SURFACE_STYLE.fillShade),
+          Math.max(STYLE.thinnestBone, plan.girth[bone] * world.uniform[bone] * view.scale * SURFACE_STYLE.spanWidthShare)
+        );
+        counts.spans += 1;
+      }
+    }
+    if (features)
+      surface.features.forEach((feature) => {
+        const frame = feature.frames[feature.rest] || [];
+        const rampIndex = frame.length ? frame[0].ramp : feature.ramp;
+        const shade = frame.length ? frame[frame.length > 1 ? 1 : 0].shade : SURFACE_STYLE.fillShade;
+        Kit.rig.carryPoint(world, feature.bone, feature.point, 0, worldPoint);
+        project(worldPoint[0], worldPoint[1], worldPoint[2], view, screenTo);
+        context.fillStyle = colorOf(bake, frame.length > 1 ? frame[1].ramp : rampIndex, shade);
+        context.beginPath();
+        context.arc(screenTo[0], screenTo[1], SURFACE_STYLE.markRadius, 0, FULL_TURN);
+        context.fill();
+        counts.marks += 1;
+      });
+    return counts;
+  };
+
+  Kit.body = Object.assign(Kit.body || {}, { debug: { STYLE, SURFACE_STYLE, CONTEXT_METHODS, project, draw, drawSurface } });
 })();

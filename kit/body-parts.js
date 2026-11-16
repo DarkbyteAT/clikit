@@ -3,8 +3,9 @@
  * of wings, a gem) that says which socket types it fits and may expose sockets for further parts, so a gem sits
  * on a sword that sits in a hand. Props are parts; there is no second mechanism for them.
  *
- * Owns:  `Kit.body.part` (compile a part), `Kit.body.assemble` (plan + fills -> a new plan with the parts' bones
- *        and sockets appended, type-checked), `Kit.body.canAttach` and `Kit.body.openSockets`.
+ * Owns:  `Kit.body.part` (compile a part), `Kit.body.assemble` (plan + fills -> a new plan with the parts' bones,
+ *        sockets, surface features and regions appended, type-checked), `Kit.body.canAttach` and
+ *        `Kit.body.openSockets`.
  * Does not own: the plan format, kinematics or capabilities (kit/body-plan.js: an assembled body IS a plan, so
  *        all of that works on it unchanged), nor which parts an individual wears (kit/body-recipe.js).
  *
@@ -16,6 +17,10 @@
   /** Name (after the socket path) of the bone inserted at a filled socket; a part's own bones hang from it. */
   const MOUNT_BONE = '@mount';
   const PROP_ROLE = 'prop';
+  /** In a part's features and regions, the bone of the socket the part sits in: eyes go on whatever head holds them. */
+  const HOST_BONE = '@host';
+  /** The stand-in bone of a part that is only features or regions, so `part.plan` is still a plan. */
+  const SURFACE_ONLY_BONES = Object.freeze([Object.freeze({ name: 'surface', roles: ['root'], shape: Object.freeze({ kind: 'none' }) })]);
 
   const fail = (where, message) => {
     throw new Error(`Kit.body.${where}: ${message}`);
@@ -28,8 +33,16 @@
    * @property {string} [anchor] name of one of the part's own sockets: the point of the part that sits on the
    *   host socket (a sword's grip). It is used up by attaching, so it is not a socket of the assembled body.
    *   Default: the part's origin.
-   * @property {Object[]} bones the part's bones, as `BoneSpec` rows of kit/body-plan.js
+   * @property {Object[]} bones the part's bones, as `BoneSpec` rows of kit/body-plan.js; may be empty for a part
+   *   that is only `features` and / or `regions` (a pair of eyes, a printed shirt)
    * @property {Object[]} [sockets] the part's own sockets, as `SocketSpec` rows; other parts attach here
+   * @property {Object[]} [features] surface features (kit/body-surface.js `FeatureSpec`); `bone` names one of
+   *   the part's bones, a bone of the wearer (any name the part does not have), or is omitted (or '@host') for
+   *   the bone of the socket the part sits in
+   * @property {Object[]} [regions] painted regions (kit/body-surface.js `RegionSpec`); `roles` select bones of
+   *   the whole wearer, `bones` names bones as a feature's `bone` does
+   * @property {string} [label] what an editor calls the part (default: worked out from the id)
+   * @property {string} [icon] the name of an icon an editor shows for it
    * @property {string[]} [capabilities] declared capabilities the part grants its wearer (such as 'hover')
    */
 
@@ -62,7 +75,18 @@
     if (!spec || typeof spec.id !== 'string' || !spec.id) fail('part', 'a part needs a string `id`.');
     const where = `part("${spec.id}")`;
     if (!Array.isArray(spec.fits) || !spec.fits.length) fail(where, "a part needs `fits`: the socket types it plugs into, e.g. ['grip'].");
-    const plan = Kit.body.plan({ id: spec.id, bones: spec.bones, sockets: spec.sockets, capabilities: spec.capabilities });
+    const isSurfaceOnly = Array.isArray(spec.bones) && !spec.bones.length;
+    if (isSurfaceOnly && !(spec.features || []).length && !(spec.regions || []).length) fail(where, 'a part with no bones must bring `features` or `regions`; otherwise it adds nothing.');
+    if (isSurfaceOnly && (spec.sockets || []).length) fail(where, 'a part with no bones cannot offer sockets (a socket rides on a bone).');
+    // A surface-only part still compiles to a plan (one bone that draws nothing), so it can be shown on its own.
+    const plan = Kit.body.plan({
+      id: spec.id,
+      bones: isSurfaceOnly ? SURFACE_ONLY_BONES : spec.bones,
+      sockets: spec.sockets,
+      capabilities: spec.capabilities,
+      features: spec.features,
+      regions: spec.regions,
+    });
     const anchorPosition = [0, 0, 0];
     if (spec.anchor !== undefined) {
       if (!plan.socketNames.includes(spec.anchor)) fail(where, `the anchor "${spec.anchor}" is not one of the part's sockets (${plan.socketNames.join(', ') || 'it has none'}).`);
@@ -106,13 +130,21 @@
    */
   const byDepthThenName = (first, second) => depthOf(first) - depthOf(second) || (first < second ? -1 : first > second ? 1 : 0);
 
-  /** The bones and sockets one attached part adds to a plan spec, renamed under the socket's path. */
+  /** The bones, sockets, features and regions one attached part adds to a plan spec, renamed under the socket's path. */
   const graft = (attached, socket) => {
     const prefix = `${socket.name}${PATH_SEPARATOR}`;
     const mountName = `${prefix}${MOUNT_BONE}`;
+    // A part's own bone names gain the prefix; '@host' (or no bone at all) is the bone of the socket it sits in;
+    // any other name is a bone of the wearer (a pair of trousers paints 'pelvis' and the legs).
+    const ownBones = new Set(attached.spec.bones.map((bone) => bone.name));
+    const boneOf = (name) => (name === undefined || name === HOST_BONE ? socket.bone : ownBones.has(name) ? `${prefix}${name}` : name);
+    const source = { part: attached.id, socket: socket.name };
+    const features = (attached.spec.features || []).map((feature) => ({ ...feature, bone: boneOf(feature.bone), ...source }));
+    const regions = (attached.spec.regions || []).map((region) => ({ ...region, ...(region.bones ? { bones: region.bones.map(boneOf) } : {}), ...source }));
+    if (!attached.spec.bones.length) return { bones: [], sockets: [], features, regions };
     // The mount bone carries the socket's offset and keeps the host bone's stretch out of the part: a part's
-    // bones hang from it, so "longer forearm" moves the sword without lengthening it.
-    const mount = { name: mountName, parent: socket.bone, at: socket.at || [0, 0, 0], roles: [PROP_ROLE] };
+    // bones hang from it, so "longer forearm" moves the sword without lengthening it. It draws nothing.
+    const mount = { name: mountName, parent: socket.bone, at: socket.at || [0, 0, 0], roles: [PROP_ROLE], shape: { kind: 'none' } };
     const bones = attached.spec.bones.map((bone) => ({
       ...bone,
       name: `${prefix}${bone.name}`,
@@ -122,7 +154,7 @@
       roles: [...new Set([...(bone.roles || []), PROP_ROLE])],
     }));
     const sockets = (attached.spec.sockets || []).filter((own) => own.name !== attached.spec.anchor).map((own) => ({ ...own, name: `${prefix}${own.name}`, bone: `${prefix}${own.bone}` }));
-    return { bones: [mount, ...bones], sockets };
+    return { bones: [mount, ...bones], sockets, features, regions };
   };
 
   /**
@@ -150,6 +182,8 @@
     const where = `assemble("${bodyPlan.id}")`;
     const bones = [...bodyPlan.spec.bones];
     const sockets = [...(bodyPlan.spec.sockets || [])];
+    const features = [...(bodyPlan.spec.features || [])];
+    const regions = [...(bodyPlan.spec.regions || [])];
     const filled = { ...bodyPlan.filled };
     const declared = new Set(bodyPlan.spec.capabilities || []);
     paths.forEach((path) => {
@@ -171,6 +205,8 @@
       const grafted = graft(attached, socket);
       bones.push(...grafted.bones);
       sockets.push(...grafted.sockets);
+      features.push(...grafted.features);
+      regions.push(...grafted.regions);
       (attached.spec.capabilities || []).forEach((name) => declared.add(name));
       filled[path] = partId;
     });
@@ -178,8 +214,8 @@
       .sort(byDepthThenName)
       .map((path) => `${path}=${filled[path]}`)
       .join(',');
-    return Kit.body.plan({ id: `${bodyPlan.id.split('[')[0]}[${outfit}]`, bones, sockets, capabilities: [...declared], filled });
+    return Kit.body.plan({ id: `${bodyPlan.id.split('[')[0]}[${outfit}]`, bones, sockets, capabilities: [...declared], filled, features, regions });
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { part, canAttach, openSockets, assemble, SOCKET_PATH_SEPARATOR: PATH_SEPARATOR, MOUNT_BONE, compareSocketPaths: byDepthThenName });
+  Kit.body = Object.assign(Kit.body || {}, { part, canAttach, openSockets, assemble, SOCKET_PATH_SEPARATOR: PATH_SEPARATOR, MOUNT_BONE, HOST_BONE, compareSocketPaths: byDepthThenName });
 })();

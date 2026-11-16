@@ -93,6 +93,8 @@
    * @property {Object[]} dialRows `DialRow`s, for compiling against an assembled plan
    * @property {number[]} dialMin
    * @property {number[]} dialMax
+   * @property {number[]} dialDefaults
+   * @property {number[]} dialDefaultSteps per dial: the step that decodes to the default exactly
    * @property {string[]} unusedDials dials that touch no bone of the bare plan
    * @property {string[]} colorIds
    * @property {string[]} paletteNames per colour channel: the catalogue palette it draws from
@@ -121,6 +123,10 @@
    * @property {string} species
    * @property {Object} plan the assembled `BodyPlan`: bare plan plus the parts worn
    * @property {Object} rest the proportioned rest pose (a `JointTransforms`); copy it, never write it
+   * @property {ReadonlyArray<?Object>} shapes 1 per bone of `plan`: its shape row with the shape dials applied
+   *   (null for the default capsule), from `Kit.body.shapesWithDials`
+   * @property {Object} surface the individual's surface features (placed) and painted regions, with
+   *   `regionAt(bone, along, angle, normalX, normalY, normalZ)` -> index in `ramps` or -1 (kit/body-surface.js)
    * @property {Readonly<Object<string, Object>>} colors channel -> the `Ramp` the individual uses for it
    * @property {Int16Array} boneRamp 1 per bone of `plan`: the index in `ramps` of the ramp the bone is painted
    *   with, or -1 when the bone names no paint channel or the species has no such channel
@@ -161,6 +167,8 @@
     const lineage = Kit.lineage({ nodes, traits, exclusive: ['fills'] });
     const compiledPlans = Object.fromEntries(Object.keys(plans).map((id) => [id, Kit.body.plan({ ...plans[id], id })]));
     const compiledParts = Object.fromEntries(Object.keys(parts).map((id) => [id, Kit.body.part({ ...parts[id], id })]));
+    // Features and regions are data too: check them now, not at the first bake that wears them.
+    [...Object.values(compiledPlans), ...Object.values(compiledParts)].forEach((compiled) => Kit.body.checkSurface(compiled.spec, `catalog: ${compiled.spec.fits ? 'part' : 'plan'} "${compiled.id}"`));
     const partHashes = Object.fromEntries(Object.keys(parts).map((id) => [id, fieldHash(`part${KEY_SEPARATOR}${id}`)]));
     /** @type {Map<number, string>} */
     const partByHash = new Map();
@@ -171,6 +179,21 @@
 
     /** The socket specs a part offers to further parts (its anchor is used up by attaching). */
     const offeredSockets = (partId) => (compiledParts[partId].spec.sockets || []).filter((socket) => socket.name !== compiledParts[partId].spec.anchor);
+    /** Ids of every part that fits a socket type, sorted so a seeded pick among them is stable. */
+    const partsFitting = (type) =>
+      Object.keys(compiledParts)
+        .filter((partId) => compiledParts[partId].fits.includes(type))
+        .sort();
+    /** Part id -> the names of the sockets it offers that may not be left empty. */
+    const requiredSocketsOfPart = Object.fromEntries(Object.keys(compiledParts).map((partId) => [partId, offeredSockets(partId).filter((socket) => socket.required)]));
+    // A part whose required socket nothing can fill could never be worn: say so at load.
+    Object.keys(requiredSocketsOfPart).forEach((partId) =>
+      requiredSocketsOfPart[partId].forEach((socket) => {
+        if (!partsFitting(socket.type).length)
+          fail('catalog', `the part "${partId}" has the required socket "${socket.name}" (type ${socket.type}), but no part in \`parts\` fits a ${socket.type} socket.`);
+      })
+    );
+    const anyPartRequires = Object.values(requiredSocketsOfPart).some((sockets) => sockets.length > 0);
 
     /**
      * The spec of the socket at a path, given what is already attached; null when there is no such socket.
@@ -185,6 +208,20 @@
     const socketTypeAt = (kind, fills, path) => {
       const socket = socketSpecAt(kind, fills, path);
       return socket ? socket.type : null;
+    };
+
+    // ---- dial steps ----
+
+    /**
+     * The value of a dial step. The step nearest the default decodes to the default itself, so "as drawn" (a
+     * multiplier of exactly 1, a tilt of exactly 0) is reachable although 255 even steps rarely land on it.
+     */
+    const dialValueOfStep = (kind, dial, step) =>
+      step === kind.dialDefaultSteps[dial] ? kind.dialDefaults[dial] : kind.dialMin[dial] + (step * (kind.dialMax[dial] - kind.dialMin[dial])) / DIAL_STEPS;
+    /** The nearest step to a value, after clamping the value into the dial's range. */
+    const dialStepOf = (kind, dial, value) => {
+      const span = kind.dialMax[dial] - kind.dialMin[dial];
+      return span > 0 ? Math.round(Kit.math.clamp((value - kind.dialMin[dial]) / span, 0, 1) * DIAL_STEPS) : 0;
     };
 
     // ---- compiling a species ----
@@ -229,8 +266,9 @@
       const definition = lineage.resolve(id).values;
       const plan = compiledPlans[definition.plan];
       if (!plan) fail(where, `names the plan ${JSON.stringify(definition.plan)}, which is not in \`plans\`. Plans: ${Object.keys(compiledPlans).join(', ')}.`);
-      const dialIds = Object.keys(definition.dials || {});
-      const dialRows = dialIds.map((dialId) => ({ ...definition.dials[dialId], id: dialId }));
+      // A sided dial becomes two, '<id>@left' and '<id>@right', drawn from one field so a roll is symmetric.
+      const dialRows = Kit.body.sidedDials(Object.keys(definition.dials || {}).map((dialId) => ({ ...definition.dials[dialId], id: dialId })));
+      const dialIds = dialRows.map((row) => row.id);
       const dialSet = Kit.body.dials(plan, dialRows);
       const colorIds = Object.keys(definition.colors || {});
       const paletteNames = colorIds.map((channel) => definition.colors[channel]);
@@ -256,8 +294,11 @@
         dialRows,
         dialMin: dialRows.map((row) => row.min),
         dialMax: dialRows.map((row) => row.max),
+        dialDefaults: dialRows.map((row) => (row.default === undefined ? 1 : row.default)),
+        /** @type {number[]} per dial: the step its default falls on, which decodes to the default exactly */
+        dialDefaultSteps: [],
         // One seeded field per dial and per colour channel: seed in, a number in [0, 1) out.
-        dialDraws: dialRows.map((row) => Kit.seeded.field(`${KINDS.dial}${KEY_SEPARATOR}${row.id}`, row.shape === undefined ? DEFAULT_SHAPE : row.shape)),
+        dialDraws: dialRows.map((row) => Kit.seeded.field(`${KINDS.dial}${KEY_SEPARATOR}${row.base || row.id}`, row.shape === undefined ? DEFAULT_SHAPE : row.shape)),
         unusedDials: dialSet.unused,
         colorIds,
         paletteNames,
@@ -265,9 +306,12 @@
         colorDraws: colorIds.map((channel) => Kit.seeded.field(`${KINDS.color}${KEY_SEPARATOR}${channel}`)),
         fillFields: [],
         fillPaths: [],
+        /** @type {string[]} the bare plan's required sockets */
+        requiredTop: [],
         /** @type {Map<number, string>} field hash -> key, for decoding: dials, colours, declared fills and every bare socket */
         keyByHash: new Map(),
       };
+      kind.dialDefaultSteps = kind.dialDefaults.map((preset, dial) => dialStepOf(kind, dial, preset));
       kind.fillFields = compileFills(where, definition.fills || {});
       kind.fillPaths = kind.fillFields.map((field) => field.path);
       checkFills(where, kind);
@@ -279,6 +323,15 @@
           if (!field || !field.options.length || field.options.some((option) => !option.part))
             fail(where, `the socket "${socket.name}" is required, so fills.${socket.name} must offer at least one part and no '${NO_PART}'.`);
         });
+      // A declared nested fill for a part's required socket may not offer 'none' either.
+      kind.fillFields.forEach(({ path, options }) => {
+        const cut = path.lastIndexOf(SOCKET_PATH_SEPARATOR);
+        if (cut < 0 || !options.some((option) => !option.part)) return;
+        const parentField = kind.fillFields.find((field) => field.path === path.slice(0, cut));
+        const requiredBy = parentField.options.find((option) => option.part && requiredSocketsOfPart[option.part].some((socket) => socket.name === path.slice(cut + 1)));
+        if (requiredBy) fail(where, `fills.${path} offers '${NO_PART}', but the part "${requiredBy.part}" marks that socket required.`);
+      });
+      kind.requiredTop = (plan.spec.sockets || []).filter((socket) => socket.required).map((socket) => socket.name);
       const keys = [
         ...dialIds.map((dialId) => `${KINDS.dial}${KEY_SEPARATOR}${dialId}`),
         ...colorIds.map((channel) => `${KINDS.color}${KEY_SEPARATOR}${channel}`),
@@ -326,13 +379,6 @@
     };
 
     // ---- recipe -> individual ----
-
-    const dialValueOfStep = (kind, dial, step) => kind.dialMin[dial] + (step * (kind.dialMax[dial] - kind.dialMin[dial])) / DIAL_STEPS;
-    /** The nearest step to a value, after clamping the value into the dial's range. */
-    const dialStepOf = (kind, dial, value) => {
-      const span = kind.dialMax[dial] - kind.dialMin[dial];
-      return span > 0 ? Math.round(Kit.math.clamp((value - kind.dialMin[dial]) / span, 0, 1) * DIAL_STEPS) : 0;
-    };
 
     /** Drops fills whose socket no longer exists or no longer fits (after a parent was swapped) and orders the rest. */
     const canonicalFills = (kind, fills) => {
@@ -448,6 +494,33 @@
       return individual;
     };
 
+    /**
+     * Fills every required socket left empty, at any depth: a roll or an override may put a part with a required
+     * socket somewhere no fill was declared for (a lantern needs its flame). The part is the seeded pick among
+     * the declared options for that path, else among every catalogue part that fits, so the result depends only
+     * on the seed and the overrides.
+     * @complexity O(filled sockets x required sockets of their parts); nothing at all when no part requires anything
+     */
+    const fillRequiredSockets = (kind, individual) => {
+      if (!anyPartRequires && !kind.requiredTop.length) return;
+      let added = false;
+      const ensure = (path, type) => {
+        if (!individual.fills[path]) {
+          const declared = kind.fillFields.find((field) => field.path === path);
+          const options = declared ? declared.options.filter((option) => option.part) : partsFitting(type).map((part) => ({ part, weight: 1 }));
+          const chosen = Kit.seeded.pick(options, seedUnit(individual.seed, fieldHash(`${KINDS.fill}${KEY_SEPARATOR}${path}`)));
+          if (!chosen) return;
+          individual.fills[path] = chosen.part;
+          added = true;
+        }
+        requiredSocketsOfPart[individual.fills[path]].forEach((socket) => ensure(`${path}${SOCKET_PATH_SEPARATOR}${socket.name}`, socket.type));
+      };
+      kind.requiredTop.forEach((name) => ensure(name, socketTypeAt(kind, {}, name)));
+      Object.keys(individual.fills).forEach((path) => requiredSocketsOfPart[individual.fills[path]].forEach((socket) => ensure(`${path}${SOCKET_PATH_SEPARATOR}${socket.name}`, socket.type)));
+      // Keep fills in canonical order (the hash walks them in order).
+      if (added) individual.fills = canonicalFills(kind, individual.fills);
+    };
+
     /** Shared by resolve, validate and normalize: checks the envelope, derives, applies overrides. */
     const build = (recipe, report) => {
       const blocked = (problem) => {
@@ -473,6 +546,7 @@
       const kind = kinds.get(recipe.species);
       const individual = derive(kind, recipe.seed);
       const overrides = recipe.overrides && Object.keys(recipe.overrides).length ? applyOverrides(kind, recipe.overrides, individual, report) : {};
+      fillRequiredSockets(kind, individual);
       return { kind, individual, overrides };
     };
 
@@ -724,13 +798,17 @@
         }
         const kind = species(individual.species);
         const { plan, dialSet } = outfitOf(kind, individual.fills);
+        const shapes = Kit.body.shapesWithDials(plan, dialSet, individual.dials);
+        const ramps = Object.freeze(kind.colorIds.map((_channel, index) => kind.palettes[index][individual.colors[index]]));
         const fresh = Object.freeze({
           hash: key,
           species: kind.id,
           plan,
           rest: Kit.body.applyDials(plan, dialSet, individual.dials, Kit.body.createPose(plan)),
+          shapes,
+          surface: Kit.body.surfaceOf(plan, shapes, dialSet, individual.dials, kind.colorIds, ramps),
           colors: Object.freeze(Object.fromEntries(kind.colorIds.map((channel, index) => [channel, kind.palettes[index][individual.colors[index]]]))),
-          ramps: Object.freeze(kind.colorIds.map((_channel, index) => kind.palettes[index][individual.colors[index]])),
+          ramps,
           // Per bone: which of the individual's ramps paints it. Indices, not colours: the shaders are palette-indexed.
           boneRamp: Int16Array.from(plan.bonePaint, (paint) => (paint ? kind.colorIds.indexOf(plan.paintChannels[paint - 1]) : -1)),
           individual,

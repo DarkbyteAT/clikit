@@ -9,6 +9,8 @@
  *        from a few recipes, with the number of bakes that crowd cost (it must equal the number of recipes).
  *        (3) instances moved per frame by Kit.motion: milliseconds per frame for the same crowd walking (and
  *        the fish swimming) at each level of detail, and the heap growth per frame when run with --expose-gc.
+ *        from a few recipes, with the number of bakes that crowd cost (it must equal the number of recipes);
+ *        (3) editor calls as a slider drag makes them: nanoseconds per schema, per edit and per re-bake.
  * Does not own: regression tracking against a baseline (tools/bench.js has rows for the same hot paths), or
  *        the code being measured (kit/*.js, loaded into a node sandbox exactly as the unit tests do).
  *
@@ -31,11 +33,14 @@ const KIT_FILES = [
   'seeded',
   'pack',
   'palette',
+  'surface',
+  'region',
   'rig',
   'reach',
   'dynamics',
   'body-plan',
   'body-parts',
+  'body-surface',
   'body-recipe',
   'body-edit',
   'body-store',
@@ -43,9 +48,10 @@ const KIT_FILES = [
   'motion',
   'gait',
   'swim',
+  'body-wardrobe',
 ];
 /** Sizes of the two measurements, as the brief states them. */
-const SIZES = { recipes: 10000, instances: 500, distinctRecipes: 20, frames: 120, rounds: 7, tableSeed: 7 };
+const SIZES = { recipes: 10000, instances: 500, distinctRecipes: 20, frames: 120, rounds: 7, tableSeed: 7, editSteps: 2000 };
 const SPECIES_TABLE = [
   { species: 'human', weight: 4 },
   { species: 'elf', weight: 2 },
@@ -121,6 +127,55 @@ const measureRecipes = (Kit, catalog) => {
     heapPerIndividual,
     distinctLooks,
   };
+};
+
+/**
+ * Measurement 3: what one slider step costs a character editor: the schema it rebuilds, the edit itself, and the
+ * bake a renderer asks for afterwards (every step is a new dial value, so every bake is a cache miss).
+ * @param {Object} Kit
+ * @param {Object} catalog
+ * @param {{species: string, dial: string, channel: string, socket: string, part: ?string}} target what to edit
+ * @returns {{schema: number, setDial: number, setColor: number, setSocket: number, bake: number}} nanoseconds per call
+ */
+const measureEditor = (Kit, catalog, target) => {
+  const editor = Kit.body.editor(catalog);
+  const bakery = catalog.bakery({ capacity: 4 });
+  const recipe = { species: target.species, seed: SIZES.tableSeed, overrides: {} };
+  const control = editor.schema(recipe).dials.find((dial) => dial.id === target.dial);
+  const calls = SIZES.editSteps;
+  const perCall = (milliseconds) => Math.round((milliseconds * NANOSECONDS_PER_MILLISECOND) / calls);
+  // A drag sweeps the slider across its range, one step per call.
+  const valueAt = (step) => control.min + ((control.max - control.min) * (step % Kit.body.DIAL_STEPS)) / Kit.body.DIAL_STEPS;
+  let sink = 0;
+  const timings = {
+    schema: fastest(SIZES.rounds, () => {
+      for (let step = 0; step < calls; step++) sink += editor.schema(recipe).dials.length;
+    }),
+    setDial: fastest(SIZES.rounds, () => {
+      for (let step = 0; step < calls; step++) sink += Object.keys(editor.setDial(recipe, target.dial, valueAt(step)).overrides).length;
+    }),
+    setColor: fastest(SIZES.rounds, () => {
+      for (let step = 0; step < calls; step++) sink += Object.keys(editor.setColor(recipe, target.channel, step % 2).overrides).length;
+    }),
+    setSocket: fastest(SIZES.rounds, () => {
+      for (let step = 0; step < calls; step++) sink += Object.keys(editor.setSocket(recipe, target.socket, step % 2 ? target.part : null).overrides).length;
+    }),
+    bake: fastest(SIZES.rounds, () => {
+      for (let step = 0; step < calls; step++) sink += bakery.bakeRecipe(editor.setDial(recipe, target.dial, valueAt(step))).plan.boneCount;
+    }),
+  };
+  if (!Number.isFinite(sink)) throw new Error('bench-body: editor measurement produced nothing.');
+  return Object.fromEntries(Object.keys(timings).map((name) => [name, perCall(timings[name])]));
+};
+
+/** Prints one editor measurement. */
+const printEditor = (title, timings) => {
+  console.log(`\n3. ${title}: ${SIZES.editSteps} calls each, one slider step per call`);
+  console.log(`   schema    ${String(timings.schema).padStart(7)} ns   (every dial, colour and socket as data)`);
+  console.log(`   setDial   ${String(timings.setDial).padStart(7)} ns   (a new value, normalised)`);
+  console.log(`   setColor  ${String(timings.setColor).padStart(7)} ns`);
+  console.log(`   setSocket ${String(timings.setSocket).padStart(7)} ns`);
+  console.log(`   setDial + bake ${String(timings.bake).padStart(7)} ns   (the edit, then the renderer's new bake: a cache miss)`);
 };
 
 /** Measurement 2: a crowd of instances from a few recipes, posed and transformed every frame. */
@@ -266,6 +321,8 @@ function main() {
     console.log(`   detail ${detail}  ${moved.perFrame.toFixed(3)} ms per frame (${((moved.perFrame / (FRAME_SECONDS * 1000)) * 100).toFixed(1)}% of a 60 fps frame), ${heap}`);
     console.log(`             ${note}; ${moved.walkers} walking, ${moved.swimmers} swimming`);
   });
+  printEditor('editor on the sample human', measureEditor(Kit, catalog, { species: 'human', dial: 'legLength', channel: 'cloth', socket: 'headTop', part: 'hat' }));
+  printEditor('editor on the wardrobe person (46 dials, 14 channels, 21 sockets, a face)', measureEditor(Kit, Kit.body.catalog(Kit.body.wardrobe.CATALOG), { species: 'person', dial: 'jaw', channel: 'skin', socket: 'hat', part: 'beanie' }));
 }
 
 if (require.main === module) main();

@@ -62,15 +62,19 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [seeded.js](#seededjs) (7) - Kit seeded: values that depend only on (seed, field name), not on how many values were read before them.
 - [pack.js](#packjs) (4) - Kit pack: small records as bytes, and bytes as text.
 - [palette.js](#palettejs) (14) - Kit palette: colour ramps as data.
+- [surface.js](#surfacejs) (8) - Kit surface: where things sit on the surface of a simple solid.
+- [region.js](#regionjs) (4) - Kit region: areas of a surface as data.
 - [rig.js](#rigjs) (11) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
 - [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
 - [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
 - [body-plan.js](#body-planjs) (0) - Kit body plan: the skeleton of any kind of thing (a biped, a fish, a sword) compiled from data into flat typed arrays: a joint hierarchy, ty
 - [body-parts.js](#body-partsjs) (0) - Kit body parts: things that plug into sockets.
+- [body-surface.js](#body-surfacejs) (0) - Kit body surface: what is drawn ON a body's bones rather than as bones.
 - [body-recipe.js](#body-recipejs) (0) - Kit body recipe: an individual as three small things, `{ species, seed, overrides }`, and everything needed to turn that into a body and bac
 - [body-edit.js](#body-editjs) (0) - Kit body edit: everything a character editor needs from a catalogue, with no editor in it.
 - [body-store.js](#body-storejs) (0) - Kit body store: many body instances as columns - where each is, which way it faces, how far through its movement cycle it is, how much detai
 - [body-samples.js](#body-samplesjs) (0) - Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a one-bone sword with grip and gem soc
+- [body-wardrobe.js](#body-wardrobejs) (0) - Kit body wardrobe: an original, generic humanoid catalogue for a character creator, as data.
 - [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
 - [body-gallery.js](#body-galleryjs) (0) - Kit body gallery: the `bodies` screen (`Kit.play('bodies')`).
 - [look-settings.js](#look-settingsjs) (12) - Kit look settings: the look as data and small pure functions.
@@ -87,6 +91,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [gait.js](#gaitjs) (17) - Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages.
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
+- [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -6388,6 +6393,229 @@ _Undocumented: add a JSDoc block in the source._
   - `retone` *function(number): void* - rebuild every loaded block at a new tone count
   - `colorAt` *function(number, number): number[]* - (row, column) -> [red, green, blue]
 
+## surface.js
+
+> Kit surface: where things sit on the surface of a simple solid. A solid is a primitive described as data
+> (capsule, sphere, box, lathe, extrude) in its own local frame; this module answers "how far is this point from
+> its surface", "where does a ray from its centre at this azimuth and elevation leave it, and which way does the
+> surface face there", and "what are the along / around coordinates of a point", which is what a face feature,
+> a decal, a pattern or a sticker needs, whatever it is stuck on.
+>
+> Owns:  `Kit.surface.distance` (an approximate signed distance per primitive kind), `place` (azimuth and
+>        elevation -> surface point, normal and up tangent), `pair` (two mirrored placements), `along` (the
+>        along / around / height coordinates of a point), `ellipse` (an outline polygon for stamps), and the
+>        `KINDS` and `AROUND` tables.
+> Does not own: what the solids belong to (kit/body-surface.js puts features on bones), drawing, or the region
+>        predicates evaluated at those coordinates (kit/region.js).
+>
+> The frame: a solid lives in a space whose long axis is `axis` (0 = x, 1 = y, 2 = z) and whose far end is `end`
+> [x, y, z] (a capsule runs from the origin to `end`; a lathe's profile and an extrude's outline run along the
+> positive long axis, as kit/figure-shapes.js builds them: a skirt hanging down states negative heights). Azimuth turns about +Y from +Z towards +X; elevation rises towards +Y.
+> Every primitive may add `at` (an offset) and `scale` ([x, y, z], about `at`).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.surface.KINDS`
+
+Signed distance per primitive kind, from a point already moved into the primitive's own space (offset and
+scale undone). Each takes (shape, frame, axis, direction, x, y, z). Exact for sphere, box and capsule; the
+lathe and extrude are exact in their 2D section and good enough to bisect on.
+
+### `Kit.surface.AROUND`
+
+Which two axes the around-angle is measured in, per long axis: [front, side]. Angle 0 faces the front axis
+and grows towards the side axis. A bone along y or x faces +z; a bone along z (a forward-pointing head or
+tail) faces +y, its top.
+
+### `Kit.surface.distance(shape, frame, x, y, z)`
+
+The approximate signed distance from a point to a solid's surface: negative inside, positive outside.
+
+- `shape` *?Object* - `{ kind, ...fields, at?, scale? }`; null means a capsule along the frame
+- `frame` *SurfaceFrame*
+- `x` *number* - point in the solid's space, metres
+- `y` *number*
+- `z` *number*
+
+**Returns** *number* metres (Infinity for `none`)
+
+**Complexity** O(1) for sphere, box and capsule; O(points) for a lathe or extrude
+
+```js
+Kit.surface.distance({ kind: 'sphere', radius: 0.1 }, { end: [0, 0.2, 0] }, 0, 0.1, 0) // -0.1
+```
+
+### `Kit.surface.place(shape, frame, azimuth, elevation)`
+
+Where a ray from the solid's centre at an azimuth and elevation leaves the solid: the point, the outward
+normal there, and the tangent closest to +Y. This is how a face feature finds its spot on any head shape:
+change the head's profile and the eyes follow the new surface.
+
+- `shape` *?Object* - as `distance`
+- `frame` *SurfaceFrame*
+- `azimuth` *number* - degrees about +Y from +Z (the front) towards +X (the solid's left)
+- `elevation` *number* - degrees above the centre, towards +Y
+
+**Returns** *?Placement* null for `none`, or when the ray starts outside the solid (a thin extrude seen edge-on)
+
+**Complexity** O(cost of `distance` x about 40): a few microseconds for a lathe; call it when a shape changes, not per frame
+
+```js
+const eye = Kit.surface.place({ kind: 'sphere', radius: 0.1 }, { end: [0, 0.2, 0] }, 30, 5);
+eye.point   // about [0.05, 0.009, 0.086]
+```
+
+### `Kit.surface.pair(azimuth, spacing)`
+
+The two azimuths of a mirrored pair: `spacing` degrees apart, centred on `azimuth`. The first is the one on
+the solid's left (+X), the second its mirror on the right.
+
+- `azimuth` *number* - degrees; 0 for a pair centred on the front
+- `spacing` *number* - degrees between the two
+
+**Returns** *number[]* [left, right] in degrees
+
+**Complexity** O(1)
+
+```js
+Kit.surface.pair(0, 50) // [25, -25]
+```
+
+### `Kit.surface.along(frame, x, y, z, out = [0, 0])`
+
+The coordinates of a point that region predicates read: how far along the solid's long axis it is (0 at the
+origin, 1 at `end`), the angle around that axis (radians, 0 at the front axis of `AROUND`, growing towards
+its side axis).
+
+- `frame` *SurfaceFrame*
+- `x` *number* - point in the solid's space
+- `y` *number*
+- `z` *number*
+- `[out]` *number[]* - receives [along, angle]; a new array when omitted
+
+**Returns** *number[]* `out`: along in [0, 1] (clamped), angle in (-pi, pi]
+
+**Complexity** O(1)
+
+```js
+Kit.surface.along({ end: [0, -0.4, 0] }, 0.05, -0.2, 0) // [0.5, ~1.571]: half-way down, at the left side
+```
+
+### `Kit.surface.ellipse(centreU, centreV, radiusU, radiusV, points = DEFAULT_ELLIPSE_POINTS, { from = 0, to = 360 } = {})`
+
+An ellipse as an outline polygon, for stamps drawn as data (an eye, a pupil, a freckle).
+
+- `centreU` *number*
+- `centreV` *number*
+- `radiusU` *number*
+- `radiusV` *number*
+- `[points=12]` *number*
+- `[arc]` *{from?: number, to?: number}* - degrees of the arc to keep (default the whole ellipse), for a lid or a smile
+
+**Returns** *number[][]* [[u, v], ...] counter-clockwise
+
+**Complexity** O(points)
+
+```js
+Kit.surface.ellipse(0, 0, 1, 0.6) // an almond-ish eye white
+```
+
+### `Kit.surface.polygonDistance(points, u, v)`
+
+Signed distance from a point to a closed 2D polygon, negative inside (even-odd inside test).
+
+- `points` *ReadonlyArray\<number[]\>* - [[u, v], ...] in order; the last joins the first
+- `u` *number* - the point
+- `v` *number*
+
+**Returns** *number* same units as the points
+
+**Complexity** O(points) time, no allocation
+
+```js
+Kit.surface.polygonDistance([[0, 0], [1, 0], [0, 1]], 0.2, 0.2) // -0.2
+```
+
+### Types
+
+- **SurfaceFrame**
+  - `end` *number[]* - [x, y, z] the far end of the solid's long axis in its own space (a bone's tail)
+  - `[axis]` *number* - the long axis, 0 = x, 1 = y, 2 = z (default: the largest component of `end`)
+  - `[girth]` *number* - thickness for a capsule that states no radius, metres (default 0.06)
+- **Placement**
+  - `point` *number[]* - [x, y, z] on the surface, in the solid's space
+  - `normal` *number[]* - unit [x, y, z], pointing out of the solid
+  - `up` *number[]* - unit [x, y, z] in the surface's tangent plane, as close to +Y as the surface allows (a stamp's v axis); the u axis is up x normal
+
+## region.js
+
+> Kit region: areas of a surface as data. A region is a small tree of predicates over the coordinates of a
+> surface point: how far along its solid it is (`s`, 0 to 1), the angle around the solid's long axis (radians,
+> 0 at the front), and the outward normal. Bands, stripes, checks, wavy edges and facing tests combine with
+> union, intersect, mask and not. A sleeve is "s below 0.6"; a hairline is "s above a line that is low at the
+> back and high at the front, with a fringe"; a belly patch is "facing forward and down".
+>
+> Owns:  `Kit.region.compile` (tree -> a test function, checked once), `Kit.region.at` (which of several
+>        painted layers covers a point: the topmost wins) and the `OPS` table (one row per predicate).
+> Does not own: where the coordinates come from (kit/surface.js `along` works them out for a primitive; a body
+>        bone's are in kit/body-surface.js), what a layer paints, or drawing.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.region.OPS`
+
+The predicates, name -> (argument, compile) -> test. Adding a predicate means adding a row.
+  all:       true                                  every point
+  band:      { s?: [from, to], angle?: [from, to] } s within a range and / or angle within degrees (wraps)
+  facing:    { toward: [x, y, z], above: number }   normal . toward >= above (above in -1..1)
+  stripe:    { along: 's'|'angle', count, duty?, phase? }  `count` stripes; `duty` the share painted (0.5)
+  checker:   { s: count, angle: count }            alternating cells (scales, a harlequin knit)
+  edge:      { front, back, jag?, count?, below? }   s above a line that runs from `front` (at angle 0) to
+             `back` (at the back), plus jag x sin(count x angle); `below: true` keeps the other side
+  union:     [region, ...]                         in any
+  intersect: [region, ...]                         in all
+  mask:      { keep: region, cut: region }         in keep and not in cut
+  not:       region
+
+### `Kit.region.NONE`
+
+`at` returns this when no layer covers the point.
+
+### `Kit.region.compile(region)`
+
+Turns a region tree into a test function. Every node is checked here, so a mistake in a content table is
+reported at load, naming the predicate.
+
+- `region` *Object* - one-key object `{ <op>: argument }` per `OPS`
+
+**Returns** *RegionTest*
+
+**Complexity** O(nodes) to compile; the test is O(nodes) per point, no allocation
+
+```js
+const sleeve = Kit.region.compile({ band: { s: [0, 0.6] } });
+sleeve(0.3, 0, 0, 0, 1) // true
+```
+
+### `Kit.region.at(layers, along, angle, normalX, normalY, normalZ)`
+
+Which of several layers covers a point: the last one (the topmost) whose test passes.
+
+- `layers` *ReadonlyArray\<{test: RegionTest}\>* - in paint order, bottom first
+- `along` *number* - s, 0 to 1
+- `angle` *number* - radians, 0 at the front
+- `normalX` *number*
+- `normalY` *number*
+- `normalZ` *number*
+
+**Returns** *number* the layer's index, or -1 (`NONE`) when none covers the point
+
+**Complexity** O(layers x nodes) per point, no allocation; a renderer calls it per vertex or texel at bake time, not per frame
+
+```js
+Kit.region.at([{ test: skinTest }, { test: sleeveTest }], 0.3, 0, 0, 0, 1) // 1
+```
+
 ## rig.js
 
 > Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform
@@ -6975,6 +7203,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[capabilities]` *string[]* - declared capabilities (rows of `CAPABILITIES` without a role, such as 'hover'); the role-derived ones are worked out and must not be listed
   - `[density]` *number* - kilograms per cubic metre, for bones that state no `mass` (default 1000)
   - `[filled]` *Object\<string, string\>* - socket name -> part id, written by `Kit.body.assemble`
+  - `[features]` *Object[]* - surface features (eyes, a nose, a scar) placed on bones by azimuth and elevation: `FeatureSpec` rows of kit/body-surface.js, kept as data on `spec` and laid out by that file
+  - `[regions]` *Object[]* - painted areas of bones (a sleeve, a hairline, stripes): `RegionSpec` rows of kit/body-surface.js, kept as data on `spec`
 - **BodyPlan**
   - `id` *string*
   - `spec` *BodyPlanSpec* - the data it was compiled from, so a plan can be extended and recompiled
@@ -7012,11 +7242,17 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `boneIndex` *function(string): number* - name -> index; throws naming the known bones
   - `socketIndex` *function(string): number* - name -> index; throws naming the known sockets
   - `countOf` *function(string): number* - capability name -> count (0 when the plan lacks it)
-- **DialEffect**
+- **DialEffect** - An effect does one of three things: a bone `channel`, a number in the bones' `shape`, or a number of a surface `feature` (kit/body-surface.js).
   - `[roles]` *string[]* - affect every bone carrying ALL of these roles (['leg', 'hind'])
   - `[bones]` *string[]* - affect these bones by name; names the plan lacks are skipped, so one dial table can serve several plans
-  - `channel` *('length'\|'girth'\|'size')* - `length` stretches the bone along its long axis (moving what hangs off it), `girth` thickens it across, `size` scales the bone and everything below it
-  - `[amount=1]` *number* - how strongly the dial acts: the bone is multiplied by 1 + (value - 1) x amount
+  - `[part]` *string* - with `bones`: the bones of that part wherever it is attached ('hatWide' + ['brim'] is 'headTop/brim' when the hat sits in headTop); alone: every bone of the part
+  - `[channel]` *('length'\|'girth'\|'size'\|'pitch')* - `length` stretches the bone along its long axis (moving what hangs off it), `girth` thickens it across, `size` scales the bone and everything below it, `pitch` leans it forwards
+  - `[shape]` *string* - a path to a number in each matched bone's shape: 'radius', 'scale.2', 'profile.2.0' (the radius of profile point 2), 'at.1'
+  - `[feature]` *string* - the id of a surface feature, with `param`
+  - `[param]` *string* - a path to a number of that feature: 'azimuth', 'elevation', 'spacing', 'size.0'
+  - `[side]` *('left'\|'right')* - for a feature effect: only the copy of a pair on that side
+  - `[mode='scale']` *('scale'\|'offset')* - for `shape` and `feature`: see `PARAM_MODES`
+  - `[amount=1]` *number* - how strongly the dial acts: a bone is multiplied by 1 + (value - 1) x amount
 - **DialRow**
   - `id` *string* - name of the dial ('height', 'legLength')
   - `min` *number* - smallest value; a dial is a multiplier, so 1 means "as the plan was drawn"
@@ -7025,6 +7261,10 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `affects` *DialEffect[]* - what the dial does
   - `[label]` *string* - what an editor calls it (default: worked out from the id)
   - `[group]` *string* - the editor group it is listed under (default: from the roles it affects)
+  - `[sided]` *boolean* - true for a dial that may differ left and right (an eye, an ear): `sidedDials` turns it into one dial per side, '<id>@left' and '<id>@right'
+  - `[base]` *string* - set by `sidedDials`: the id both sides share (they are drawn from it, so a rolled body is symmetric until someone unlinks it)
+  - `[side]` *('left'\|'right')* - set by `sidedDials`
+  - `[twin]` *string* - set by `sidedDials`: the id of the other side
 - **DialSet**
   - `ids` *string[]* - dial index -> id
   - `count` *number*
@@ -7035,6 +7275,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `opBone` *Int16Array* - per operation: which bone
   - `opChannel` *Uint8Array* - per operation: a `CHANNELS` value
   - `opAmount` *Float32Array* - per operation
+  - `shapeOps` *Array\<{dial: number, bone: number, path: Array\<string\|number\>, amount: number, mode: string}\>* - per shape operation: which dial changes which number of which bone's shape
+  - `featureOps` *Array\<{dial: number, feature: string, path: Array\<string\|number\>, amount: number, mode: string, side: ?string}\>* - per feature operation: resolved against the features of an assembled body by kit/body-surface.js
   - `unused` *string[]* - ids of dials that touch no bone of this plan (often a misspelt role)
   - `indexOf` *function(string): number* - id -> dial index; throws naming the known dials
 
@@ -7044,8 +7286,9 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 > of wings, a gem) that says which socket types it fits and may expose sockets for further parts, so a gem sits
 > on a sword that sits in a hand. Props are parts; there is no second mechanism for them.
 >
-> Owns:  `Kit.body.part` (compile a part), `Kit.body.assemble` (plan + fills -> a new plan with the parts' bones
->        and sockets appended, type-checked), `Kit.body.canAttach` and `Kit.body.openSockets`.
+> Owns:  `Kit.body.part` (compile a part), `Kit.body.assemble` (plan + fills -> a new plan with the parts' bones,
+>        sockets, surface features and regions appended, type-checked), `Kit.body.canAttach` and
+>        `Kit.body.openSockets`.
 > Does not own: the plan format, kinematics or capabilities (kit/body-plan.js: an assembled body IS a plan, so
 >        all of that works on it unchanged), nor which parts an individual wears (kit/body-recipe.js).
 >
@@ -7057,8 +7300,12 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `id` *string* - name of the part ('sword')
   - `fits` *string[]* - socket types this part plugs into (['grip'])
   - `[anchor]` *string* - name of one of the part's own sockets: the point of the part that sits on the host socket (a sword's grip). It is used up by attaching, so it is not a socket of the assembled body. Default: the part's origin.
-  - `bones` *Object[]* - the part's bones, as `BoneSpec` rows of kit/body-plan.js
+  - `bones` *Object[]* - the part's bones, as `BoneSpec` rows of kit/body-plan.js; may be empty for a part that is only `features` and / or `regions` (a pair of eyes, a printed shirt)
   - `[sockets]` *Object[]* - the part's own sockets, as `SocketSpec` rows; other parts attach here
+  - `[features]` *Object[]* - surface features (kit/body-surface.js `FeatureSpec`); `bone` names one of the part's bones, a bone of the wearer (any name the part does not have), or is omitted (or '@host') for the bone of the socket the part sits in
+  - `[regions]` *Object[]* - painted regions (kit/body-surface.js `RegionSpec`); `roles` select bones of the whole wearer, `bones` names bones as a feature's `bone` does
+  - `[label]` *string* - what an editor calls the part (default: worked out from the id)
+  - `[icon]` *string* - the name of an icon an editor shows for it
   - `[capabilities]` *string[]* - declared capabilities the part grants its wearer (such as 'hover')
 - **Part**
   - `id` *string*
@@ -7067,6 +7314,69 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `fitTypes` *Uint16Array* - the same as type ids (`Kit.body.socketType`)
   - `anchorPosition` *ReadonlyArray\<number\>* - [x, y, z] of the anchor in the part's own space at rest
   - `plan` *Object* - the part alone as a `BodyPlan` (a sword lying on the ground poses and draws like a body)
+
+## body-surface.js
+
+> Kit body surface: what is drawn ON a body's bones rather than as bones. Surface features (eyes, brows, a nose,
+> a mouth, ears, freckles, a scar) are placed on a bone's shape by azimuth and elevation, alone or as a mirrored
+> pair, with a flat stamp (frames of outlines: open, half, closed) and / or a small solid; regions (a sleeve, a
+> hairline, stripes, a belly patch) are predicate trees over a bone's along / around coordinates that paint the
+> bone with another colour channel. Both are data on a plan or a part; this file lays them out for a bake.
+>
+> Owns:  `Kit.body.surfaceLayout(plan)` (validate and index a plan's features and regions; cached per plan) and
+>        `Kit.body.surfaceOf(...)` (one individual's placements and painted layers, with `regionAt`), plus the
+>        `FeatureSpec` and `RegionSpec` shapes and `FRAME_SETS`.
+> Does not own: the maths of placing on a solid (kit/surface.js), the predicates (kit/region.js), how features
+>        and regions travel with parts (kit/body-parts.js), or drawing them (renderers; kit/body-debug.js marks them).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### Types
+
+- **StampLayer**
+  - `outline` *number[][]* - [[u, v], ...] in the stamp's own square, -1 to 1 each way (`Kit.surface.ellipse` draws one); u runs across (towards the body's left on a front-facing stamp), v up
+  - `paint` *{channel: string, shade: number}* - a colour channel of the species and a shade of its ramp (0 is the darkest); the shade is clamped to the ramp
+- **FeatureSpec**
+  - `id` *string* - what dials and animators call it ('eye', 'mouth'); several features may share an id
+  - `[bone]` *string* - the bone it sits on (a part's features default to the bone of the socket it is in)
+  - `[azimuth=0]` *number* - degrees about the bone's +Y from its +Z (the front) towards +X (its left)
+  - `[elevation=0]` *number* - degrees above the middle of the bone's shape
+  - `[spacing]` *number* - degrees between the two copies of a mirrored pair (left at +spacing/2); omit for one copy
+  - `[size=0.03]` *(number\|number[])* - metres across the stamp, or [width, height]
+  - `[rotation=0]` *number* - degrees about the surface normal (the right copy of a pair turns the other way)
+  - `[lift=0]` *number* - metres out along the normal (a nose tip stands proud)
+  - `[frames]` *Object\<string, StampLayer[]\>* - frame name -> the stamp's layers, bottom first
+  - `[rest]` *string* - the frame shown when nothing animates it (default: the first frame)
+  - `[shape]` *Object* - a solid in the feature's own frame, metres at the authored size (`Kit.body.SHAPES` row: +X across, +Y along `up`, +Z out along the normal), for a nose or an ear that has a silhouette. A capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
+  - `[paint]` *string* - the colour channel of the solid (default 'skin')
+  - `[glow]` *boolean* - draw it as a glow (eyes): a renderer leaves it out of outlines
+  - `[part]` *string* - set by kit/body-parts.js: the part that brought it
+- **RegionSpec**
+  - `id` *string* - what it is ('sleeve', 'hairline')
+  - `[roles]` *string[]* - paint every bone of the body carrying ALL of these roles (never a prop's bone)
+  - `[except]` *string[]* - ...but not a bone carrying any of these (['hand'] keeps a sleeve off the hand)
+  - `[bones]` *string[]* - paint these bones by name
+  - `where` *Object* - a `Kit.region` predicate tree over the bone's along / around coordinates
+  - `paint` *string* - the colour channel it paints with
+  - `[layer=0]` *number* - stacking order: higher covers lower (skin marks 1, clothes 2, outerwear 3, hair 4)
+  - `[part]` *string* - set by kit/body-parts.js: the part that brought it
+- **FeaturePlacement** - One copy of a feature on an individual: everything a renderer needs to stamp or build it.
+  - `id` *string*
+  - `bone` *number* - bone index in the assembled plan
+  - `side` *?string* - 'left' or 'right' for a copy of a pair, else null
+  - `flip` *boolean* - true for the right copy: mirror the stamp's u (and the solid's x)
+  - `point` *number[]* - [x, y, z] on the bone's (dialled) shape, in the bone's space, lifted by `lift`
+  - `normal` *number[]* - unit, out of the surface
+  - `up` *number[]* - unit, in the tangent plane; across = up x normal
+  - `size` *number[]* - [width, height] metres
+  - `rotation` *number* - radians about the normal
+  - `frames` *Object\<string, Array\<{outline: number[][], ramp: number, shade: number}\>\>* - frame name -> layers with their paint resolved to (index into the bake's `ramps`, shade); ramp -1 when the species lacks the channel
+  - `rest` *?string*
+  - `shape` *?Object*
+  - `scale` *number[]* - [across, up] the solid's stretch: this copy's size over the authored size (dials)
+  - `ramp` *number* - the solid's ramp index (-1 when none)
+  - `part` *?string* - the part it came from, null for the plan's own
+  - `glow` *boolean* - the feature asked to be drawn as a glow (eyes): never outlined
 
 ## body-recipe.js
 
@@ -7116,6 +7426,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `dialRows` *Object[]* - `DialRow`s, for compiling against an assembled plan
   - `dialMin` *number[]*
   - `dialMax` *number[]*
+  - `dialDefaults` *number[]*
+  - `dialDefaultSteps` *number[]* - per dial: the step that decodes to the default exactly
   - `unusedDials` *string[]* - dials that touch no bone of the bare plan
   - `colorIds` *string[]*
   - `paletteNames` *string[]* - per colour channel: the catalogue palette it draws from
@@ -7134,6 +7446,8 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `species` *string*
   - `plan` *Object* - the assembled `BodyPlan`: bare plan plus the parts worn
   - `rest` *Object* - the proportioned rest pose (a `JointTransforms`); copy it, never write it
+  - `shapes` *ReadonlyArray\<?Object\>* - 1 per bone of `plan`: its shape row with the shape dials applied (null for the default capsule), from `Kit.body.shapesWithDials`
+  - `surface` *Object* - the individual's surface features (placed) and painted regions, with `regionAt(bone, along, angle, normalX, normalY, normalZ)` -> index in `ramps` or -1 (kit/body-surface.js)
   - `colors` *Readonly\<Object\<string, Object\>\>* - channel -> the `Ramp` the individual uses for it
   - `boneRamp` *Int16Array* - 1 per bone of `plan`: the index in `ramps` of the ramp the bone is painted with, or -1 when the bone names no paint channel or the species has no such channel
   - `ramps` *ReadonlyArray\<Object\>* - the individual's ramps, one per colour channel of the species
@@ -7173,8 +7487,14 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `step` *number* - the smallest change that makes a difference
   - `default` *number*
   - `value` *number* - the individual's current value
-  - `affects` *Array\<{channel: string, bones: string[]}\>* - what it scales: per channel, the bones of the bare plan
+  - `affects` *Array\<{channel: string, bones: string[], param?: string, feature?: string}\>* - what it changes: per bone channel, per shape path (`channel: 'shape'`, `param`) or per feature parameter (`channel: 'feature'`, `feature`, `param`), with the bones of the bare plan it touches
   - `mirror` *?string* - the key of the dial that does the same on the other side, when there is one
+  - `side` *?string* - 'left' or 'right' for a sided dial, else null
+  - `base` *?string* - for a dial made by `sided: true`, the id both sides share ('eyeSize'); `setDial` with it moves both
+  - `linked` *?boolean* - for such a dial: do both sides hold the same value (show one slider)?
+  - `order` *number* - where it sorts within its group (from the species' `controls` rows, else list order)
+  - `hint` *?string* - a sentence for a tooltip, from `controls`
+  - `icon` *?string* - an icon name, from `controls`
 - **ColorControl**
   - `key` *string* - the override key, 'color:<channel>'
   - `id` *string* - the channel
@@ -7182,6 +7502,10 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `palette` *string* - the catalogue palette the channel draws from
   - `ramps` *Object[]* - the choices: `Ramp` rows { id, shades: [dark ... light] }
   - `value` *number* - the index of the ramp the individual uses
+  - `group` *string* - from `controls`, else 'colors'
+  - `order` *number*
+  - `hint` *?string*
+  - `icon` *?string*
 - **SocketControl**
   - `key` *string* - the override key, 'fill:<path>'
   - `path` *string*
@@ -7192,6 +7516,11 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `options` *string[]* - ids of every catalogue part that fits
   - `allowsEmpty` *boolean* - false for a required socket
   - `mirror` *?string* - the key of the same socket on the other side, when there is one
+  - `side` *?string* - 'left' or 'right' for a sided socket (its own bone's side, or its parent socket's)
+  - `choices` *Array\<{id: ?string, label: string, icon: ?string, hint: ?string}\>* - what the socket can hold, as a list a picker shows: 'none' (id null) first when it may be empty, then every option with the part's own `label`, `icon` and `hint`
+  - `order` *number*
+  - `hint` *?string*
+  - `icon` *?string*
 
 ## body-store.js
 
@@ -7222,16 +7551,40 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
 
+## body-wardrobe.js
+
+> Kit body wardrobe: an original, generic humanoid catalogue for a character creator, as data. One body plan (a
+> person with clavicles and hip bones so shoulder and hip width are real dials, and a lathe head whose profile
+> dials reshape), face features as surface-only parts (eyes with blink frames, brows, noses, mouths with talk
+> frames, ears, marks), hair as parts that bring a painted hairline and, for most styles, a silhouette, clothing
+> by slot as painted regions with a few silhouette bones (skirts, coats, cloaks, hoods), accessories and held
+> items on sockets, and three variants of the base species: stout, lanky and the horned, tailed hornkin.
+>
+> Owns:  `Kit.body.wardrobe.CATALOG` (ready for `Kit.body.catalog`) and its parts: `PLANS`, `PARTS`, `PALETTES`,
+>        `NODES`, `TRAITS`, and `SLOTS` (socket -> the group and label a creator lists it under).
+> Does not own: any behaviour (kit/body-*.js), any screen (a creator builds its controls from `editor.schema`),
+>        or any rendering (renderers read the bake: shapes, features, regions, ramps).
+>
+> Conventions (kit/body-plan.js): metres, +Y up, +Z forward, +X the body's left. Region `s` runs along a bone
+> from its joint (0) to its end (1): down an arm or leg, up the spine and the head (chin 0, crown 1). Feature
+> azimuth turns from the front towards the body's left; elevation rises from the middle of the head.
+>
+> Nothing here copies an existing product: names, shapes and outfits are generic descriptions.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
 ## body-debug.js
 
 > Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked. It exists so a
 > person can see that a plan, a pose, an attachment or a dial does what the numbers say, and as the smallest
 > possible example of a renderer: project the world transforms, draw the bones.
 >
-> Owns:  `Kit.body.debug.project` (orthographic projection of a world point for a view angle) and
->        `Kit.body.debug.draw` (bones as lines, bone ends, joints, socket markers).
-> Does not own: real rendering (shapes, shading, palettes: the pixel and 3D renderers read the same plan and
->        world transforms), the canvas or its size, or posing.
+> Owns:  `Kit.body.debug.project` (orthographic projection of a world point for a view angle),
+>        `Kit.body.debug.draw` (bones as lines, bone ends, joints, socket markers) and
+>        `Kit.body.debug.drawSurface` (a bake's dialled shapes as outlines, its painted regions as tinted spans
+>        along each bone, and its surface features as marks), enough to check shapes, faces and outfits by eye.
+> Does not own: real rendering (solids, shading, stamps: the pixel and 3D renderers read the same bake), the
+>        canvas or its size, or posing.
 >
 > Runs in node too: `draw` only calls the 2D-context methods listed in CONTEXT_METHODS, so a test passes a
 > recorder object instead of a canvas.
@@ -7673,6 +8026,7 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `[axis]` *number* - lathe and extrude: the long axis, 0 = x, 1 = y, 2 = z
   - `[across]` *number* - extrude: the axis the outline's first coordinate lies along
   - `at` *number[]* - [x, y, z] offset in bone space
+  - `[scale]` *number[]* - [x, y, z] stretch about `at` (an egg-shaped head, a torso deeper than wide); absent = none
 - **ShapeArrays** - A surface as plain arrays, ready for a BufferGeometry.
   - `positions` *Float32Array* - 3 per vertex, bone space, metres
   - `normals` *Float32Array* - 3 per vertex, unit length, outward
@@ -8660,6 +9014,21 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 > It is registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and
 > play tools reach it like any other. Its `debugState` reports the furthest any planted foot has slid, measured
 > in the page.
+
+## body-sheet.js
+
+> Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`). Characters rolled from the wardrobe catalogue,
+> drawn in 3D by the figure renderer (`Kit.figure.build`) through the toon look, facing the camera, in a grid;
+> the first is the base person at its default dials. Faces come in through the renderer's `featuresOf` extension
+> point (`Kit.body.figureHooks`). Tap to roll more. It exists to judge the catalogue by eye; it is not the
+> character creator.
+>
+> Owns:  the screen: which characters it shows, the grid and the camera.
+> Does not own: the catalogue (kit/body-wardrobe.js), baking (kit/body-recipe.js), the face adapter
+>        (kit/body-surface.js) or drawing (kit/figure*.js, kit/look-*.js).
+>
+> Registered like a game (after the bodies and figures screens), so the shell gives it a HUD, a back button and
+> clean-up, and the smoke and play tools reach it like any other. It draws its own frame (`render`).
 
 ## ui/gallery.js
 

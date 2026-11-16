@@ -59,6 +59,8 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `seeded.js` | `Kit.seeded`: values from (seed, field name), not a stream, so adding a field never re-rolls old ones; a 53-bit content hash |
 | `pack.js` | `Kit.pack`: records as bytes (varint, uint32, text) and bytes as a URL-safe code |
 | `palette.js` | `Kit.palette`: colour ramps (shades dark to light with a hue drift) as data; `tones` (2-6 perceptually even tones plus ink, OKLCH), named `SETS`, and `atlas`, the packed tone x ramp table the look shaders read |
+| `surface.js` | `Kit.surface`: signed distance to a primitive (capsule, sphere, box, lathe, extrude); azimuth / elevation -> surface point, normal and up; along / around coordinates |
+| `region.js` | `Kit.region`: areas of a surface as predicate trees (band, stripe, checker, edge, facing; union, intersect, mask, not) and the topmost layer at a point |
 | `look-settings.js` | `Kit.look`: tone bands, ordered-dither table, texel-grid helpers, welded outline normals, and the look presets and knobs as data |
 | `rig.js` | `Kit.rig`: a joint hierarchy as flat arrays and the one forward pass that places it in the world |
 | `reach.js` | `Kit.reach`: inverse kinematics over a rig (exact two-bone, FABRIK chain, aim, joint limits) |
@@ -79,11 +81,14 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 |---|---|
 | `body-plan.js` | `Kit.body.plan`: bones, sockets, roles, capabilities, joint limits, mass, shapes, paint channels; `dials` / `applyDials`; `requireFit` |
 | `body-parts.js` | `Kit.body.part` / `assemble`: parts plug into typed sockets and may expose their own; the result is an ordinary plan |
+| `body-surface.js` | `Kit.body.surfaceLayout` / `surfaceOf`: features placed on bones by azimuth and elevation, painted regions, `regionAt` |
 | `body-recipe.js` | `Kit.body.catalog`: species over `Kit.lineage`; `resolve`, `validate`, `normalize`, `encode` / `decode`, `hash`, `table`, `bakery` |
 | `body-edit.js` | `Kit.body.editor`: a schema of every dial, colour and socket; pure edits; what changed between two bakes |
 | `body-store.js` | `Kit.body.store`: instances as columns (position, heading, phase, detail, recipe index) |
 | `body-samples.js` | `Kit.body.samples`: a biped, a quadruped, a fish, four parts and a family of species, as data |
+| `body-wardrobe.js` | `Kit.body.wardrobe`: an original humanoid catalogue for a character creator (46 dials, 14 colour channels, 21 sockets, 4 species), as data |
 | `body-debug.js` | `Kit.body.debug`: a stick figure with socket markers on any 2D context (runs in node with a recorder) |
+| `body-sheet.js` | needs a browser. The `wardrobe` screen (`Kit.play('wardrobe')`): rolled wardrobe characters (the first is the base person at default dials) drawn in 3D by `Kit.figure`, faces through `Kit.body.figureHooks`; tap to roll more |
 | `body-gallery.js` | needs a browser. The `bodies` screen (`Kit.play('bodies')`) |
 
 ```js
@@ -186,9 +191,9 @@ core  model  meta  flow  lanes  scrub  span  blend  space  hash  music  place  p
 loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
 input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
-lineage  flags  columns  seeded  pack  palette  rig  reach  dynamics
-body-plan  body-parts  body-recipe  body-edit  body-store  body-samples  body-debug  body-gallery
-look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show
+lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
+body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery
+look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show  body-sheet
 games/*.js  ui/gallery
 shell
 ui/menu
