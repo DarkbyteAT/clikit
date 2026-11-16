@@ -513,20 +513,28 @@
    */
   const stampLayers = (feature, frame, ramps, surfaceDistance, reliefDistance, featureOrder) => {
     const { across, up, normal, mirror } = frame;
+    // A layer is a flat polygon between its own points, so over a dent (an eye socket) it bridges the dent like a
+    // lid. A layer above it is kept at least as far out as the highest point of the layers under it, or the white
+    // of an eye would cover the iris lying on the socket's floor.
+    let lid = -Infinity;
     return (feature.frames[feature.rest] || [])
       .slice(0, MOST_STAMP_LAYERS)
       .filter((layer) => layer.ramp >= 0)
       .map((layer, index) => {
         const shades = ramps[layer.ramp] ? ramps[layer.ramp].shades.length - 1 : LAST_SHADE;
         const lift = STAMP.lift + STAMP.liftPerLayer * index + STAMP.liftPerFeature * featureOrder;
+        let highest = lid;
         const points = layer.outline.flatMap(([u, v]) => {
           let vertex = combine(feature.point, [[across, (u * (layer.fixed ? 1 : mirror) * feature.size[0]) / 2], [up, (v * feature.size[1]) / 2], [normal, -feature.lift]]);
           for (let step = 0; step < STAMP.settleSteps; step++) vertex = combine(vertex, [[normal, -surfaceDistance(vertex)]]);
           // From the bone's own surface, in or out to the relief, no further than `mostRelief`.
           let relief = 0;
           for (let step = 0; step < STAMP.settleSteps; step++) relief = Math.max(-STAMP.mostRelief, Math.min(STAMP.mostRelief, relief - reliefDistance(combine(vertex, [[normal, relief]]))));
+          relief = Math.max(relief, lid);
+          highest = Math.max(highest, relief);
           return combine(vertex, [[normal, relief + lift]]);
         });
+        lid = highest;
         return { points, normal: normal.slice(), slot: layer.ramp, tone: shades > 0 ? layer.shade / shades : 0, least: layer.least || 0, drop: layer.drop || 0 };
       });
   };
