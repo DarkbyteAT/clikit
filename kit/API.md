@@ -93,6 +93,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
 - [body-portrait.js](#body-portraitjs) (4) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
+- [body-proof.js](#body-proofjs) (7) - Kit body proof: coverage sheets for judging the body system by eye.
 - [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
 - [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
 - [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
@@ -9226,6 +9227,94 @@ across when one row of cells fills the area's height.
 ```js
 columnsFor(FRAMINGS.head, 2) // 2
 ```
+
+## body-proof.js
+
+> Kit body proof: coverage sheets for judging the body system by eye. One polished character proves nothing, so
+> a sheet is a grid of many cells, each one figure of some recipe, seen from some direction, at some moment of
+> some movement. Suites generate the grids that matter: every species turned through eight directions, every
+> option of every socket, every dial at both ends, seeded rolls, and every movement in eight phases.
+>
+> Owns:  `Kit.body.proof.SUITES` and `suite(name, catalog)` (pure: a catalogue -> the cells of a sheet), `ACTS`
+>        (the movements a cell can show, open for other modules to add to), `CATALOGS` (the catalogues a sheet
+>        can be made of) and the `proof` workbench screen that draws a sheet (`Kit.currentGame.show(job)`).
+> Does not own: the catalogues, baking, drawing or movement themselves; taking the pictures (tools/dev/proof.js).
+>
+> Used by `node tools/dev.js proof <suite> [--catalog wardrobe] [--preset toon]`, which writes shots/proof/*.png.
+> The suites are pure and unit-tested by tools/test-kit.js; the screen needs THREE.
+
+### `Kit.body.proof.DIRECTIONS`
+
+Directions of a turnaround, in turns of a full circle; 0 faces the camera and the figure turns to its left.
+
+### `Kit.body.proof.THREE_VIEWS`
+
+The three directions that between them show a front, a side and a back.
+
+### `Kit.body.proof.SUITES`
+
+The suites. Each is `(catalog, editor, options) -> ProofSheet`; `options.species` narrows a suite to one species.
+Adding a suite here adds it to the tool.
+
+### `Kit.body.proof.ACTS`
+
+The movements a cell can show, by id. Open: a module that adds a movement adds a row (`Kit.body.proof.ACTS.wave = ...`),
+and the `acts` suite shows it for every species it fits. `rest` is the rest pose and needs no stage.
+
+### `Kit.body.proof.CATALOGS`
+
+The catalogues a sheet can be made of, by name; each value makes the raw catalogue data.
+
+### `Kit.body.proof.suite(name, catalog, options = {})`
+
+The cells of a suite for a catalogue.
+
+- `name` *string* - a key of `SUITES`
+- `catalog` *Object* - from `Kit.body.catalog`
+- `[options]` *{species?: string[], count?: number, acts?: string[]}* - `species`: which (default all)
+
+**Returns** *ProofSheet*
+
+**Complexity** O(cells); the options and extremes suites call `editor.schema` once per species
+
+```js
+Kit.body.proof.suite('turn', catalog).cells.length // 8 per species
+```
+
+### `Kit.body.proof.perform(figure, actId, phase)`
+
+Poses a figure at a phase of an act by simulating it from a standing start, so the same cell is the same
+picture every time.
+
+- `figure` *Object* - from `Kit.figure.build`
+- `actId` *string* - a key of `ACTS`
+- `phase` *number* - 0..1
+
+**Returns** *?string* why the body cannot do it (the stage's refusal), or null when posed
+
+**Complexity** O(seconds simulated / SIMULATION_STEP) motion steps
+
+```js
+Kit.body.proof.perform(figure, 'walk', 0.25)
+```
+
+### Types
+
+- **ProofCell**
+  - `label` *string*
+  - `recipe` *Object*
+  - `yaw` *number* - turns of a full circle
+  - `[act='rest']` *string* - a key of `ACTS`
+  - `[phase=0]` *number* - 0..1 through the act's cycle
+- **ProofSheet**
+  - `title` *string*
+  - `columns` *number* - cells per row
+  - `framing` *('body'\|'head')*
+  - `cells` *ProofCell[]*
+- **ProofAct** - A movement a cell can show.
+  - `stage` *function(): Object* - makes the motion stage (kit/motion.js)
+  - `speed` *function(Object): number* - metres per second for a bake (0: on the spot)
+  - `cycle` *function(Object, number): number* - seconds of one cycle for a bake at that speed
 
 ## creator-rows.js
 
