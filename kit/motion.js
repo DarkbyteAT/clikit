@@ -8,7 +8,8 @@
  * Owns:  `Kit.motion.stage` and the combinators `sequence`, `blend`, `layer`, `when`, `byDetail`; `refusal` /
  *        `requireFit` (can this plan run this stage, and if not, what is missing); `state` (a per-instance
  *        motion state), `advance` (one frame: fixed steps, then the pose, then the world transforms), `place`
- *        (teleport), `advanceStore` (every instance of a `Kit.body.store`); the two stages every kind of
+ *        (teleport), `advanceStore` (every instance of a `Kit.body.store`); `turnBody` / `restFrames` (turn a
+ *        bone about the body's axes, whichever way a plan's bones point); the stages every kind of
  *        movement shares, `lean` (tilt into acceleration and turns), `trail` (tails and wings follow by
  *        simulation) and `loose` (so does everything a plan declares loose: hair, a cloak, ears); and `course` /
  *        `drive` (a body steered along a table of speeds and turns).
@@ -23,7 +24,7 @@
  */
 (() => {
   const { FIXED_STEP } = Kit.dynamics;
-  const { VECTOR_STRIDE, QUATERNION_STRIDE, AXES } = Kit.rig;
+  const { VECTOR_STRIDE, QUATERNION_STRIDE, QUATERNION_W, AXES } = Kit.rig;
   const TAU = Math.PI * 2;
   /** Metres per second squared. Leans, strides and tails are sized against it. */
   const GRAVITY = 9.81;
@@ -565,6 +566,78 @@
     return best;
   };
 
+  // ---- turning a bone about the body's axes ------------------------------------------------------------------------------
+
+  /** @type {WeakMap<Object, Float32Array>} */
+  const framesByRest = new WeakMap();
+
+  /**
+   * For every bone of a body, the world rotation of its PARENT at rest: the frame `turnBody` needs to turn a
+   * bone about the body's axes whichever way the plan's bones were authored to point.
+   * @param {Object} plan a `BodyPlan`
+   * @param {Object} rest its proportioned rest pose (a bake's `rest`)
+   * @returns {Float32Array} 4 per bone (x, y, z, w); the identity for a root. Shared: do not write it
+   * @complexity O(bones) the first time for a rest pose, O(1) after
+   * @example const frames = Kit.motion.restFrames(motion.plan, motion.rest);
+   */
+  const restFrames = (plan, rest) => {
+    const known = framesByRest.get(rest);
+    if (known) return known;
+    const world = Kit.body.worldTransforms(plan, rest, Kit.rig.create(plan.boneCount));
+    const frames = new Float32Array(plan.boneCount * QUATERNION_STRIDE);
+    for (let bone = 0; bone < plan.boneCount; bone++) {
+      const parent = plan.parent[bone];
+      if (parent < 0) frames[bone * QUATERNION_STRIDE + QUATERNION_W] = 1;
+      else frames.set(world.rotation.subarray(parent * QUATERNION_STRIDE, (parent + 1) * QUATERNION_STRIDE), bone * QUATERNION_STRIDE);
+    }
+    framesByRest.set(rest, frames);
+    return frames;
+  };
+
+  const scratchTurn = new Float32Array(QUATERNION_STRIDE);
+  /** out = first * second for quaternions given as four numbers each (`out` may hold either). */
+  const multiplyInto = (out, outAt, firstX, firstY, firstZ, firstW, secondX, secondY, secondZ, secondW) => {
+    out[outAt] = firstW * secondX + firstX * secondW + firstY * secondZ - firstZ * secondY;
+    out[outAt + 1] = firstW * secondY - firstX * secondZ + firstY * secondW + firstZ * secondX;
+    out[outAt + 2] = firstW * secondZ + firstX * secondY - firstY * secondX + firstZ * secondW;
+    out[outAt + QUATERNION_W] = firstW * secondW - firstX * secondX - firstY * secondY - firstZ * secondZ;
+  };
+
+  /**
+   * Turns a bone by [pitch, yaw, tilt] about the BODY's axes (left, up, forward as they lie when its parent is
+   * at rest), on top of the rotation it has. Unlike `Kit.rig.turn`, which turns about the bone's own axes, the
+   * same numbers mean the same lean on any plan: a twist of the hips, a nod, a spine leaning into a step.
+   * @param {Float32Array} rotation the pose's local rotations, 4 per bone; the bone's is rewritten
+   * @param {Float32Array} frames from `Kit.motion.restFrames`
+   * @param {number} bone
+   * @param {number} pitch radians, positive forwards (a nod down)
+   * @param {number} yaw radians, positive towards the body's left
+   * @param {number} tilt radians, positive towards the body's left
+   * @returns {void}
+   * @complexity O(1), no allocation
+   * @example Kit.motion.turnBody(motion.pose.rotation, Kit.motion.restFrames(plan, rest), headBone, 0.2, 0, 0);   // a nod
+   */
+  const turnBody = (rotation, frames, bone, pitch, yaw, tilt) => {
+    const sinPitch = Math.sin(pitch / 2);
+    const cosPitch = Math.cos(pitch / 2);
+    const sinYaw = Math.sin(yaw / 2);
+    const cosYaw = Math.cos(yaw / 2);
+    // Leaning left is a negative turn about the forward axis.
+    const sinRoll = Math.sin(-tilt / 2);
+    const cosRoll = Math.cos(-tilt / 2);
+    // yaw * (pitch * roll): the body turns, then nods, then tilts, each about the axis the last one left it.
+    multiplyInto(scratchTurn, 0, 0, sinYaw, 0, cosYaw, sinPitch * cosRoll, -sinPitch * sinRoll, cosPitch * sinRoll, cosPitch * cosRoll);
+    const at = bone * QUATERNION_STRIDE;
+    const frameX = frames[at];
+    const frameY = frames[at + 1];
+    const frameZ = frames[at + 2];
+    const frameW = frames[at + QUATERNION_W];
+    // In the parent's own frame the turn is (frame^-1 * turn * frame); it goes before the bone's rotation.
+    multiplyInto(scratchTurn, 0, -frameX, -frameY, -frameZ, frameW, scratchTurn[0], scratchTurn[1], scratchTurn[2], scratchTurn[QUATERNION_W]);
+    multiplyInto(scratchTurn, 0, scratchTurn[0], scratchTurn[1], scratchTurn[2], scratchTurn[QUATERNION_W], frameX, frameY, frameZ, frameW);
+    multiplyInto(rotation, at, scratchTurn[0], scratchTurn[1], scratchTurn[2], scratchTurn[QUATERNION_W], rotation[at], rotation[at + 1], rotation[at + 2], rotation[at + QUATERNION_W]);
+  };
+
   // ---- shared stages --------------------------------------------------------------------------------------------------
 
   /**
@@ -753,6 +826,7 @@
               scratchArc
             );
             Kit.rig.turnWorld(plan.parent, motion.pose, world, last, scratchArc);
+            Kit.reach.clamp(motion.pose, last, plan.jointLimits);
           }
           Kit.body.worldTransforms(plan, motion.pose, world, motion.x, motion.y, motion.z, motion.heading, joints[0] + 1, plan.subtreeEnd[joints[0]]);
         }
@@ -872,6 +946,8 @@
     advance,
     advanceStore,
     carrier,
+    restFrames,
+    turnBody,
     lean,
     trail,
     loose,

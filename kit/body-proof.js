@@ -94,6 +94,8 @@
     }),
     /** Every movement each species can do, in eight phases, from a three-quarter view and from the front. */
     acts: (catalog, _editor, { species, acts = Object.keys(ACTS).filter((id) => id !== 'rest') }) => {
+      const unknown = acts.find((id) => !ACTS[id]);
+      if (unknown) fail('suite', `no act "${unknown}". Acts: ${Object.keys(ACTS).join(', ')}.`);
       const bakery = catalog.bakery({ capacity: species.length });
       const canDo = (id, act) => !refusalOf(ACTS[act], bakery.bakeRecipe(subjectOf(id)));
       return {
@@ -141,10 +143,23 @@
    * @property {function(Object): void} [begin] called with the motion state once it has settled, before the
    *   cycle that is shown (a one-shot performance starts here)
    * @property {function(Object): ?string} [refusal] why a bake cannot do it, beyond what its stage needs
+   * @property {function(Object, Object): void} [anchor] called with the motion state and the figure's local pose
+   *   before it is drawn: a movement that carries the body away puts it back in its cell here
    */
 
   /** Why a bake cannot do an act: the stage's refusal, or the act's own. */
   const refusalOf = (act, bake) => Kit.motion.refusal(act.stage(), bake.plan, bake.rest) || (act.refusal ? act.refusal(bake) : null);
+
+  const travelled = [0, 0];
+
+  /** Keeps a body that a kick's step or a dive's flight has carried away in its cell: the pose is shown, not the distance covered. */
+  const anchorBody = (motion, local) => {
+    const measured = Kit.act.rig(motion.plan, motion.rest);
+    const at = measured.carrier * 3;
+    Kit.act.rootMotion(motion, travelled);
+    local.translation[at] -= travelled[0] / measured.stretch[0];
+    local.translation[at + 2] -= travelled[1] / measured.stretch[2];
+  };
 
   /** A performance of `Kit.act.REPERTOIRE` as an act: a whole character standing on the spot, the performance played from its start. */
   const performanceAct = (id) => ({
@@ -153,6 +168,7 @@
     cycle: () => Kit.act.REPERTOIRE[id].seconds,
     begin: (motion) => Kit.act.play(motion, id),
     refusal: (bake) => Kit.act.refusal(id, bake.plan, bake.rest),
+    anchor: anchorBody,
   });
 
   /**
@@ -206,6 +222,7 @@
     if (act.begin) act.begin(motion);
     simulate(WARM_UP, WARM_UP + phase * act.cycle(bake, speed));
     Kit.rig.copy(motion.pose, figure.local);
+    if (act.anchor) act.anchor(motion, figure.local);
     if (figure.face) figure.face(Kit.act ? Kit.act.face(motion) : null);
     figure.pose();
     return null;

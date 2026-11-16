@@ -42,11 +42,12 @@ async function stack(session, strips, file) {
 
 /**
  * Photographs suites.
- * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number}} options
+ * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], acts?: string[], out?: string, pages?: number}} options
+ *   `acts` narrows the acts suite to those movements (default: every one a body can do)
  * @returns {Promise<{files: string[], problems: string[]}>}
  * @example await makeProof({ suites: ['turn', 'rolls'], catalog: 'wardrobe', preset: 'pixel' });
  */
-async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages }) {
+async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], acts, out = OUT, pages: mostPages = PAGE.mostPages }) {
   const session = await openArcade({ size: { width: PAGE.cellWidth * 8, height: 1200 } });
   const files = [];
   const problems = [];
@@ -65,9 +66,9 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         strips = [];
       };
       for (let page = 0, pageCount = 1, filed = 0; page < Math.min(pageCount, mostPages); page++) {
-        const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, page: 0, rows: 1 });
+        const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, ...(acts ? { acts } : {}), page: 0, rows: 1 });
         const rows = probe.framing === 'head' ? 1 : PAGE.rows;
-        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, page, rows });
+        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, ...(acts ? { acts } : {}), page, rows });
         pageCount = first.pages;
         await session.page.setViewportSize({ width: first.columns * PAGE.cellWidth, height: Math.round((first.columns * PAGE.cellWidth) / first.aspect) });
         await session.page.waitForTimeout(PAGE.settleMs);

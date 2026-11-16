@@ -32,11 +32,11 @@
       keys: [
         // The hand dips back before it comes up, and overshoots the top: anticipation and settle.
         { at: 0.09, ease: 'out', armRight: [0.12, -0.5, 0.95, 0], spine: [0, 0.04, 0] },
-        { at: 0.27, ease: 'settle', armRight: [2.45, 0.35, 0.78, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08], face: { talk: 'smile' } },
-        { at: 0.4, armRight: [2.8, 0.3, 0.74, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08] },
-        { at: 0.53, armRight: [2.2, 0.35, 0.78, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08] },
-        { at: 0.66, armRight: [2.8, 0.3, 0.74, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08] },
-        { at: 0.79, armRight: [2.25, 0.35, 0.78, 0.7], spine: [0, -0.04, 0.04], head: [-0.03, -0.1, 0.05], face: { talk: 'rest' } },
+        { at: 0.27, ease: 'settle', armRight: [2.35, 0.1, 0.8, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08], face: { talk: 'smile' } },
+        { at: 0.4, armRight: [2.75, 0.1, 0.76, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08] },
+        { at: 0.53, armRight: [2.1, 0.1, 0.84, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08] },
+        { at: 0.66, armRight: [2.75, 0.1, 0.76, 0.7], spine: [0, -0.05, 0.05], head: [-0.05, -0.12, 0.08] },
+        { at: 0.79, armRight: [2.15, 0.1, 0.84, 0.7], spine: [0, -0.04, 0.04], head: [-0.03, -0.1, 0.05], face: { talk: 'rest' } },
       ],
     },
     {
@@ -46,9 +46,9 @@
       needs: ARMS_NEEDED,
       keys: [
         { at: 0.16, ease: 'out', shift: [0, -0.16, 0], turn: [0.1, 0, 0], spine: [0.12, 0, 0], arms: [0.5, -0.4, 0.6, 0.5], head: [0.1, 0, 0] },
-        { at: 0.34, ease: 'settle', shift: [0, 0.1, 0], turn: [-0.04, 0, 0], spine: [-0.12, 0, 0], arms: [2.85, 0.5, 1, 0.3], head: [-0.25, 0, 0], face: { talk: 'open' } },
+        { at: 0.34, ease: 'settle', shift: [0, 0.1, 0], spine: [-0.08, 0, 0], arms: [2.85, 0.5, 1, 0.3], head: [-0.14, 0, 0], face: { talk: 'open' } },
         { at: 0.48, ease: 'in', shift: [0, -0.07, 0], spine: [-0.05, 0, 0], arms: [2.6, 0.4, 0.82, 0.6], head: [-0.15, 0, 0] },
-        { at: 0.62, ease: 'settle', shift: [0, 0.08, 0], spine: [-0.12, 0, 0], arms: [2.9, 0.5, 1, 0.3], head: [-0.25, 0, 0] },
+        { at: 0.62, ease: 'settle', shift: [0, 0.08, 0], spine: [-0.08, 0, 0], arms: [2.9, 0.5, 1, 0.3], head: [-0.14, 0, 0] },
         { at: 0.78, ease: 'in', shift: [0, -0.05, 0], spine: [-0.04, 0, 0], arms: [2.5, 0.4, 0.85, 0.6], head: [-0.1, 0, 0], face: { talk: 'smile' } },
       ],
     },
@@ -60,8 +60,8 @@
       keys: [
         { at: 0.12, ease: 'out', spine: [-0.07, 0, 0], head: [-0.05, 0, 0] },
         // The hips go back as the chest goes forward, or the body would topple; one hand across the middle, one behind.
-        { at: 0.42, shift: [0, -0.03, -0.1], turn: [0.5, 0, 0], spine: [0.55, 0, 0], head: [0.25, 0, 0], armRight: [0.75, AHEAD + 0.75, 0.55, 0.3], armLeft: [0.45, -AHEAD - 0.55, 0.6, 0.2], face: { blink: 'closed' } },
-        { at: 0.66, shift: [0, -0.035, -0.1], turn: [0.52, 0, 0], spine: [0.58, 0, 0], head: [0.28, 0, 0], armRight: [0.75, AHEAD + 0.75, 0.55, 0.3], armLeft: [0.45, -AHEAD - 0.55, 0.6, 0.2] },
+        { at: 0.42, shift: [0, -0.03, -0.1], turn: [0.36, 0, 0], spine: [0.4, 0, 0], head: [0.12, 0, 0], armRight: [0.75, AHEAD + 0.75, 0.55, 0.3], armLeft: [0.45, -AHEAD - 0.55, 0.6, 0.2], face: { blink: 'closed' } },
+        { at: 0.66, shift: [0, -0.035, -0.1], turn: [0.38, 0, 0], spine: [0.42, 0, 0], head: [0.14, 0, 0], armRight: [0.75, AHEAD + 0.75, 0.55, 0.3], armLeft: [0.45, -AHEAD - 0.55, 0.6, 0.2] },
         { at: 0.9, ease: 'settle', spine: [-0.03, 0, 0], face: { blink: 'open' } },
       ],
     },
@@ -126,14 +126,14 @@
       needs: { atLeast: { legs: 2 } },
       keys: [
         // Four beats: the hips drop on each, sway side to side, the free foot taps out, the arms pump in turn.
-        { at: 0, ease: 'in', shift: [0.07, -0.1, 0], turn: [0, 0.16, 0.08], spine: [0.04, -0.2, -0.12], head: [0, 0.08, 0.1], armLeft: [0.9, 1.2, 0.55, 0.5], armRight: [1.9, 0.9, 0.6, 0.6], footRight: [0.16, 0, 0.06, 0] },
-        { at: 0.125, ease: 'out', shift: [0.03, -0.02, 0], turn: [0, 0.05, 0.03], spine: [0, -0.06, -0.04], armLeft: [1.2, 1.1, 0.6, 0.5], armRight: [1.5, 1, 0.6, 0.6], footRight: [0.1, 0.12, 0.03, 0.4] },
-        { at: 0.25, ease: 'in', shift: [-0.07, -0.1, 0], turn: [0, -0.16, -0.08], spine: [0.04, 0.2, 0.12], head: [0, -0.08, -0.1], armLeft: [1.9, 0.9, 0.6, 0.6], armRight: [0.9, 1.2, 0.55, 0.5], footLeft: [0.16, 0, 0.06, 0] },
-        { at: 0.375, ease: 'out', shift: [-0.03, -0.02, 0], turn: [0, -0.05, -0.03], spine: [0, 0.06, 0.04], armLeft: [1.5, 1, 0.6, 0.6], armRight: [1.2, 1.1, 0.6, 0.5], footLeft: [0.1, 0.12, 0.03, 0.4] },
-        { at: 0.5, ease: 'in', shift: [0.07, -0.12, 0], turn: [0.06, 0.16, 0.08], spine: [0.08, -0.2, -0.12], head: [0.05, 0.08, 0.1], armLeft: [0.7, 0.6, 0.7, 0.5], armRight: [2.6, 0.5, 0.9, 0.4], footRight: [0.16, 0, 0.06, 0] },
-        { at: 0.625, ease: 'out', shift: [0.03, -0.02, 0], turn: [0, 0.05, 0.03], spine: [0, -0.06, -0.04], armLeft: [1, 0.9, 0.6, 0.5], armRight: [2.2, 0.7, 0.75, 0.5], footRight: [0.1, 0.12, 0.03, 0.4] },
-        { at: 0.75, ease: 'in', shift: [-0.07, -0.12, 0], turn: [0.06, -0.16, -0.08], spine: [0.08, 0.2, 0.12], head: [0.05, -0.08, -0.1], armLeft: [2.6, 0.5, 0.9, 0.4], armRight: [0.7, 0.6, 0.7, 0.5], footLeft: [0.16, 0, 0.06, 0] },
-        { at: 0.875, ease: 'out', shift: [-0.03, -0.02, 0], turn: [0, -0.05, -0.03], spine: [0, 0.06, 0.04], armLeft: [2.2, 0.7, 0.75, 0.5], armRight: [1, 0.9, 0.6, 0.5], footLeft: [0.1, 0.12, 0.03, 0.4] },
+        { at: 0, ease: 'in', shift: [0.16, -0.16, 0], turn: [0, 0.26, 0.14], spine: [0.04, -0.2, -0.12], head: [0, 0.08, 0.1], armLeft: [0.9, 1.2, 0.55, 0.5], armRight: [1.9, 0.9, 0.6, 0.6], footRight: [0.42, 0, 0.1, 0] },
+        { at: 0.125, ease: 'out', shift: [0.06, 0.01, 0], turn: [0, 0.05, 0.03], spine: [0, -0.06, -0.04], armLeft: [1.2, 1.1, 0.6, 0.5], armRight: [1.5, 1, 0.6, 0.6], footRight: [0.3, 0.34, 0.12, 0.5] },
+        { at: 0.25, ease: 'in', shift: [-0.16, -0.16, 0], turn: [0, -0.26, -0.14], spine: [0.04, 0.2, 0.12], head: [0, -0.08, -0.1], armLeft: [1.9, 0.9, 0.6, 0.6], armRight: [0.9, 1.2, 0.55, 0.5], footLeft: [0.42, 0, 0.1, 0] },
+        { at: 0.375, ease: 'out', shift: [-0.06, 0.01, 0], turn: [0, -0.05, -0.03], spine: [0, 0.06, 0.04], armLeft: [1.5, 1, 0.6, 0.6], armRight: [1.2, 1.1, 0.6, 0.5], footLeft: [0.3, 0.34, 0.12, 0.5] },
+        { at: 0.5, ease: 'in', shift: [0.16, -0.2, 0], turn: [0.06, 0.26, 0.14], spine: [0.08, -0.2, -0.12], head: [0.05, 0.08, 0.1], armLeft: [0.7, 0.6, 0.7, 0.5], armRight: [2.6, 0.5, 0.9, 0.4], footRight: [0.42, 0, 0.1, 0] },
+        { at: 0.625, ease: 'out', shift: [0.06, 0.01, 0], turn: [0, 0.05, 0.03], spine: [0, -0.06, -0.04], armLeft: [1, 0.9, 0.6, 0.5], armRight: [2.2, 0.7, 0.75, 0.5], footRight: [0.3, 0.34, 0.12, 0.5] },
+        { at: 0.75, ease: 'in', shift: [-0.16, -0.2, 0], turn: [0.06, -0.26, -0.14], spine: [0.08, 0.2, 0.12], head: [0.05, -0.08, -0.1], armLeft: [2.6, 0.5, 0.9, 0.4], armRight: [0.7, 0.6, 0.7, 0.5], footLeft: [0.42, 0, 0.1, 0] },
+        { at: 0.875, ease: 'out', shift: [-0.06, 0.01, 0], turn: [0, -0.05, -0.03], spine: [0, 0.06, 0.04], armLeft: [2.2, 0.7, 0.75, 0.5], armRight: [1, 0.9, 0.6, 0.5], footLeft: [0.3, 0.34, 0.12, 0.5] },
       ],
     },
     // ---- fidgets: small one-shots a standing body plays on its own ----

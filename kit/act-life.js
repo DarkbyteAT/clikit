@@ -101,7 +101,7 @@
         scale[chest] *= 1 + tune.widen * fill;
         scale[chest + 1] *= 1 + tune.rise * fill;
         scale[chest + 2] *= 1 + tune.swell * fill;
-        for (let index = 0; index < spine.length; index++) Kit.act.turnBody(rotation, record.rig, spine[index], (-tune.arch * (fill - 0.5)) / spine.length, 0, 0);
+        for (let index = 0; index < spine.length; index++) Kit.motion.turnBody(rotation, record.rig.frame, spine[index], (-tune.arch * (fill - 0.5)) / spine.length, 0, 0);
         motion.isWorldCurrent = false;
       },
     });
@@ -141,8 +141,8 @@
         motion.pose.translation[carrier] += (drift * tune.shift * rig.unit) / rig.stretch[0];
         const { rotation } = motion.pose;
         // Weight on the left leg: the hips go left and the right side drops, a lean to the right; the spine leans back left.
-        Kit.act.turnBody(rotation, rig, rig.carrier, 0, drift * tune.turn, -drift * tune.tilt);
-        for (let index = 0; index < rig.spine.length; index++) Kit.act.turnBody(rotation, rig, rig.spine[index], 0, (-drift * tune.turn) / rig.spine.length, (drift * tune.tilt * tune.counter) / rig.spine.length);
+        Kit.motion.turnBody(rotation, rig.frame, rig.carrier, 0, drift * tune.turn, -drift * tune.tilt);
+        Kit.act.turnShared(rotation, rig, rig.spine, 0, -drift * tune.turn, drift * tune.tilt * tune.counter);
         motion.isWorldCurrent = false;
       },
     });
