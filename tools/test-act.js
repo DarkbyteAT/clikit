@@ -254,8 +254,12 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
           run(state, 0.5);
           const nearest = Math.min(distance(jointOf(state, 'handLeft'), point), distance(jointOf(state, 'handRight'), point));
           assert.ok(nearest < 0.1 * Math.max(...measured.armLength), `${bake.plan.id} ${form}: the nearer hand is ${nearest} m from ${point}`);
-          // Hands lead: the ball is met by a hand, not by the head.
-          assert.ok(distance(jointOf(state, 'head'), point) > nearest + headRadius / 2, `${bake.plan.id} ${form}: the head is as near ${point} as the hand`);
+          // Hands lead: the ball is met by a hand in front of or beside the head, never inside it.
+          const [head, left, right] = ['head', 'upperArmLeft', 'upperArmRight'].map((name) => jointOf(state, name));
+          const neck = head.map((value, axis) => value - (left[axis] + right[axis]) / 2);
+          const along = Math.hypot(...neck) || 1;
+          const middle = head.map((value, axis) => value + (neck[axis] / along) * headRadius);
+          assert.ok(distance(middle, point) > headRadius, `${bake.plan.id} ${form}: ${point} is ${distance(middle, point)} m from the middle of a head of radius ${headRadius}`);
           chosen.push(form);
         })
       );

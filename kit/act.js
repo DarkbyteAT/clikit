@@ -162,7 +162,9 @@
     headClear: 1.05, // a hand keyed inside the head is moved out to this many head radii from its middle
     handLead: 0.35, // arm lengths a reaching hand is kept ahead of the head's surface along its reach, where the body can
     leadMost: 1.2, // radians the trunk will tip up off a reach line to let the hands lead (a short-armed, big-headed body)
-    closeMost: 0.6, // arm lengths the body is moved to bring a point its hand is pulled to within the arm's reach
+    closeMost: 1, // arm lengths the body is moved to bring a point its hand is pulled to within the arm's reach
+    leadOverhead: 0.3, // radians of that tipping left when the point is straight overhead (a lean back, not a fall)
+    pointClear: 1.25, // head radii a point a hand is pulled to is kept from the head's middle: the ball is met in front of the face, not inside it
     leadBack: 0.35, // how much of that tipping is backwards rather than upwards
     hangTuck: 0.6, // the most of its length a hanging leg is drawn up by its foot's keyed lift
     hangTuckOver: 0.2, // leg lengths clear of the ground over which that drawing-up comes on
@@ -1046,7 +1048,7 @@
   /**
    * Hands lead the head: while a hand is pulled to a point, the trunk tips up and back off the line to it (about the
    * middle of the shoulders, which stays where it was) until the head is behind the hand along that line - as
-   * far as `TUNING.leadMost` allows. A long-armed body is left alone; a short-armed, big-headed one dives with
+   * or clear of it to one side - as far as `TUNING.leadMost` allows. A long-armed body is left alone; a short-armed, big-headed one dives with
    * its body across the line and its arm out along it, instead of head first.
    * @returns {boolean} whether the pose changed (the world transforms are then stale)
    */
@@ -1096,7 +1098,13 @@
     const off = Math.hypot(offX, offY, offZ);
     const aside = (headX * offX + headY * offY + headZ * offZ) / off;
     const size = Math.hypot(along, aside);
-    const angle = clamp(Math.acos(clamp(most / size, -1, 1)) - Math.atan2(aside, along), 0, TUNING.leadMost) * pull;
+    // Tipping up towards standing is free; tipping over backwards under a point overhead is not: only a lean.
+    const level = Math.sqrt(Math.max(0, 1 - lineY * lineY));
+    const furthest = TUNING.leadMost * level + TUNING.leadOverhead * (1 - level);
+    // Enough is the lesser of: the head behind the hand, or the head clear of the line (the ball then passes its face).
+    const behind = Math.acos(clamp(most / size, -1, 1));
+    const beside = Math.asin(clamp((TUNING.pointClear * measured.headRadius) / size, 0, 1));
+    const angle = clamp(Math.min(behind, beside) - Math.atan2(Math.max(aside, 0), along), 0, furthest) * pull;
     if (!(angle > 0)) return false;
     // A turn about the axis line x off, in the world, laid on the carrier inside its parent's frame.
     const half = Math.sin(angle / 2) / off;
@@ -1124,6 +1132,33 @@
     const sine = Math.sin(motion.heading);
     const cosine = Math.cos(motion.heading);
     shiftCarrier(motion, measured, movedX * cosine - movedZ * sine, movedY, movedX * sine + movedZ * cosine);
+    return true;
+  };
+
+  /**
+   * The ball is not in the head: while a hand is pulled to a point, the body backs off (or ducks) until the
+   * point is `TUNING.pointClear` head radii from the head's middle. A body whose arms reach past its head never
+   * needs it; one whose hands cannot get above its head meets a high ball in front of its face.
+   * @returns {boolean} whether the pose changed (the world transforms are then stale)
+   */
+  const clearHead = (motion, acting) => {
+    const measured = acting.rig;
+    const side = pulls.hand[0] >= pulls.hand[1] ? 0 : 1;
+    const pull = pulls.hand[side];
+    if (pull <= 0 || measured.head < 0 || !(measured.headRadius > 0)) return false;
+    const { translation } = motion.world;
+    const head = measured.head * VECTOR_STRIDE;
+    const point = pulls.handPoint[side] * VECTOR_STRIDE;
+    const offsetX = translation[head] - acting.points[point];
+    const offsetY = translation[head + 1] + measured.headRadius * measured.stretch[1] - acting.points[point + 1];
+    const offsetZ = translation[head + 2] - acting.points[point + 2];
+    const distance = Math.hypot(offsetX, offsetY, offsetZ);
+    const missing = (TUNING.pointClear * measured.headRadius - distance) * pull;
+    if (!(missing > 0) || distance < TINY) return false;
+    const share = missing / distance;
+    const sine = Math.sin(motion.heading);
+    const cosine = Math.cos(motion.heading);
+    shiftCarrier(motion, measured, (offsetX * cosine - offsetZ * sine) * share, offsetY * share, (offsetX * sine + offsetZ * cosine) * share);
     return true;
   };
 
@@ -1419,6 +1454,10 @@
     motion.isWorldCurrent = false;
     refreshWorld(motion);
     if (leadHands(motion, acting)) {
+      motion.isWorldCurrent = false;
+      refreshWorld(motion);
+    }
+    if (clearHead(motion, acting)) {
       motion.isWorldCurrent = false;
       refreshWorld(motion);
     }
