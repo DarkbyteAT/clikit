@@ -16,8 +16,8 @@
   const { html, css } = Kit.ui;
 
   const BACKDROP_COLOR = 0x141a2c;
-  /** The grid of cells, and how much of a cell's height a 2 m tall body takes. */
-  const LAYOUT = Object.freeze({ columns: 2, rows: 3, bodyHeightShare: 0.62, groundShare: 0.86, tallestMetres: 2.3, labelSize: 12, labelGap: 15, labelInset: 8 });
+  /** The grid of cells; a body is scaled to fill `heightShare` of its cell's height or `widthShare` of its width each side of centre, whichever is tighter. */
+  const LAYOUT = Object.freeze({ columns: 2, rows: 3, heightShare: 0.56, widthShare: 0.4, groundShare: 0.88, labelSize: 10.5, labelGap: 14, labelInset: 8 });
   const COLORS = Object.freeze({ label: '#c9d3ea', dim: '#7f8db0', ground: '#2a3554', target: '#ffd166', chain: '#5ad1a0' });
   /** Radians per second each body turns, so the 3D skeleton reads as 3D through a 2D projection. */
   const TURN_RATE = 0.5;
@@ -32,6 +32,8 @@
   const ROLL_EVERY = 1.6;
   const TABLE_SEED = 20261116;
   const MARK_RADIUS = 5;
+  /** A body is never treated as smaller than this (metres) when a cell is scaled to it. */
+  const SMALLEST_SPAN = 0.2;
   const FULL_TURN = Math.PI * 2;
   const { VECTOR_STRIDE } = Kit.rig;
 
@@ -45,16 +47,28 @@
     const catalog = Kit.body.catalog(Kit.body.samples.CATALOG);
     const bakery = catalog.bakery();
     const actor = (title, bake) => {
-      const masses = new Float32Array(bake.plan.boneCount);
-      const pose = Kit.body.createPose(bake.plan);
-      const world = Kit.body.worldTransforms(bake.plan, bake.rest, Kit.body.createPose(bake.plan));
+      const { plan } = bake;
+      const masses = new Float32Array(plan.boneCount);
+      const pose = Kit.body.createPose(plan);
+      const world = Kit.body.worldTransforms(plan, bake.rest, Kit.body.createPose(plan));
+      // How tall and how wide the body is at rest, so each cell can be scaled to what it shows (a fish is not a giant).
+      const point = new Float32Array(VECTOR_STRIDE);
+      let height = 0;
+      let reach = 0;
+      for (let bone = 0; bone < plan.boneCount; bone++) {
+        Kit.body.tailPosition(plan, world, bone, point);
+        height = Math.max(height, point[1], world.translation[bone * VECTOR_STRIDE + 1]);
+        reach = Math.max(reach, Math.hypot(point[0], point[2]), Math.hypot(world.translation[bone * VECTOR_STRIDE], world.translation[bone * VECTOR_STRIDE + 2]));
+      }
       return {
         title,
         bake,
         pose,
         world,
-        note: `${bake.plan.boneCount} bones, ${Kit.body.boneMasses(bake.plan, world, masses).toFixed(1)} kg`,
-        abilities: Kit.body.capabilityNames(bake.plan.capabilities).join(' '),
+        height,
+        reach,
+        note: `${plan.boneCount} bones, ${Kit.body.boneMasses(plan, world, masses).toFixed(1)} kg`,
+        abilities: Kit.body.capabilityNames(plan.capabilities).join(' '),
       };
     };
     const swordPlan = catalog.parts.sword.plan;
@@ -137,7 +151,7 @@
       };
 
       const drawCell = (context, member, column, row, cellWidth, cellHeight, turn, pixelRatio) => {
-        view.scale = (cellHeight * LAYOUT.bodyHeightShare) / LAYOUT.tallestMetres;
+        view.scale = Math.min((cellHeight * LAYOUT.heightShare) / Math.max(member.height, SMALLEST_SPAN), (cellWidth * LAYOUT.widthShare) / Math.max(member.reach, SMALLEST_SPAN));
         view.centerX = (column + 0.5) * cellWidth;
         view.groundY = (row + LAYOUT.groundShare) * cellHeight;
         view.turn = turn;

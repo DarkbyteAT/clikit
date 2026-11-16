@@ -20,6 +20,7 @@
     openSocketColor: '#5ad1a0',
     filledSocketColor: '#f2788a',
     thinnestBone: 1.5,
+    thickestBone: 9,
     jointRadius: 2,
     socketRadius: 4,
     socketLineWidth: 1.5,
@@ -28,6 +29,7 @@
   const CONTEXT_METHODS = ['beginPath', 'moveTo', 'lineTo', 'stroke', 'arc', 'fill', 'closePath'];
   const VECTOR_STRIDE = 3;
   const FULL_TURN = Math.PI * 2;
+  const GIRTH_TO_WIDTH = 0.5;
 
   /** Scratch points reused by every draw call, so drawing allocates nothing. */
   const worldPoint = new Float32Array(VECTOR_STRIDE);
@@ -62,6 +64,9 @@
     return out;
   };
 
+  /** Line width for a bone: half its girth on screen, kept between the thinnest and thickest a stick figure reads at. */
+  const boneWidth = (bodyPlan, world, view, bone) => Math.min(STYLE.thickestBone, Math.max(STYLE.thinnestBone, bodyPlan.girth[bone] * world.uniform[bone] * view.scale * GIRTH_TO_WIDTH));
+
   const strokeLine = (context, from, to, color, width) => {
     context.strokeStyle = color;
     context.lineWidth = width;
@@ -95,13 +100,13 @@
       const at = bone * VECTOR_STRIDE;
       const parentBone = bodyPlan.parent[bone];
       const color = bodyPlan.roles[bone] & propMask ? STYLE.propColor : boneColor;
-      const width = Math.max(STYLE.thinnestBone, bodyPlan.girth[bone] * world.uniform[bone] * view.scale * 0.5);
+      const width = boneWidth(bodyPlan, world, view, bone);
       project(position[at], position[at + 1], position[at + 2], view, screenTo);
       // The ground bone at the origin is a reference point, not a limb: nothing is drawn to it or from it.
       if (parentBone > 0) {
         const parentAt = parentBone * VECTOR_STRIDE;
         project(position[parentAt], position[parentAt + 1], position[parentAt + 2], view, screenFrom);
-        strokeLine(context, screenFrom, screenTo, color, Math.max(STYLE.thinnestBone, bodyPlan.girth[parentBone] * world.uniform[parentBone] * view.scale * 0.5));
+        strokeLine(context, screenFrom, screenTo, color, boneWidth(bodyPlan, world, view, parentBone));
       }
       if (bodyPlan.tail[at] !== 0 || bodyPlan.tail[at + 1] !== 0 || bodyPlan.tail[at + 2] !== 0) {
         Kit.body.tailPosition(bodyPlan, world, bone, worldPoint);

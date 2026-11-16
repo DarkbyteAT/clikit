@@ -227,6 +227,14 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const whole = Kit.rig.worldTransforms(parents, local, Kit.rig.create(3));
     close(whole.uniform[2], 3, 1e-6, 'uniform size is inherited');
     close(whole.translation[1 * 3 + 1], 3, 1e-6, 'and scales offsets below it');
+    // The three-axis scale stops at the joint's own children, on every axis: a grandchild keeps its own offset.
+    const long = makeArm(3);
+    for (let axis = 0; axis < 3; axis++) long.local.scale[1 * 3 + axis] = 2;
+    long.local.translation[2 * 3] = 1;
+    long.local.translation[3 * 3] = 1;
+    Kit.rig.worldTransforms(long.parents, long.local, long.world);
+    same(positionOf(long.world, 2), [2, 3, 0], "joint 1's stretch doubles its child's offset on X and Y");
+    same(positionOf(long.world, 3), [3, 4, 0], 'and is not handed on to the grandchild');
     // A partial range gives what the full pass gives.
     local.translation[2 * 3] = 0.5;
     const partial = Kit.rig.worldTransforms(parents, local, whole, 0, 0, 0, 0, 2, 3);
