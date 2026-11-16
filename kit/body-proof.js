@@ -638,7 +638,8 @@
 
       const Labels = () => {
         const { columns, rows, texts } = labels.value;
-        return html`<div style=${`position:absolute;inset:0;display:grid;grid-template-columns:repeat(${columns},1fr);grid-template-rows:repeat(${rows},1fr);pointer-events:none`}>
+        // Fixed to the window, which the canvas fills (the HUD layer is inset from it): a label sits at the foot of its own cell.
+        return html`<div style=${`position:fixed;inset:0;display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));grid-template-rows:repeat(${rows},minmax(0,1fr));pointer-events:none`}>
           ${texts.map((text) => html`<span style="align-self:end;justify-self:center;font:500 11px system-ui,sans-serif;color:#fff;background:rgba(0,0,0,.45);padding:1px 5px;border-radius:4px;margin-bottom:2px;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis">${text}</span>`)}
         </div>`;
       };
@@ -649,7 +650,6 @@
         if (!cells.length) return null;
         const cross = MARK_CROSS * MARK_UNITS;
         const at = (value) => value * MARK_UNITS;
-        // Fixed to the window, which the canvas fills: the HUD layer the labels sit in is inset from it.
         return html`<div style=${`position:fixed;inset:0;display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));grid-template-rows:repeat(${rows},minmax(0,1fr));pointer-events:none`}>
           ${cells.map(
             (cell) => html`<svg viewBox=${`0 0 ${aspect * MARK_UNITS} ${MARK_UNITS}`} preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:hidden">
