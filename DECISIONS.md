@@ -456,3 +456,44 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Chosen.** `tools/bench-body.js` loads the kit with `vm.runInThisContext`. `tools/bench.js` still uses a
   sandbox; its scores are relative to a calibration loop in the same sandbox, which cancels some of this but not
   all (the calibration reads fewer globals). Proposal for the tooling owner: load the kit the same way there.
+
+## The stylised look (Kit.look): palette-indexed toon and pixel shading
+
+- **Colour space of ramps: OKLCH** (in `Kit.palette.tones`). Options: the linear RGB formula of the earlier
+  project (cheap, but equal RGB steps crush the darks and the violet mix greys warm colours), HSL (already in
+  `Kit.blend.hsl` and used by `Kit.palette.ramp`; its lightness is not perceptual, so a yellow and a blue ramp
+  with the same numbers have different contrast), OKLCH (about 40 lines of matrices; equal lightness steps look
+  equal, hue can turn without changing lightness, chroma can be reduced to fit the gamut without moving either).
+  Chosen OKLCH; shadows turn up to 26 degrees toward hue 285 and gain 12% chroma, the highlight turns up to 14
+  degrees toward hue 95 and loses 30%. The hue-based `Kit.palette.ramp` is kept as it is for the body catalogue;
+  its shades load into the same atlas as authored tones.
+- **One palette model.** The look's colour code was folded into `kit/palette.js` after the body system landed
+  with its own `Kit.palette`; a second module would have been a second source of truth for the same fact.
+- **Palette as an 8 x N texture** (tone columns 0..5, a spare, ink in column 7; one row per ramp). A material
+  stores a row and nothing else. Recolouring a character rewrites its rows (O(ramps), no material touched).
+  Rejected: a texture per character (a low-resolution resolve pass could not know which one a texel needs).
+- **Toon material: ShaderMaterial over three.js's skinning and instancing chunks**, not `onBeforeCompile` on
+  MeshToonMaterial. The palette contract needs the fragment's last word (an index or a table colour, never lit,
+  never tone mapped); patching the standard chunks back out is fragile across three.js releases. Cost: no scene
+  lights, shadows or fog (one view-space key light), no morph targets.
+- **Outlines: inverted hull for the native-resolution looks, screen-space ink for the pixel look.** Measured on
+  the showcase (two figures, 54 meshes, 390 x 780, software GL): hull 95 draw calls and 48 088 triangles, 42 ms;
+  screen-space ink at native resolution 56 calls, 26 224 triangles, two 390 x 780 targets, 25 ms; ink at
+  98 x 195 texels 56 calls, 12 ms; hull at 98 x 195 97 calls, 18 ms. The hull is geometry, so the canvas's MSAA
+  smooths it and it needs no target; it doubles draw calls and cannot draw a one-pixel line. Ink is exactly one
+  texel and knows ink groups (no seam between two pieces of one garment, none on eyes), but indices cannot be
+  anti-aliased, so at native resolution its edges are stair-stepped. Hence hull for toon and soft toon, ink for
+  pixel. The software timings also include MSAA on the direct path, so they do not rank the two on a phone GPU.
+- **Index target: one RGBA8 texture (ramp, tone, ink group, 8-bit view depth), no MRT, no depth texture, no
+  normal target.** WebGL1-safe (the shell creates WebGL2 when it can; verified `isWebGL2` true in the test
+  browser, and nothing here needs it). Eight bits of depth are enough because the range is fitted round the
+  figures each frame. Given up: crease lines from normals.
+- **Own frame, outside the post chain.** `kit/shell.js` now lets a game return `render(renderer, ctx)`. Bloom and
+  ACES would change palette colours; a readback of a flat swatch matches the palette hex exactly (gap 0 of 255)
+  on all three presets.
+- **Pixel shimmer: what helped.** Texel snapping plus dither anchored to the figure: 0% of texels differ from a
+  whole-texel shift of the first frame while a figure moves 0.23 texel per frame; snapping with screen-fixed
+  dither 4.7%; no snapping 15-16%. It only worked once the low-resolution camera covered whole texels (texels
+  were 0.5% wider than tall). Under rotation the dither space barely matters at strength 0.12 (0.2% of texels
+  flicker per half degree with none, screen-fixed or figure-fixed dither; surface-fixed dither is worst at
+  0.5%); rounding the turn to 24 facings is what removes crawl between facings.

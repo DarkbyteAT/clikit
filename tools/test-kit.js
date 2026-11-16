@@ -2581,4 +2581,191 @@ for (const file of ['games/arena-data.js', 'games/arena-sim.js', 'games/arena-bo
 }
 // ---- Kit.body and the generic subsystems it is composed of ----
 require('./test-body.js')({ Kit, sandbox, test, assert });
+// ---- the look: Kit.palette's tones and atlas (kit/palette.js, loaded by test-body.js above) and kit/look-settings.js ----
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-settings.js'), 'utf8'), sandbox, { filename: 'look-settings.js' });
+{
+  const look = Kit.look;
+  const palette = Kit.palette;
+  const lightnessOf = (rgb) => palette.toOklch(Array.from(rgb)).lightness;
+  const isRising = (values, isStrict) => values.every((value, index) => index === 0 || (isStrict ? value > values[index - 1] : value >= values[index - 1]));
+  const rowBytes = (atlas, row) => Array.from(atlas.data.subarray(row * atlas.width * 4, (row + 1) * atlas.width * 4)).join();
+
+  test('palette: OKLCH round-trips sRGB bytes and pulls an unshowable colour into gamut without changing its lightness', () => {
+    for (const hex of ['#000000', '#ffffff', '#c8453a', '#2f8f9d', '#e9b48c', '#7ff5e1', '#0000ff']) {
+      const rgb = palette.rgbOf(hex);
+      const back = palette.fromOklch(palette.toOklch(rgb));
+      rgb.forEach((channel, index) => assert.ok(Math.abs(channel - back[index]) <= 1, `${hex} channel ${index}: ${channel} -> ${back[index]}`));
+    }
+    assert.strictEqual(palette.hexOf(palette.rgbOf(0xff8000)), '#ff8000');
+    const vivid = palette.fromOklch({ lightness: 0.6, chroma: 0.5, hue: 150 }); // far outside sRGB
+    assert.ok(Math.abs(lightnessOf(vivid) - 0.6) < 0.02, `lightness kept: ${lightnessOf(vivid)}`);
+    assert.ok(palette.toOklch(vivid).chroma < 0.5, 'chroma was given up');
+    assert.throws(() => palette.rgbOf('not a colour'), /not a colour/);
+  });
+
+  test('palette.tones: every generated ramp rises in lightness at every tone count, and keeps its base byte-exact', () => {
+    for (const paletteSet of Object.values(palette.SETS)) {
+      for (const id of paletteSet.rampIds) {
+        const isAuthored = typeof paletteSet.ramps[id] === 'object';
+        for (let toneCount = 2; toneCount <= 6; toneCount++) {
+          const ramp = palette.tones(paletteSet.ramps[id], toneCount);
+          assert.strictEqual(ramp.tones.length, toneCount);
+          assert.ok(isRising(ramp.tones.map(lightnessOf), !isAuthored), `${paletteSet.name}.${id} at ${toneCount} tones: ${ramp.tones.map((tone) => lightnessOf(tone).toFixed(3))}`);
+          assert.ok(lightnessOf(ramp.ink) <= lightnessOf(ramp.tones[0]), `${paletteSet.name}.${id}: ink is no lighter than the darkest tone`);
+          if (!isAuthored) assert.strictEqual(palette.hexOf(ramp.tones[Math.max(1, toneCount - 2)]), paletteSet.ramps[id], 'the base sits second from the top');
+        }
+      }
+    }
+    // Control: the rising check does fail for a ramp authored the wrong way round.
+    assert.strictEqual(isRising(palette.tones({ tones: ['#ffffff', '#000000'] }, 4).tones.map(lightnessOf), false), false);
+    assert.throws(() => palette.tones('#c8453a', 7), /toneCount/);
+    assert.throws(() => palette.tones({}, 4), /base colour/);
+  });
+
+  test('palette.tones: shadows turn toward the cool hue and highlights pale, unlike a plain darkening', () => {
+    const { tones } = palette.tones('#c8453a', 5); // a red: hue about 28 degrees
+    const [darkest, base, highlight] = [tones[0], tones[3], tones[4]].map((tone) => palette.toOklch(tone));
+    const awayFromShadowHue = (hue) => Math.abs(((hue - palette.TONE_SHAPE.shadowHue + 540) % 360) - 180);
+    assert.ok(awayFromShadowHue(darkest.hue) < awayFromShadowHue(base.hue) - 10, `shadow hue ${darkest.hue.toFixed(1)} vs base ${base.hue.toFixed(1)}`);
+    assert.ok(highlight.chroma < base.chroma, 'the highlight is paler');
+    // A grey has no hue of its own, yet its shadow still leans cool: blue above red.
+    const greyShadow = palette.tones('#808080', 4).tones[0];
+    assert.ok(greyShadow[2] > greyShadow[0], `grey shadow ${greyShadow}`);
+    // Authored tones are used as given and resampled by nearest index.
+    assert.deepStrictEqual(Array.from(palette.tones({ tones: ['#000000', '#808080', '#ffffff'] }, 5).tones, palette.hexOf), ['#000000', '#808080', '#808080', '#ffffff', '#ffffff']);
+  });
+
+  test('palette.atlas: a palette swap rewrites only the rows of its own block', () => {
+    const atlas = palette.atlas({ rows: 32, toneCount: 4 });
+    const hero = atlas.load(palette.SETS.ember);
+    const rival = atlas.load(palette.SETS.tide);
+    assert.strictEqual(rival.offset, hero.rampIds.length, 'blocks do not overlap');
+    assert.strictEqual(hero.rows.cloth, 2);
+    assert.strictEqual(palette.hexOf(atlas.colorAt(hero.rows.cloth, 2)), '#c8453a', 'the base colour is in the second-lightest column');
+    const before = Array.from({ length: atlas.height }, (_, row) => rowBytes(atlas, row));
+    const versionBefore = atlas.version;
+    atlas.write(hero, palette.SETS.moss);
+    const changed = before.map((bytes, row) => bytes !== rowBytes(atlas, row));
+    // "ground" is the same colour in both palettes, so that one row legitimately stays as it was.
+    hero.rampIds.forEach((id) => assert.strictEqual(changed[hero.rows[id]], id !== 'ground', `hero row ${id}`));
+    assert.ok(changed.slice(hero.rampIds.length).every((isChanged) => !isChanged), 'no row outside the block changed');
+    assert.ok(atlas.version > versionBefore, 'the texture is told to upload');
+
+    const beforeRamp = Array.from({ length: atlas.height }, (_, row) => rowBytes(atlas, row));
+    atlas.writeRamp(rival, 'hair', '#ff00ff');
+    const changedRows = beforeRamp.map((bytes, row) => bytes !== rowBytes(atlas, row)).flatMap((isChanged, row) => (isChanged ? [row] : []));
+    assert.deepStrictEqual(changedRows, [rival.rows.hair], 'writeRamp touches one row');
+    assert.strictEqual(palette.SETS.tide.ramps.hair, '#2f3e63', 'the shared named palette was not edited');
+
+    assert.throws(() => atlas.write(hero, palette.set('odd', { skin: '#ffffff' })), /same ramps/);
+    assert.throws(() => atlas.writeRamp(hero, 'tail', '#ffffff'), /no ramp "tail"/);
+    assert.throws(() => palette.atlas({ rows: 8 }).load(palette.SETS.ember), /no room/);
+    assert.throws(() => palette.set('empty', {}), /at least one ramp/);
+  });
+
+  test('palette.atlas.retone rebuilds every block at the new tone count and keeps ink in the last column', () => {
+    const atlas = palette.atlas({ toneCount: 3 });
+    const hero = atlas.load(palette.SETS.ember);
+    const inkBefore = atlas.colorAt(hero.rows.skin, palette.INK_COLUMN).join();
+    const shadowAtThree = lightnessOf(atlas.colorAt(hero.rows.skin, 0));
+    assert.strictEqual(palette.hexOf(atlas.colorAt(hero.rows.skin, 1)), '#e9b48c', 'three tones: base in column 1');
+    atlas.retone(6);
+    assert.strictEqual(atlas.toneCount, 6);
+    assert.ok(lightnessOf(atlas.colorAt(hero.rows.skin, 0)) < shadowAtThree - 0.05, 'more shadow tones reach deeper than one gentle step');
+    assert.strictEqual(palette.hexOf(atlas.colorAt(hero.rows.skin, 4)), '#e9b48c', 'six tones: base in column 4');
+    assert.ok(lightnessOf(atlas.colorAt(hero.rows.skin, palette.INK_COLUMN)) < lightnessOf(atlas.colorAt(hero.rows.skin, 0)), 'ink is darker than the darkest tone');
+    assert.strictEqual(atlas.colorAt(hero.rows.skin, palette.INK_COLUMN).join(), inkBefore, 'the outline colour does not change with the band count');
+  });
+
+  test('look.bandOf: a light value on an edge belongs to the lighter band; edgesFor pads with unreachable edges', () => {
+    const edges = look.BAND_EDGES[4];
+    assert.ok(edges[0] < edges[1] && edges[1] < edges[2], 'the edges under test rise');
+    assert.strictEqual(look.bandOf(-1, edges), 0);
+    assert.strictEqual(look.bandOf(edges[0] - 1e-9, edges), 0, 'just below the first edge');
+    assert.strictEqual(look.bandOf(edges[0], edges), 1, 'exactly on the first edge');
+    assert.strictEqual(look.bandOf(edges[2], edges), 3, 'exactly on the last edge');
+    assert.strictEqual(look.bandOf(1, edges), 3);
+    for (let toneCount = 2; toneCount <= 6; toneCount++) {
+      const padded = look.edgesFor(toneCount);
+      assert.strictEqual(padded.length, look.MAX_EDGES);
+      assert.ok(isRising(Array.from(padded), false), `edges for ${toneCount} tones never fall`);
+      // However bright the light (dither can push it past 1), padding never adds a tone.
+      assert.strictEqual(look.bandOf(1.5, padded), toneCount - 1, `${toneCount} tones top out at tone ${toneCount - 1}`);
+    }
+    assert.throws(() => look.edgesFor(7), /no band edges/);
+  });
+
+  test('look.bayerAt: sixteen distinct thresholds, periodic, and equal to the closed form the shader uses', () => {
+    const fract = (value) => value - Math.floor(value);
+    const bayer2 = (column, row) => fract(Math.floor(column) / 2 + Math.floor(row) * Math.floor(row) * 0.75);
+    const shaderBayer = (column, row) => bayer2(column / 2, row / 2) * 0.25 + bayer2(column, row);
+    const seen = new Set();
+    for (let row = 0; row < 4; row++) {
+      for (let column = 0; column < 4; column++) {
+        seen.add(look.bayerAt(column, row));
+        near(look.bayerAt(column, row), shaderBayer(column, row), `cell ${column},${row}`);
+        assert.strictEqual(look.bayerAt(column + 4, row - 8), look.bayerAt(column, row), 'repeats every 4, also for negative cells');
+      }
+    }
+    assert.strictEqual(seen.size, 16);
+    near(Array.from(seen).reduce((sum, value) => sum + value, 0) / 16, 0.46875, 'the mean the shader subtracts');
+  });
+
+  test('look grid helpers: texel snapping, yaw steps and whole-number scale', () => {
+    near(look.snapToTexel(1.26, 0.5), 1.5, 'nearest texel');
+    near(look.snapToTexel(-0.26, 0.5), -0.5, 'negative side');
+    near(look.snapToTexel(1.26, 0), 1.26, 'no grid, no snap');
+    near(look.stepYaw(0.3, 0), 0.3, 'continuous');
+    near(look.stepYaw(0.3, 8), 0, 'below half a step rounds down');
+    near(look.stepYaw(0.5, 8), Math.PI / 4, 'above half a step rounds up');
+    assert.strictEqual(look.texelScale(780, 195), 4);
+    assert.strictEqual(look.texelScale(1560, 195), 8, 'a 2x screen keeps the same texel count');
+    assert.strictEqual(look.texelScale(780, 0), 1, 'native');
+    assert.strictEqual(look.texelScale(100, 900), 1, 'never below one pixel per texel');
+  });
+
+  test('look.weldNormals: coincident vertices share one averaged normal; lone and cancelling ones keep their own', () => {
+    // Three copies of a cube corner (one per face), one vertex elsewhere, and a back-to-back pair.
+    const positions = [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 5, 5, 5, 5, 5, 5];
+    const normals = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, -1];
+    const welded = Array.from(look.weldNormals(positions, normals));
+    const third = 1 / Math.sqrt(3);
+    for (let index = 0; index < 9; index++) assert.ok(Math.abs(welded[index] - third) < 1e-6, `corner component ${index}: ${welded[index]}`);
+    assert.deepStrictEqual(welded.slice(9, 12), [0, 1, 0], 'a lone vertex is unchanged');
+    assert.deepStrictEqual(welded.slice(12), [0, 0, 1, 0, 0, -1], 'opposite normals do not collapse to zero');
+  });
+
+  test('look.settings: presets resolve, overrides apply, and the indexed path is chosen only when needed', () => {
+    assert.strictEqual(look.settings('toon').isIndexed, false);
+    assert.strictEqual(look.settings('soft').isIndexed, false);
+    assert.strictEqual(look.settings('pixel').isIndexed, true);
+    assert.strictEqual(look.settings('toon', { outline: 'ink' }).isIndexed, true, 'screen-space ink needs the index target');
+    assert.strictEqual(look.settings('pixel', { outline: 'hull' }).isIndexed, true, 'low resolution needs it too');
+    assert.strictEqual(look.settings('pixel', { outline: 'hull', pixelRows: 0 }).isIndexed, false);
+    assert.strictEqual(look.settings('toon', { toneCount: 5 }).toneCount, 5);
+    assert.strictEqual(look.settings('toon').label, undefined, 'editor text is not a setting');
+    assert.throws(() => look.settings('sepia'), /no preset "sepia"/);
+    assert.throws(() => look.settings('toon', { toneCount: 9 }), /toneCount/);
+    // Every knob edits a field every preset defines, and a choice knob offers each preset's value.
+    for (const knob of look.KNOBS) {
+      for (const [id, preset] of Object.entries(look.PRESETS)) {
+        assert.ok(knob.id in preset, `preset ${id} lacks ${knob.id}`);
+        if (knob.type === 'choice') assert.ok(knob.options.some((option) => option.value === preset[knob.id]), `${knob.id} cannot show ${id}'s value ${preset[knob.id]}`);
+        if (knob.type === 'range') assert.ok(preset[knob.id] >= knob.min && preset[knob.id] <= knob.max, `${knob.id} range excludes ${id}'s value`);
+      }
+    }
+  });
+  test('palette.atlas takes what a body bake holds: its ramps by index, a row per bone through boneRamp', () => {
+    const bake = Kit.body.catalog(Kit.body.samples.CATALOG).bakery().bakeRecipe({ species: 'human', seed: 1, overrides: { 'fill:handRight': 'sword' } });
+    const atlas = palette.atlas({ toneCount: 5 });
+    atlas.load(palette.SETS.ember);
+    const worn = atlas.load(bake.ramps);
+    const blade = bake.boneRamp[bake.plan.boneIndex('handRight/blade')];
+    assert.strictEqual(worn.rows[blade], worn.offset + blade, 'a ramp index is a row offset inside the block');
+    // The five shades the body system authored are the five tone columns, byte for byte.
+    assert.deepStrictEqual(Array.from({ length: 5 }, (_unused, column) => palette.hexOf(atlas.colorAt(worn.rows[blade], column))), Array.from(bake.ramps[blade].shades));
+    assert.strictEqual(palette.hexOf(palette.tones(Kit.palette.ramp('moss', 0.3), 5).tones[2]), Kit.palette.ramp('moss', 0.3).shades[2], 'tones() reads a Ramp as authored tones');
+    assert.strictEqual(Kit.palette.shade(Kit.palette.ramp('moss', 0.3), 0), Kit.palette.ramp('moss', 0.3).shades[0], 'the existing shade() still works');
+  });
+}
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

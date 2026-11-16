@@ -351,6 +351,30 @@
     return true;
   }
 
+  /**
+   * Draws one frame. A game that returns `render(renderer, ctx)` from create() draws the frame itself and
+   * bypasses the post chain: for looks that own their colour pipeline (kit/look-view.js writes palette
+   * colours straight to the screen, which bloom and tone mapping would alter). Every other game is drawn
+   * through `post`.
+   * @param {Object} running the `current` record this frame started with
+   * @returns {boolean} false when the game's own render crashed (the menu is already showing)
+   */
+  function drawFrame(running) {
+    const { ctx, game, def } = running;
+    if (!game || !game.render) {
+      post.render(ctx.scene, ctx.camera);
+      return true;
+    }
+    try {
+      game.render(renderer, ctx);
+      return true;
+    } catch (error) {
+      console.error(`[${def.id}] render failed`, error);
+      crash(def, error);
+      return false;
+    }
+  }
+
   let lastFrameTime = performance.now();
 
   function frame(now) {
@@ -369,7 +393,8 @@
     }
     // Shake is applied only for the render and removed straight after, so it never drifts the game's camera.
     ctx.fx.applyShake();
-    post.render(ctx.scene, ctx.camera);
+    const isDrawn = drawFrame(running);
+    if (!isDrawn) return;
     ctx.fx.undoShake();
     governQuality(frameSeconds);
   }
