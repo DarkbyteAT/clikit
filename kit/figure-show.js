@@ -478,7 +478,7 @@
       }),
       /**
        * Sets the screen's state in one call, for scripted captures.
-       * @param {{shown?: string, preset?: string, yaw?: number, turning?: boolean, raised?: boolean, panel?: boolean, edit?: string}} state
+       * @param {{shown?: string, preset?: string, knobs?: Object, yaw?: number, turning?: boolean, raised?: boolean, panel?: boolean, edit?: string}} state
        *   `edit` presses one of the live edits by id ('legs', 'build', 'color', 'hat', 'sword')
        * @returns {boolean}
        * @example Kit.currentGame.apply({ shown: 'human', preset: 'pixel', turning: false, edit: 'hat' })
@@ -486,6 +486,7 @@
       apply(state) {
         if (state.shown) shown.value = state.shown;
         if (state.preset) controls.choosePreset(state.preset);
+        Object.keys(state.knobs || {}).forEach((id) => (controls.knobs[id].value = state.knobs[id]));
         if (state.yaw !== undefined) yaw = state.yaw;
         if (state.turning !== undefined) isTurning.value = state.turning;
         if (state.raised !== undefined) isRaised.value = state.raised;
