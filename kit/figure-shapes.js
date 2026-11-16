@@ -6,8 +6,10 @@
  *
  * Owns:  `Kit.figure.LEVELS` (segment counts per level of detail), `Kit.figure.ACROSS_AXIS` (the extrude
  *        convention), `describeShapes` (a bone of a plan -> its canonical shape descriptors), `shapeKey`,
- *        `buildShape` and the builders behind it (`BUILDERS`), `triangulate` (ear clipping for extrude
- *        outlines) and `writeBoneMatrix` (a bone's world transform as a column-major 4 x 4 matrix).
+ *        `buildShape` and the builders behind it (`BUILDERS`, including `stamps`: the flat polygons of a face),
+ *        the three things any built solid may then have done to it (`scale`, `basis`, `inflate`),
+ *        `smoothProfile`, `triangulate` (ear clipping for extrude and stamp outlines) and `writeBoneMatrix` (a
+ *        bone's world transform as a column-major 4 x 4 matrix).
  * Does not own: the shape data (kit/body-plan.js and a catalogue's plans and parts), which bones get drawn and
  *        in what colour (kit/figure-layout.js), or anything THREE (kit/figure.js wraps these arrays in
  *        BufferGeometry).
@@ -30,10 +32,13 @@
    *   low:    the pixel look's low-resolution target, or a crowd
    */
   const LEVELS = Object.freeze({
-    high: Object.freeze({ edge: 0.022, minAround: 8, maxAround: 24, minRings: 3 }),
-    medium: Object.freeze({ edge: 0.045, minAround: 6, maxAround: 14, minRings: 2 }),
-    low: Object.freeze({ edge: 0.09, minAround: 5, maxAround: 8, minRings: 1 }),
+    high: Object.freeze({ edge: 0.022, minAround: 8, maxAround: 32, minRings: 3, smoothSteps: 4 }),
+    medium: Object.freeze({ edge: 0.045, minAround: 6, maxAround: 14, minRings: 2, smoothSteps: 2 }),
+    low: Object.freeze({ edge: 0.09, minAround: 5, maxAround: 8, minRings: 1, smoothSteps: 1 }),
   });
+  /** Floats per vertex of a stamp's paint (slot, tone, least size in texels) and of its centre (x, y, z, half extent). */
+  const PAINT = 3;
+  const CENTRE = 4;
   const DEFAULT_LEVEL = 'high';
   /** Rings of a sphere per segment around (a quarter turn of rings per quarter turn around). */
   const RINGS_PER_AROUND = 0.25;
@@ -78,6 +83,25 @@
    * @property {number} [across] extrude: the axis the outline's first coordinate lies along
    * @property {number[]} at [x, y, z] offset in bone space
    * @property {number[]} [scale] [x, y, z] stretch about `at` (an egg-shaped head, a torso deeper than wide); absent = none
+   * @property {number[][]} [basis] three unit vectors [across, up, out] in bone space: the solid, built and
+   *   stretched along the bone's axes, is then turned about `at` so its x, y and z lie along them (an ear that
+   *   leans back, a nose on a tilted face); absent = the bone's own axes
+   * @property {number} [inflate] metres every vertex is pushed out along its normal after all of the above: the
+   *   shell a raised region is drawn on (cloth over a limb, hair over a scalp); absent = none
+   * @property {boolean} [smooth] lathe: round the authored profile (a curve through its points) instead of
+   *   joining them with straight runs; `LEVELS[level].smoothSteps` points per run
+   * @property {StampLayer[]} [layers] stamps: flat polygons lying on the bone's surface, drawn in order
+   */
+
+  /**
+   * @typedef {Object} StampLayer
+   * One flat polygon of a `stamps` shape: a layer of an eye, a brow, a lip, a freckle.
+   * @property {number[]} points x, y, z per vertex, in bone space, counter-clockwise seen from outside
+   * @property {number[]} normal unit [x, y, z], out of the surface
+   * @property {number} slot which of the figure's ramps paints it
+   * @property {number} tone a fixed tone, 0 (darkest) .. 1 (lightest) of that ramp
+   * @property {number} [least=0] the fewest target texels its smaller side may cover: the look grows a layer
+   *   that would be smaller (a glint, a pupil) so it survives a low-resolution target
    */
 
   /**
@@ -86,6 +110,8 @@
    * @property {Float32Array} positions 3 per vertex, bone space, metres
    * @property {Float32Array} normals 3 per vertex, unit length, outward
    * @property {Uint16Array|Uint32Array} indices 3 per triangle, counter-clockwise from outside
+   * @property {Float32Array} [paint] stamps only, 3 per vertex: ramp slot, tone 0..1, least size in texels
+   * @property {Float32Array} [centres] stamps only, 4 per vertex: its layer's centre (x, y, z) and smaller half extent, metres
    */
 
   // ---- small vector helpers (allocation is fine here: shapes are built once per distinct key) -----------------------
@@ -290,7 +316,74 @@
   const buildLathe = (shape, level) => {
     const widest = Math.max(...shape.profile.map(([radius]) => radius));
     const { around } = segmentsFor(level, widest);
-    return placeInFrame(revolve(profileWithNormals(shape.profile), around), frameAlong(unitAxis(shape.axis)), shape.at);
+    // `revolve` wants the profile rising; one authored from the top down (a skirt that falls from its waist) is
+    // read from its hem up, or its faces would wind inwards and be culled.
+    const rising = shape.profile[0][1] <= shape.profile[shape.profile.length - 1][1] ? shape.profile : shape.profile.slice().reverse();
+    const profile = shape.smooth ? smoothProfile(rising, LEVELS[level].smoothSteps) : rising;
+    return placeInFrame(revolve(profileWithNormals(profile), around), frameAlong(unitAxis(shape.axis)), shape.at);
+  };
+
+  /**
+   * A curve through the points of a profile (a uniform Catmull-Rom spline: it passes through every authored
+   * point, so dials that move a point still move the surface there), sampled `steps` times per run.
+   * @param {number[][]} points [[radius, height], ...]
+   * @param {number} steps samples per run between two authored points; 1 returns the points themselves
+   * @returns {number[][]} radii clamped at 0 (the curve may not cross the axis)
+   * @complexity O(points x steps)
+   * @example Kit.figure.smoothProfile([[0, 0], [0.1, 0.1], [0, 0.2]], 4).length // 9
+   */
+  const smoothProfile = (points, steps) => {
+    if (steps <= 1 || points.length < 3) return points;
+    const at = (index) => points[Math.max(0, Math.min(points.length - 1, index))];
+    /** Catmull-Rom between `second` and `third` at `share` 0..1, for one coordinate. */
+    const blend = (first, second, third, fourth, share) =>
+      0.5 * (2 * second + (third - first) * share + (2 * first - 5 * second + 4 * third - fourth) * share * share + (3 * second - first - 3 * third + fourth) * share * share * share);
+    const curve = [];
+    for (let run = 0; run + 1 < points.length; run++) {
+      const [before, from, to, after] = [at(run - 1), at(run), at(run + 1), at(run + 2)];
+      for (let step = 0; step < steps; step++) curve.push([0, 1].map((coordinate) => blend(before[coordinate], from[coordinate], to[coordinate], after[coordinate], step / steps)));
+    }
+    curve.push(points[points.length - 1].slice());
+    return curve.map(([radius, height]) => [Math.max(0, radius), height]);
+  };
+
+  /**
+   * Flat polygons on a bone's surface (`StampLayer`s), as one surface: each layer triangulated by ear clipping,
+   * its vertices carrying the layer's paint and centre so one draw call paints a whole face.
+   * @param {ShapeDescriptor} shape
+   * @returns {ShapeArrays} with `paint` and `centres`
+   */
+  const buildStamps = (shape) => {
+    const positions = [];
+    const normals = [];
+    const paint = [];
+    const centres = [];
+    const indices = [];
+    shape.layers.forEach((layer) => {
+      const base = positions.length / VECTOR;
+      const count = layer.points.length / VECTOR;
+      const axes = [0, 1, 2].map((axis) => Array.from({ length: count }, (_unused, vertex) => layer.points[vertex * VECTOR + axis]));
+      const centre = axes.map((values) => (Math.min(...values) + Math.max(...values)) / 2);
+      // The two tangent axes of the layer's plane, to flatten it for triangulation and to measure its smaller side.
+      const [across, , out] = frameAlong(layer.normal);
+      const flat = Array.from({ length: count }, (_unused, vertex) => [0, 1, 2].reduce((sums, axis) => [sums[0] + (axes[axis][vertex] - centre[axis]) * out[axis], sums[1] + (axes[axis][vertex] - centre[axis]) * across[axis]], [0, 0]));
+      const halfExtent = Math.min(...[0, 1].map((coordinate) => (Math.max(...flat.map((point) => point[coordinate])) - Math.min(...flat.map((point) => point[coordinate]))) / 2));
+      for (let vertex = 0; vertex < count; vertex++) {
+        positions.push(layer.points[vertex * VECTOR] + shape.at[0], layer.points[vertex * VECTOR + 1] + shape.at[1], layer.points[vertex * VECTOR + 2] + shape.at[2]);
+        normals.push(...layer.normal);
+        paint.push(layer.slot, layer.tone, layer.least || 0);
+        centres.push(centre[0] + shape.at[0], centre[1] + shape.at[1], centre[2] + shape.at[2], halfExtent);
+      }
+      // `triangulate` returns counter-clockwise triangles in the flattened plane, whose axes (out x across = normal) keep that winding in space.
+      triangulate(flat).forEach((corner) => indices.push(base + corner));
+    });
+    return {
+      positions: Float32Array.from(positions),
+      normals: Float32Array.from(normals),
+      indices: indexArray(indices, positions.length / VECTOR),
+      paint: Float32Array.from(paint),
+      centres: Float32Array.from(centres),
+    };
   };
 
   /**
@@ -403,7 +496,27 @@
   };
 
   /** Builders by shape kind. `none` has none: nothing is drawn. */
-  const BUILDERS = Object.freeze({ capsule: buildCapsule, sphere: buildSphere, box: buildBox, lathe: buildLathe, extrude: buildExtrude });
+  const BUILDERS = Object.freeze({ capsule: buildCapsule, sphere: buildSphere, box: buildBox, lathe: buildLathe, extrude: buildExtrude, stamps: buildStamps });
+
+  /** Turns built arrays about `at` so the solid's x, y and z lie along the three vectors of `basis`. */
+  const turn = (arrays, basis, at) => {
+    const { positions, normals } = arrays;
+    for (let offset = 0; offset < positions.length; offset += VECTOR) {
+      const [px, py, pz] = [positions[offset] - at[0], positions[offset + 1] - at[1], positions[offset + 2] - at[2]];
+      const [nx, ny, nz] = [normals[offset], normals[offset + 1], normals[offset + 2]];
+      for (let axis = 0; axis < VECTOR; axis++) {
+        positions[offset + axis] = at[axis] + px * basis[0][axis] + py * basis[1][axis] + pz * basis[2][axis];
+        normals[offset + axis] = nx * basis[0][axis] + ny * basis[1][axis] + nz * basis[2][axis];
+      }
+    }
+    return arrays;
+  };
+
+  /** Pushes every vertex out along its normal: the shell a raised region is drawn on. */
+  const inflate = (arrays, distance) => {
+    for (let offset = 0; offset < arrays.positions.length; offset++) arrays.positions[offset] += arrays.normals[offset] * distance;
+    return arrays;
+  };
 
   // ---- from a plan's bone to a descriptor ------------------------------------------------------------------------------
 
@@ -430,10 +543,11 @@
    * width (a chest into its neck) and the others narrow by `SIDE_LINK_SHARE` at most. A child drawn as some
    * other shape (a head sphere, a foot box) is never tapered towards. Neither: a ball of the bone's girth.
    */
-  const describeCapsules = (plan, bone, _row, at, rules) => {
-    const radius = plan.girth[bone] / 2;
+  const describeCapsules = (plan, bone, row, at, rules) => {
+    // A row may state its own radius and taper (a plait that thins, a chin tuft); otherwise the bone's girth decides.
+    const radius = row.radius === undefined ? plan.girth[bone] / 2 : row.radius;
     const tail = Array.from(plan.tail.subarray(bone * VECTOR, bone * VECTOR + VECTOR));
-    if (length3(tail) > EPSILON) return [{ shape: { kind: 'capsule', end: tail, radius, endRadius: radius, at }, child: -1 }];
+    if (length3(tail) > EPSILON) return [{ shape: { kind: 'capsule', end: tail, radius, endRadius: radius * (row.taper === undefined ? 1 : row.taper), at }, child: -1 }];
     const links = continuingChildren(plan, bone, rules.skipChild || (() => false)).filter((child) => length3(plan.restTranslation.subarray(child * VECTOR, child * VECTOR + VECTOR)) > EPSILON);
     if (!links.length) return [{ shape: { kind: 'sphere', radius, at }, child: -1 }];
     return links.map((child, index) => {
@@ -454,7 +568,7 @@
     none: () => [],
     sphere: (_plan, _bone, row, at) => alone({ kind: 'sphere', radius: row.radius, at }),
     box: (_plan, _bone, row, at) => alone({ kind: 'box', size: row.size.slice(), at }),
-    lathe: (plan, bone, row, at) => alone({ kind: 'lathe', profile: row.profile.map((point) => point.slice()), axis: plan.axis[bone], at }),
+    lathe: (plan, bone, row, at) => alone({ kind: 'lathe', profile: row.profile.map((point) => point.slice()), axis: plan.axis[bone], at, ...(row.smooth ? { smooth: true } : {}) }),
     extrude: (plan, bone, row, at) =>
       alone({
         kind: 'extrude',
@@ -505,7 +619,18 @@
    * @example Kit.figure.shapeKey({ kind: 'sphere', radius: 0.12, at: [0, 0.11, 0] }) // 'sphere|high|0.12|0,0.11,0'
    */
   const shapeKey = (shape, level = DEFAULT_LEVEL) => {
-    const flat = (value) => (Array.isArray(value) ? value.map(flat).join(',') : typeof value === 'number' ? String(round(value)) : String(value));
+    // A frozen descriptor (a face's stamps, kept by the feature cache) is keyed once: its key is hundreds of numbers long.
+    const known = Object.isFrozen(shape) ? frozenKeys.get(shape) : undefined;
+    if (known && known.level === level) return known.key;
+    const key = keyOf(shape, level);
+    if (Object.isFrozen(shape)) frozenKeys.set(shape, { level, key });
+    return key;
+  };
+  /** @type {WeakMap<Object, {level: string, key: string}>} */
+  const frozenKeys = new WeakMap();
+  const keyOf = (shape, level) => {
+    const flat = (value) =>
+      Array.isArray(value) ? value.map(flat).join(',') : typeof value === 'number' ? String(round(value)) : value && typeof value === 'object' ? `{${Object.keys(value).sort().map((field) => `${field}:${flat(value[field])}`).join(';')}}` : String(value);
     const fields = Object.keys(shape)
       .filter((field) => field !== 'kind')
       .sort()
@@ -519,7 +644,7 @@
    * @param {string} [level='high'] a key of `LEVELS`
    * @returns {ShapeArrays}
    * @throws {Error} for an unknown kind or level
-   * @complexity O(vertices): about around x (2 x rings + 2) for round shapes, 24 for a box
+   * @complexity O(vertices): about around x (2 x rings + 2) for round shapes, 24 for a box, the outline points of every layer for stamps
    * @example const { positions, normals, indices } = Kit.figure.buildShape({ kind: 'sphere', radius: 0.1, at: [0, 0, 0] }, 'medium');
    */
   const buildShape = (shape, level = DEFAULT_LEVEL) => {
@@ -527,7 +652,9 @@
     if (!builder) fail('buildShape', `no builder for the shape kind "${shape.kind}". Kinds: ${Object.keys(BUILDERS).join(', ')}.`);
     if (!LEVELS[level]) fail('buildShape', `no level "${level}". Levels: ${Object.keys(LEVELS).join(', ')}.`);
     const arrays = builder(shape, level);
-    return shape.scale ? stretch(arrays, shape.scale, shape.at) : arrays;
+    if (shape.scale) stretch(arrays, shape.scale, shape.at);
+    if (shape.basis) turn(arrays, shape.basis, shape.at);
+    return shape.inflate ? inflate(arrays, shape.inflate) : arrays;
   };
 
   // ---- matrices -------------------------------------------------------------------------------------------------------
@@ -569,5 +696,5 @@
     return out;
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, ACROSS_AXIS, BUILDERS, segmentsFor, triangulate, describeShapes, shapeKey, buildShape, writeBoneMatrix });
+  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, ACROSS_AXIS, BUILDERS, segmentsFor, smoothProfile, triangulate, describeShapes, shapeKey, buildShape, writeBoneMatrix });
 })();

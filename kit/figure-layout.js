@@ -11,9 +11,10 @@
  * Does not own: surfaces (kit/figure-shapes.js), THREE objects (kit/figure.js), bakes and what changed in the
  *        individual (kit/body-recipe.js, `editor.changes` in kit/body-edit.js), or colours (kit/palette.js).
  *
- * Two extension points are left open on purpose (see `layout`): surface features (eyes, a mouth) arrive as
- * extra pieces per bone, and surface regions (clothing, hair) as a lookup that splits a piece's triangles by
- * ramp. Neither is implemented here; each says exactly what it expects.
+ * Two extension points (see `layout`): surface features (eyes, a mouth, a nose) arrive as extra pieces per
+ * bone, and surface regions (clothing, hair) as a baked map per bone that the look reads per fragment, plus one
+ * shell piece per raised layer. The body system fills both (`Kit.body.FIGURE_HOOKS`), and they are the default
+ * for a bake that has a `surface`; anything else with the same shapes can fill them too.
  *
  * Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-figure.js.
  */
@@ -81,12 +82,31 @@
    * @property {boolean} [shiny] passed to the look (`LookPart.shiny`)
    * @property {boolean} [emissive] passed to the look
    * @property {number} [tone] passed to the look: a fixed tone 0..1
+   * @property {RegionMapOnBone} [regions] the baked regions of the piece's bone: the look paints the piece from it
+   * @property {number} [shell] 0 or absent: the bone's own surface; k: the shell of `regions.shells[k - 1]`,
+   *   which shows only the texels raised that far (id '<bone>~<k>')
+   * @property {boolean} [stamps] the piece is a `stamps` shape: each vertex carries its paint
+   * @property {boolean} [outlined] false: no hull outline of its own
+   */
+
+  /**
+   * @typedef {Object} RegionMapOnBone
+   * EXTENSION POINT (surface regions: clothing and hair as predicates over bone-local coordinates). Returned by
+   * `options.regionMapOf(plan, bone, bake)` for a bone that something paints, else null.
+   * @property {string} key equal keys are equal maps (they share one texture)
+   * @property {number} width texels around
+   * @property {number} height texels along
+   * @property {Uint8Array} data a `RegionMap` of kit/region.js: per texel [ramp slot or 255, line-class slot or 255, shell index, flags]
+   * @property {number[]} shells raises in metres, ascending; shell index k in `data` is `shells[k - 1]`
+   * @property {number[]} end [x, y, z] the far end of the bone's long axis in bone space: s runs 0 at the joint to 1 there
+   * @property {number} front the axis (0 = x, 1 = y, 2 = z) the around-angle is measured from
+   * @property {number} side the axis it grows towards
    */
 
   /**
    * @typedef {Object} FeaturePiece
    * EXTENSION POINT (surface features: eyes, a mouth, a nose, horns). Returned by `options.featuresOf(plan,
-   * bone, shape)` for a bone; becomes one extra piece riding on that bone. The feature system decides where
+   * bone, shape, bake)` for a bone; becomes one extra piece riding on that bone. The feature system decides where
    * on the surface it sits (azimuth and elevation over `shape`) and hands over the result in bone space.
    * @property {Object} shape a `ShapeDescriptor` in the bone's space (already placed on the surface: its `at`)
    * @property {number} [ramp] index into the bake's `ramps`; default the bone's own
@@ -94,16 +114,17 @@
    * @property {boolean} [shiny]
    * @property {boolean} [emissive]
    * @property {number} [tone]
+   * @property {boolean} [stamps] the shape is of kind 'stamps' (flat polygons that carry their own paint): it is
+   *   drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
+   * @property {boolean} [outlined] false: the piece gets no hull outline of its own (a nose inside a face)
    */
 
   /**
    * @typedef {function(Object, number, number, number, number): ?number} RegionLookup
-   * EXTENSION POINT (surface regions: clothing, hair as predicates over bone-local coordinates). Called as
-   * `regionOf(plan, bone, x, y, z)` for a triangle's centroid in bone space; returns the index into the bake's
-   * `ramps` that paints it, or null for the piece's own ramp. Where it plugs in: kit/figure.js
-   * `buildPieceGeometry` would split the piece's index buffer by the returned ramp into one sub-piece per ramp
-   * (one material each, as the look requires); per-fragment lookups would instead need a ramp attribute and a
-   * small addition to the toon shader. Not implemented: passing it today throws, so nobody relies on a no-op.
+   * A point lookup `regionOf(plan, bone, x, y, z)` -> ramp index (`Kit.body.figureHooks(bake).regionOf`). The
+   * renderer does not use it: regions are drawn from a map baked once per outfit (`RegionMapOnBone`), not from a
+   * lookup per triangle or per fragment (DECISIONS.md, "Regions in 3D"). Passing it to `layout` throws and names
+   * `regionMapOf`, so nobody relies on a no-op.
    */
 
   /**
@@ -209,23 +230,34 @@
     shiny: Boolean(feature.shiny),
     emissive: feature.emissive,
     tone: feature.tone,
+    // Only stamps read the bone's regions (to hide under hair); a solid (an ear, a nose) keeps its own paint.
+    regions: feature.stamps ? base.regions : undefined,
+    ...(feature.stamps ? { stamps: true } : {}),
+    ...(feature.outlined === false ? { outlined: false } : {}),
   });
+
+  /** The body system's hooks, when it is loaded and the bake carries a surface; else none. */
+  const defaultHooks = (bake) => (bake.surface && Kit.body && Kit.body.FIGURE_HOOKS) || {};
 
   /**
    * Lays out a bake as pieces.
    * @param {{plan: Object, boneRamp: Int16Array, ramps: ReadonlyArray<Object>, shapes?: ReadonlyArray<?Object>}} bake from a bakery (kit/body-recipe.js);
    *   a part alone works too: `{ plan: part.plan, boneRamp: new Int16Array(n).fill(-1), ramps: [ramp] }`
-   * @param {{level?: string, featuresOf?: function(Object, number, ?Object): FeaturePiece[], regionOf?: RegionLookup}} [options]
-   *   `level`: a key of `Kit.figure.LEVELS` (default 'high'). `featuresOf` and `regionOf` are the two extension
-   *   points described by `FeaturePiece` and `RegionLookup`.
+   * @param {{level?: string, featuresOf?: ?function(Object, number, ?Object, Object): FeaturePiece[], regionMapOf?: ?function(Object, number, Object): ?RegionMapOnBone, regionOf?: RegionLookup}} [options]
+   *   `level`: a key of `Kit.figure.LEVELS` (default 'high'). `featuresOf` and `regionMapOf` are the two
+   *   extension points described by `FeaturePiece` and `RegionMapOnBone`; left out, a bake with a `surface` gets
+   *   the body system's (`Kit.body.FIGURE_HOOKS`); pass null to draw the bare bones.
    * @returns {FigureLayout}
-   * @throws {Error} when `regionOf` is given (not implemented yet, see `RegionLookup`)
+   * @throws {Error} when `regionOf` is given (see `RegionLookup`)
    * @complexity O(bones x subtree) to find capsule ends (at most O(bones^2), a few hundred steps for a body), plus O(shape size) per piece
    * @example const layout = Kit.figure.layout(bakery.bakeRecipe({ species: 'human', seed: 1 }));
    */
   const layout = (bake, options = {}) => {
     if (!bake || !bake.plan || !bake.boneRamp) fail('layout', 'needs a bake from a bakery: { plan, boneRamp, ramps }.');
-    if (options.regionOf) fail('layout', 'surface regions (`regionOf`) are an extension point that is not implemented yet; see the RegionLookup typedef in kit/figure-layout.js.');
+    if (options.regionOf) fail('layout', 'regions are drawn from a baked map, not a point lookup: pass `regionMapOf` (Kit.body.FIGURE_HOOKS.regionMapOf, the default for a body bake) instead of `regionOf`.');
+    const hooks = defaultHooks(bake);
+    const featuresOf = options.featuresOf === undefined ? hooks.featuresOf : options.featuresOf;
+    const regionMapOf = options.regionMapOf === undefined ? hooks.regionMapOf : options.regionMapOf;
     const { plan } = bake;
     const level = options.level || Kit.figure.DEFAULT_LEVEL;
     const boneRamp = resolveRamps(plan, bake.boneRamp);
@@ -239,19 +271,20 @@
     const pieces = [];
     for (let bone = 0; bone < plan.boneCount; bone++) {
       const surfaces = Kit.figure.describeShapes(plan, bone, rules);
-      const base = { bone, ramp: boneRamp[bone], isProp: isProp(bone), shiny: SHINY_CHANNELS.includes(boneChannel[bone]) };
+      const regions = (surfaces.length && regionMapOf && regionMapOf(plan, bone, bake)) || undefined;
+      const base = { bone, ramp: boneRamp[bone], isProp: isProp(bone), shiny: SHINY_CHANNELS.includes(boneChannel[bone]), ...(regions ? { regions } : {}) };
       // A bone's own surface is named after it; an extra link after the bone and the child it reaches ('chest>upperArmLeft').
-      surfaces.forEach(({ shape, child }) =>
-        pieces.push({
-          ...base,
-          id: child < 0 ? plan.boneNames[bone] : `${plan.boneNames[bone]}>${plan.boneNames[child]}`,
-          shape,
-          key: Kit.figure.shapeKey(shape, level),
-          inkGroup: inkGroupOf(inkKeys[bone]),
+      const idOf = (child) => (child < 0 ? plan.boneNames[bone] : `${plan.boneNames[bone]}>${plan.boneNames[child]}`);
+      surfaces.forEach(({ shape, child }) => pieces.push({ ...base, id: idOf(child), shape, key: Kit.figure.shapeKey(shape, level), inkGroup: inkGroupOf(inkKeys[bone]) }));
+      // A raised layer is drawn on a shell: the same surfaces pushed out along their normals, showing only that layer's texels.
+      (regions ? regions.shells : []).forEach((raise, index) =>
+        surfaces.forEach(({ shape, child }) => {
+          const raised = { ...shape, inflate: raise };
+          pieces.push({ ...base, id: `${idOf(child)}~${index + 1}`, shape: raised, key: Kit.figure.shapeKey(raised, level), inkGroup: inkGroupOf(inkKeys[bone]), shell: index + 1 });
         })
       );
       const shape = surfaces.length ? surfaces[0].shape : null;
-      const features = options.featuresOf ? options.featuresOf(plan, bone, shape) || [] : [];
+      const features = featuresOf ? featuresOf(plan, bone, shape, bake) || [] : [];
       features.forEach((feature, index) => pieces.push(featurePiece(feature, `${plan.boneNames[bone]}#${index}`, base, inkGroupOf(inkKeys[bone]), level)));
     }
     return { plan, level, boneRamp, boneChannel, pieces, rampCount: bake.ramps ? bake.ramps.length : 0 };
@@ -260,7 +293,8 @@
   // ---- incremental updates --------------------------------------------------------------------------------------------
 
   /** What makes a drawn piece the same piece: its identity, its surface and everything its material reads. */
-  const pieceSignature = (piece) => [piece.id, piece.key, piece.ramp, piece.inkGroup, piece.shiny ? 1 : 0, piece.emissive ? 1 : 0, piece.tone === undefined ? '' : piece.tone].join('|');
+  const pieceSignature = (piece) =>
+    [piece.id, piece.key, piece.ramp, piece.inkGroup, piece.shiny ? 1 : 0, piece.emissive ? 1 : 0, piece.tone === undefined ? '' : piece.tone, piece.regions ? piece.regions.key : '', piece.shell || 0, piece.outlined === false ? 0 : 1].join('|');
 
   /**
    * @typedef {Object} FigureUpdate

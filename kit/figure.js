@@ -4,7 +4,8 @@
  * kit/figure-shapes.js shared through a cache, its material from `view.shading.dress`, its colour from the
  * figure's rows of the view's palette atlas, and its matrix written each frame from the pose's world transforms.
  *
- * Owns:  `Kit.figure.geometryCache` (BufferGeometry per shape key, counted and shared), `Kit.figure.build`
+ * Owns:  `Kit.figure.geometryCache` (BufferGeometry per shape key, counted and shared), `Kit.figure.regionTextures`
+ *        (one texture per baked region map, counted and shared), `Kit.figure.build`
  *        (bake -> a figure in a view) and what it returns: `local` (the pose buffer a caller writes), `pose()`
  *        (one forward pass and the matrix writes, no allocation), `setBake` (incremental update from
  *        `editor.changes`), `measured` / `frame` (grounding and camera fitting) and `dispose`.
@@ -28,6 +29,9 @@
   /** Floats per vertex position or normal, and per matrix. */
   const VECTOR = 3;
   const MATRIX = 16;
+  /** Floats per vertex of a stamp's paint and of its centre (kit/figure-shapes.js `stamps`). */
+  const STAMP_PAINT = 3;
+  const STAMP_CENTRE = 4;
   /** A crowd member's place: x, y, z, heading. */
   const PLACE = 4;
 
@@ -79,6 +83,10 @@
         geometry.setAttribute('position', new THREE.BufferAttribute(arrays.positions, VECTOR));
         geometry.setAttribute('normal', new THREE.BufferAttribute(arrays.normals, VECTOR));
         geometry.setIndex(new THREE.BufferAttribute(arrays.indices, 1));
+        if (arrays.paint) {
+          geometry.setAttribute('stampPaint', new THREE.BufferAttribute(arrays.paint, STAMP_PAINT));
+          geometry.setAttribute('stampCentre', new THREE.BufferAttribute(arrays.centres, STAMP_CENTRE));
+        }
         geometry.computeBoundingSphere();
         geometry.computeBoundingBox();
         created += 1;
@@ -102,6 +110,79 @@
       },
     };
   };
+
+  // ---- region textures ------------------------------------------------------------------------------------------------
+
+  /**
+   * @typedef {Object} RegionTextureCache
+   * @property {function(Object): Object} acquire the `LookRegions` (kit/look-toon.js) of a `RegionMapOnBone`, its texture made on the first request
+   * @property {function(string): void} release one user fewer; the texture is disposed when none is left
+   * @property {function(): {created: number, alive: number}} stats
+   * @property {function(): void} dispose
+   */
+
+  /**
+   * A cache of region-map textures by map key, so every figure wearing the same garment on the same bone reads
+   * one small texture.
+   * @returns {RegionTextureCache}
+   * @complexity acquire: O(1) on a hit; a miss uploads width x height texels (8192 at the default size)
+   * @example const regions = Kit.figure.regionTextures(); view.shading.dress(mesh, { ramp, regions: regions.acquire(piece.regions) });
+   */
+  const regionTextures = () => {
+    /** @type {Map<string, {texture: THREE.Texture, users: number}>} */
+    const entries = new Map();
+    let created = 0;
+    const textureOf = (map) => {
+      const texture = new THREE.DataTexture(map.data, map.width, map.height, THREE.RGBAFormat, THREE.UnsignedByteType);
+      // Bytes are indices, never colours: no filtering, no mipmaps. The angle wraps round the bone; s does not.
+      texture.magFilter = texture.minFilter = THREE.NearestFilter;
+      texture.generateMipmaps = false;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.needsUpdate = true;
+      created += 1;
+      return texture;
+    };
+    return {
+      acquire(map) {
+        const entry = entries.get(map.key) || { texture: textureOf(map), users: 0 };
+        entry.users += 1;
+        entries.set(map.key, entry);
+        return { texture: entry.texture, width: map.width, height: map.height, end: map.end, front: map.front, side: map.side };
+      },
+      release(key) {
+        const entry = entries.get(key);
+        if (!entry) return;
+        entry.users -= 1;
+        if (entry.users > 0) return;
+        entry.texture.dispose();
+        entries.delete(key);
+      },
+      stats: () => ({ created, alive: entries.size }),
+      dispose() {
+        entries.forEach((entry) => entry.texture.dispose());
+        entries.clear();
+      },
+    };
+  };
+
+  /**
+   * What a piece is to the look (a `LookPart` of kit/look-toon.js): its ramp row, its line class (its ramp
+   * slot, so two paints of one figure meeting on a surface get a line), and its regions, shell or stamps.
+   */
+  const lookPartOf = (piece, block, textures) => ({
+    ramp: block.rows[piece.ramp],
+    inkGroup: piece.inkGroup,
+    inkClass: piece.ramp,
+    shiny: piece.shiny,
+    emissive: piece.emissive,
+    tone: piece.tone,
+    blockRow: block.offset,
+    regions: piece.regions ? textures.acquire(piece.regions) : undefined,
+    shell: piece.shell,
+    stamps: piece.stamps,
+    outlined: piece.outlined,
+  });
 
   // ---- the figure -----------------------------------------------------------------------------------------------------
 
@@ -146,11 +227,13 @@
    * Builds a figure in a view.
    * @param {Object} view from `Kit.look.view`
    * @param {Object} bake from a bakery (kit/body-recipe.js), or a part alone `{ plan, boneRamp, ramps }`
-   * @param {{level?: string, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, featuresOf?: Function}} [options]
+   * @param {{level?: string, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
    *   `level` of detail (default 'high'); `cache` shared between figures (default one per module); `rows`: a
-   *   block from `loadRows` to share (default: the figure loads its own); `ground`:
+   *   block from `loadRows` to share (default: the figure loads its own, and frees it on `dispose`); `ground`:
    *   stand the body's lowest point at rest on y = 0 (default true); `center`: turn about the middle of the
-   *   footprint rather than the plan's origin (default true); `featuresOf`: the features extension point
+   *   footprint rather than the plan's origin (default true); `featuresOf` and `regionMapOf`: the two extension
+   *   points of `Kit.figure.layout` (default: the body system's, so a bake with a face and clothes shows them;
+   *   null draws the bare bones)
    * @returns {Figure}
    * @complexity O(pieces) meshes and materials; O(vertices) the first time a shape key is seen
    * @example
@@ -159,7 +242,8 @@
    */
   const build = (view, bake, options = {}) => {
     const cache = options.cache || sharedCache();
-    const layoutOptions = { level: options.level, featuresOf: options.featuresOf };
+    const layoutOptions = { level: options.level, featuresOf: options.featuresOf, regionMapOf: options.regionMapOf };
+    const textures = sharedRegionTextures();
     const shouldGround = options.ground !== false;
     const shouldCenter = options.center !== false;
     const root = new THREE.Group();
@@ -179,14 +263,7 @@
       mesh.matrixAutoUpdate = false;
       mesh.name = piece.id;
       root.add(mesh);
-      const dressed = view.shading.dress(mesh, {
-        ramp: block.rows[piece.ramp],
-        inkGroup: piece.inkGroup,
-        shiny: piece.shiny,
-        emissive: piece.emissive,
-        tone: piece.tone,
-        anchor,
-      });
+      const dressed = view.shading.dress(mesh, { ...lookPartOf(piece, block, textures), anchor });
       materialsCreated += MATERIALS_PER_DRESS;
       entries.push({ piece, mesh, dressed });
     };
@@ -194,6 +271,7 @@
       root.remove(entry.mesh);
       view.shading.undress(entry.dressed);
       cache.release(entry.piece.key);
+      if (entry.piece.regions) textures.release(entry.piece.regions.key);
     };
 
     /** Grounding and centring, from the bake's rest pose (props left out). */
@@ -254,6 +332,8 @@
         entries.forEach(removeEntry);
         entries = [];
         view.remove(root);
+        // Rows the figure loaded itself go back to the atlas; shared rows belong to whoever loaded them.
+        if (!options.rows && view.atlas.free) view.atlas.free(block);
       },
     };
     shownLayout.pieces.forEach(addPiece);
@@ -268,6 +348,13 @@
   const sharedCache = () => {
     if (!moduleCache) moduleCache = geometryCache();
     return moduleCache;
+  };
+
+  let moduleRegionTextures = null;
+  /** The region textures every figure and crowd shares. */
+  const sharedRegionTextures = () => {
+    if (!moduleRegionTextures) moduleRegionTextures = regionTextures();
+    return moduleRegionTextures;
   };
 
   // ---- crowds: many figures of one bake --------------------------------------------------------------------------------
@@ -301,6 +388,7 @@
     root.name = `crowd:${bake.species || bake.plan.id}`;
     view.scene.add(root);
     const block = options.rows || loadRows(view, bake);
+    const textures = sharedRegionTextures();
     const restWorld = Kit.body.worldTransforms(bake.plan, bake.rest, Kit.body.createPose(bake.plan));
     const measured = Kit.figure.measureRest(pieceLayout, restWorld, cache.positions);
     const meshes = pieceLayout.pieces.map((piece) => {
@@ -308,7 +396,7 @@
       // Members wander over the whole stage; the geometry's own bounds would cull them wrongly.
       mesh.frustumCulled = false;
       root.add(mesh);
-      const dressed = view.shading.dress(mesh, { ramp: block.rows[piece.ramp], inkGroup: piece.inkGroup, shiny: piece.shiny });
+      const dressed = view.shading.dress(mesh, lookPartOf(piece, block, textures));
       return { piece, mesh, dressed };
     });
     const locals = Array.from({ length: count }, () => Kit.rig.copy(bake.rest, Kit.body.createPose(bake.plan)));
@@ -334,11 +422,13 @@
           view.shading.undress(dressed);
           mesh.dispose();
           cache.release(piece.key);
+          if (piece.regions) textures.release(piece.regions.key);
         });
         view.remove(root);
+        if (!options.rows && view.atlas.free) view.atlas.free(block);
       },
     };
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { RAMP_SLOTS, geometryCache, loadRows, build, crowd });
+  Kit.figure = Object.assign(Kit.figure || {}, { RAMP_SLOTS, geometryCache, regionTextures, loadRows, build, crowd });
 })();

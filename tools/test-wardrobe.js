@@ -746,22 +746,27 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
   });
 
   // ---- the figure renderer's extension points, and the two renderer edits they needed ----
-  test('figure hooks: features become pieces on their bone (eyes glow, stamps keep their shade); regionOf paints by bone-local point', () => {
+  test('figure hooks: solids become pieces, every stamp layer of a bone one polygon of a single stamps piece; regionOf paints by bone-local point', () => {
     const bakery = wardrobe.bakery();
     const bake = bakery.bakeRecipe({ species: 'person', seed: 4, overrides: { 'fill:top': 'longSleeve', 'fill:eyes': 'eyesRound', 'fill:hat': null, 'fill:glasses': null } });
     const hooks = body.figureHooks(bake);
     const head = bake.plan.boneIndex('head');
     const pieces = hooks.featuresOf(bake.plan, head);
-    const eyes = bake.surface.features.filter((feature) => feature.id === 'eye');
-    const stampLayers = bake.surface.features
-      .filter((feature) => feature.bone === head)
-      .reduce((sum, feature) => sum + Math.min(12, (feature.frames[feature.rest] || []).length) + (feature.shape ? 1 : 0), 0);
-    same(pieces.length, stampLayers, 'one piece per solid and per stamp layer');
-    assert.ok(pieces.filter((piece) => piece.glow).length >= eyes.length * 4, 'eye layers glow (never outlined)');
-    assert.ok(
-      pieces.every((piece) => Math.abs(Kit.surface.distance(bake.shapes[head], body.surfaceLayout(bake.plan).frames[head], ...piece.shape.at)) < 0.06),
-      'every piece sits at the head surface'
+    const onHead = bake.surface.features.filter((feature) => feature.bone === head);
+    const solids = onHead.filter((feature) => feature.shape).length;
+    const layerCount = onHead.reduce((sum, feature) => sum + (feature.frames[feature.rest] || []).filter((layer) => layer.ramp >= 0).length, 0);
+    same(pieces.length, solids + 1, 'one piece per solid, and one for all the stamps');
+    const stamps = pieces.find((piece) => piece.stamps);
+    same(stamps.shape.layers.length, layerCount, 'every layer of every rest frame is a polygon of it');
+    assert.ok(stamps.glow, 'stamps are never outlined');
+    const frame = body.surfaceLayout(bake.plan).frames[head];
+    const farthest = Math.max(
+      ...stamps.shape.layers.flatMap((layer) => Array.from({ length: layer.points.length / 3 }, (_unused, vertex) => Math.abs(Kit.surface.distance(bake.shapes[head], frame, ...layer.points.slice(vertex * 3, vertex * 3 + 3)))))
     );
+    assert.ok(farthest < 0.012, `every stamp vertex hugs the head surface (farthest ${farthest})`);
+    const sclera = wardrobe.species('person').colorIds.indexOf('sclera');
+    assert.ok(stamps.shape.layers.some((layer) => layer.slot === sclera && layer.tone === 1), 'an eye white keeps its channel and its lightest shade');
+    assert.ok(pieces.filter((piece) => !piece.stamps).every((piece) => Math.abs(Kit.surface.distance(bake.shapes[head], frame, ...piece.shape.at)) < 0.06), 'every solid sits at the head surface');
     same(hooks.featuresOf(bake.plan, bake.plan.boneIndex('chest')), [], 'nothing on a bone without features');
     const layout = Kit.figure.layout(bake, { featuresOf: hooks.featuresOf });
     assert.ok(layout.pieces.filter((piece) => piece.id.startsWith('head#')).length === pieces.length, 'the renderer takes them as head pieces');

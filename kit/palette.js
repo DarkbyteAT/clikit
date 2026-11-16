@@ -372,6 +372,7 @@
    * @property {number} toneCount tones currently written per ramp
    * @property {number} version rises with every write, so a texture knows when to upload again
    * @property {function(PaletteSet|Ramp[]): PaletteBlock} load reserve rows for a palette and write them
+   * @property {function(PaletteBlock): void} free give a block's rows back for the next load of the same size
    * @property {function(PaletteBlock, PaletteSet|Ramp[]): void} write replace a block's colours with another palette of the same ramps
    * @property {function(PaletteBlock, string, RampSpec|string|number): void} writeRamp replace one ramp of a block
    * @property {function(number): void} retone rebuild every loaded block at a new tone count
@@ -395,6 +396,8 @@
     const height = options.rows || DEFAULT_ATLAS_ROWS;
     const data = new Uint8Array(TONE_SLOTS * height * CHANNELS);
     const loaded = [];
+    /** @type {PaletteBlock[]} blocks given back by `free`, whose rows the next load of the same size takes */
+    const freed = [];
     let rowsInUse = 0;
 
     const writeTexel = (row, column, rgb) => data.set([rgb[0], rgb[1], rgb[2], BYTE_MAX], (row * TONE_SLOTS + column) * CHANNELS);
@@ -422,6 +425,14 @@
       version: 0,
       load(given) {
         const source = toSet(given);
+        const reusable = freed.findIndex((block) => block.rampIds.length === source.rampIds.length);
+        if (reusable >= 0) {
+          const [{ offset }] = freed.splice(reusable, 1);
+          const block = { offset, rampIds: source.rampIds.slice(), rows: Object.fromEntries(source.rampIds.map((id, index) => [id, offset + index])) };
+          loaded.push({ block, source });
+          table.write(block, source);
+          return block;
+        }
         if (rowsInUse + source.rampIds.length > height)
           throw new Error(`Kit.palette.atlas.load: no room for "${source.name}" (${rowsInUse} of ${height} rows used). Create the atlas with more rows: Kit.palette.atlas({ rows: ${height * 2} }).`);
         const block = { offset: rowsInUse, rampIds: source.rampIds.slice(), rows: Object.fromEntries(source.rampIds.map((id, index) => [id, rowsInUse + index])) };
@@ -449,6 +460,18 @@
         table.toneCount = toneCount;
         loaded.forEach(({ block, source }) => source.rampIds.forEach((id) => writeRow(block.rows[id], source.ramps[id])));
         table.version += 1;
+      },
+      /**
+       * Gives a block's rows back: the next `load` of a palette with as many ramps takes them. Materials still
+       * pointing at the rows would be recoloured by that load, so free a block only once nothing draws with it.
+       * @param {PaletteBlock} block from `load`; freeing it twice, or a block of another atlas, does nothing
+       * @complexity O(blocks loaded)
+       */
+      free(block) {
+        const index = loaded.findIndex((entry) => entry.block === block);
+        if (index < 0) return;
+        loaded.splice(index, 1);
+        freed.push(block);
       },
       colorAt: (row, column) => Array.from(data.subarray((row * TONE_SLOTS + column) * CHANNELS, (row * TONE_SLOTS + column) * CHANNELS + 3)),
     };

@@ -147,6 +147,8 @@
         // Below native resolution a hull line is one texel; at native resolution it is the knob's width in device pixels.
         const lineWidth = scale > 1 ? 1 : settings.inkWidth * pixelRatio;
         shading.apply(settings, { width: target.width, height: target.height, lineWidth, depthRange: fitDepthRange(camera) });
+        // Stamps (the layers of a face) keep a least size in target texels; only an orthographic camera has one texel size.
+        shading.uniforms.uTexelWorld.value = camera.isOrthographicCamera ? ((camera.top - camera.bottom) / camera.zoom) * (scale / bufferSize.y) : 0;
         const restoreFigures = placeFigures(camera, settings, target);
         scene.updateMatrixWorld();
 
