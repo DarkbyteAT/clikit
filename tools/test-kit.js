@@ -3032,5 +3032,27 @@ test('netting: a sheet pins its rim, links neighbours, bulges where a ball pushe
     assert.ok(SPOT_BOTS.PROGRESSION.apply(state, actions[0], () => 0.5).seconds > 0);
     assert.ok(SPOT_BOTS.PROGRESSION.summary(state).remaining > 0);
   });
+  test('spot kick first rival teaches: most shots are on target, and slower than any later rival', () => {
+    const KICKS = 400;
+    const ON_TARGET_AT_LEAST = 0.85; // share of shots that would go in past a keeper who is not there
+    const out = { reach: gloves.reach, holdSpeed: gloves.holdSpeed };
+    const read = (taker) => {
+      const rng = sandbox.Kit.rng(7);
+      let onTarget = 0;
+      let seconds = 0;
+      for (let shot = 0; shot < KICKS; shot++) {
+        const aim = SPOT.takerAim(SPOT.takerIntent(taker, rng), taker, classic, 0, rng);
+        const launch = SPOT.launchOf(aim, classic);
+        const kick = SPOT.createKick({ launch, ballRow: classic, keeper: out, dive: SPOT.diveOf({ x: 9, y: 1 }, 0, { diveSpeed: 6 }) });
+        SPOT.playKick(kick);
+        onTarget += kick.outcome === 'goal' ? 1 : 0;
+        seconds += SPOT.crossingOf(launch, classic).seconds;
+      }
+      return { onTarget: onTarget / KICKS, seconds: seconds / KICKS };
+    };
+    const [first, ...later] = SPOT_DATA.LADDER.map((entry) => read(entry.rival.taker));
+    assert.ok(first.onTarget >= ON_TARGET_AT_LEAST, `the first rival puts ${first.onTarget} on target`);
+    assert.ok(later.every((each) => each.seconds < first.seconds), 'every later rival strikes it faster');
+  });
 }
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

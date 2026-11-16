@@ -101,6 +101,7 @@ async function takeBrowserSlot() {
  * @property {function(number, number): Promise<void>} move
  * @property {function(): Promise<void>} up
  * @property {function(number, number): Promise<void>} tap down and up at one point
+ * @property {function(Array<{x: number, y: number}>): Promise<void>} flick moves the held pointer through points and lets go, all within a few hundredths of a second
  */
 
 /**
@@ -114,9 +115,17 @@ async function takeBrowserSlot() {
  * @param {boolean} useTouch
  * @returns {Promise<Pointer>}
  */
+/** Milliseconds between the events of a flick, and the usual thousand. */
+const FLICK_STEP_MS = 12;
+const MS_PER_SECOND = 1000;
+
 async function createPointer(page, useTouch) {
   if (!useTouch) {
-    return { down: (x, y) => page.mouse.move(x, y).then(() => page.mouse.down()), move: (x, y) => page.mouse.move(x, y), up: () => page.mouse.up(), tap: (x, y) => page.mouse.click(x, y) };
+    const flickMouse = async (points) => {
+      for (const point of points) await page.mouse.move(point.x, point.y);
+      await page.mouse.up();
+    };
+    return { down: (x, y) => page.mouse.move(x, y).then(() => page.mouse.down()), move: (x, y) => page.mouse.move(x, y), up: () => page.mouse.up(), tap: (x, y) => page.mouse.click(x, y), flick: flickMouse };
   }
   const devtools = await page.context().newCDPSession(page);
   const touch = (type, points) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints: points });
@@ -125,7 +134,15 @@ async function createPointer(page, useTouch) {
   const settle = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const down = (x, y) => touch('touchStart', [{ x, y }]);
   const up = () => touch('touchEnd', []).then(settle);
-  return { down, move: (x, y) => touch('touchMove', [{ x, y }]), up, tap: (x, y) => down(x, y).then(up) };
+  // A flick is faster than frames arrive here, so its events carry their own times (the protocol's `timestamp`,
+  // seconds): the page's event.timeStamp then says when the finger was there, as a real touch screen's does.
+  const flick = async (points) => {
+    const startedAt = Date.now() / MS_PER_SECOND;
+    const stamped = (type, touchPoints, order) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints, timestamp: startedAt + (order * FLICK_STEP_MS) / MS_PER_SECOND });
+    for (const [order, point] of points.entries()) await stamped('touchMove', [point], order + 1);
+    await stamped('touchEnd', [], points.length + 1).then(settle);
+  };
+  return { down, move: (x, y) => touch('touchMove', [{ x, y }]), up, tap: (x, y) => down(x, y).then(up), flick };
 }
 
 /** The page as the host would wrap it, with fonts dropped and CDN scripts pointed at vendor/. */

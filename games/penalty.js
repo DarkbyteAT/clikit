@@ -45,11 +45,13 @@
 
   /** How the ball is drawn back while aiming, and how the aim line is sampled. */
   const AIM_FEEL = Object.freeze({ drawBack: 0.42, previewStep: 1 / 60, ratchetTicks: 10, powerLamps: 12, sweet: [0.8, 0.9], heartbeat: { least: 0.3, period: [0.9, 0.42] } });
+  /** The drag-back gesture here: a flick is the sideways travel of the last `settleMs` before the finger lifts (a thumb's flick takes about that long). */
+  const SLING = Object.freeze({ settleMs: 150 });
   /** Keyboard play: how fast the arrow keys move the aim, and where each direction key sends the keeper. */
   const KEYS = Object.freeze({ angleRate: 0.7, pullRate: 0.6, startPull: 0.7, dive: { left: { x: 1.9, y: 0.9 }, right: { x: -1.9, y: 0.9 }, up: { x: 0, y: 1.9 }, down: { x: 0, y: 0.4 } } });
 
   /** Seconds each beat of a kick lasts. */
-  const PACE = Object.freeze({ settle: 0.7, afterOutcome: 1.15, betweenKicks: 0.35, intro: 1.2 });
+  const PACE = Object.freeze({ afterOutcome: 1.15, betweenKicks: 0.6 });
 
   /** Callout, sounds and crowd for each outcome, by whether it is good for the player. */
   const CALLOUTS = Object.freeze({
@@ -67,6 +69,8 @@
     fullSpeed: 20, // contact speed at which sounds and shakes are at their strongest
   });
 
+  /** Longest time after the strike the ball may take to come into the flight seat's picture from under the lens (a wide screen has the shortest lens, so the longest wait). */
+  const CUT_GRACE = 0.12;
   const WIND_ARROW_STEP = 4; // metres per second of crosswind per arrow on the wind chip
 
   // ====================================================== small helpers ======================================================
@@ -101,7 +105,7 @@
   /**
    * Builds one session of the game.
    * @param {Object} ctx the kit's game context
-   * @returns {{update: function(number, number): void, render: function(): void, dispose: function(): void, debugState: function(): Object}}
+   * @returns {{update: function(number, number): void, render: function(): void, dispose: function(): void, debugState: function(): Object, tools: Object}}
    */
   const createGame = (ctx) => {
     const { input, fx, sfx, ui, save } = ctx;
@@ -110,7 +114,7 @@
     const PERFORM = window.SPOT_KICK_PERFORM;
     const progress = DATA.createProgress({ save });
     const saved = savedCharacter(stage.catalog);
-    const sling = Kit.slingshot.gesture();
+    const sling = Kit.slingshot.gesture(SLING);
     const random = Kit.rng();
 
     // ------------------------------------------------------- state -------------------------------------------------------
@@ -122,8 +126,8 @@
     const keyAim = { isActive: false, angle: 0, pull: KEYS.startPull };
     let liveAim = { pull: 0, angle: 0, isArmed: false };
     let ratchetStep = 0;
-    /** Which sheet is open: 'clubhouse', 'result' or null (for scripted playtests). */
-    let sheet = null;
+    /** The camera's promises, counted per frame while a playtest watches them: frames checked, and frames each promise was broken. */
+    const framing = { isWatched: false, frames: 0, broken: {}, first: {} };
     let heartbeatIn = 0;
 
     // -------------------------------------------------------- HUD --------------------------------------------------------
@@ -178,12 +182,14 @@
         you: { taker: actorOf(DATA.playerRecipe(stage.catalog, saved, progress.kit(), 'taker')), keeper: actorOf(DATA.playerRecipe(stage.catalog, saved, progress.kit(), 'keeper')) },
         them: { taker: actorOf(DATA.rivalRecipe(stage.catalog, match.rival, 'taker')), keeper: actorOf(DATA.rivalRecipe(stage.catalog, match.rival, 'keeper')) },
       };
+      // The order the stage was given them in: the order of `stage.framing().figures`.
+      match.order = [match.cast.you.taker, match.cast.you.keeper, match.cast.them.taker, match.cast.them.keeper];
     };
     /** The two actors of the kick in play: `[taker, keeper]`. */
     const onPitch = () => (play.role === 'taker' ? [match.cast.you.taker, match.cast.them.keeper] : [match.cast.them.taker, match.cast.you.keeper]);
     const showCast = () => {
       const [taker, keeper] = onPitch();
-      [match.cast.you.taker, match.cast.you.keeper, match.cast.them.taker, match.cast.them.keeper].forEach((each) => (each.figure.root.visible = each.figure.shadow.visible = each === taker || each === keeper));
+      match.order.forEach((each) => (each.figure.root.visible = each === taker || each === keeper));
       const takerMark = play.role === 'taker' ? stage.takerWait() : MARKS.rivalTaker.wait;
       taker.stand(takerMark.x, takerMark.z, FACING.goal);
       keeper.stand(MARKS.keeper.x, MARKS.keeper.z, FACING.taker);
@@ -262,7 +268,7 @@
     const beginKick = () => {
       const role = SIM.kickerOf(match.shootout) === 'you' ? 'taker' : 'keeper';
       play = { role, kick: null, clock: 0, pressure: SIM.pressureOf(match.shootout, match.cup.pressure), wind: match.cup.wind ? random.range(-match.cup.wind, match.cup.wind) : 0, intent: null, earlyDive: null, hasDived: false, aimSeconds: 0, carry: 0, lastOutcome: play.lastOutcome };
-      stage.setRole(role);
+      stage.setSeat(role === 'taker' ? 'aim' : 'keeper');
       stage.setWind(play.wind);
       stage.ball.set(SIM.SPOT, { x: 0, y: 0, z: 0 }, 0);
       stage.aim.hide();
@@ -277,9 +283,8 @@
 
     /** Starts a match against a ladder entry. */
     const beginMatch = (index) => {
-      sheet = null;
       const entry = progress.matchAt(index);
-      match = { ...entry, shootout: SIM.createShootout(), cast: null, streak: 0, coins: 0, goals: 0, saves: 0, history: [] };
+      match = { ...entry, shootout: SIM.createShootout(), cast: null, order: [], streak: 0, coins: 0, goals: 0, saves: 0, history: [] };
       stage.setLook(entry.cup.look, progress.ball().colors);
       castMatch();
       ui.toast(`${entry.rival.name} at ${entry.cup.ground}`, 1500);
@@ -289,7 +294,7 @@
 
     /** The strike: the rules take over from here. */
     const strike = (launch, dive) => {
-      play.kick = SIM.createKick({ launch, ballRow: progress.ball(), keeper: play.role === 'taker' ? match.rival.keeper : playerKeeper(), dive, wind: play.wind, wobblePhase: random.range(0, 6) });
+      play.kick = SIM.createKick({ launch, ballRow: progress.ball(), keeper: play.role === 'taker' ? match.rival.keeper : playerKeeper(), dive, wind: play.wind, wobblePhase: random.range(0, Math.PI * 2) });
       const pace = Math.hypot(launch.velocity.x, launch.velocity.y, launch.velocity.z);
       sfx.play('hit', { pitch: 0.7 + strength(pace) * 0.4 });
       sfx.play('thud', { vol: strength(pace) });
@@ -299,6 +304,8 @@
       sfx.buzz(18);
       // Their keeper moves when the rules say; the player's keeper is already moving if the player has tapped.
       if (play.role === 'taker' && dive) onPitch()[1].dive(diveShown(dive, 0));
+      // The cut: at the strike the camera steps past the taker, so nothing stands between the lens and the flight.
+      if (play.role === 'taker') stage.setSeat('flight');
       flow.go('flight');
     };
 
@@ -351,6 +358,8 @@
       play.lastOutcome = kick.outcome;
       match.shootout = SIM.recordKick(match.shootout, kick.outcome === 'goal');
       refreshBoard();
+      // Back behind the ball for the reactions: the taker and the keeper are both in the picture, whole.
+      if (role === 'taker') stage.setSeat('aim');
       if (SIM.statusOf(match.shootout).winner) flow.go('result');
       else ctx.after(PACE.betweenKicks, beginKick);
     };
@@ -408,7 +417,6 @@
 
     const showClubhouse = () => {
       flow.go('menu');
-      sheet = 'clubhouse';
       return openClubhouse().then((index) => beginMatch(Number.isInteger(index) ? index : progress.rungsWon()));
     };
 
@@ -422,7 +430,6 @@
       if (won) stage.cheer(1);
       const rows = [['Shootout', `${status.score.you} - ${status.score.them}`], ['Kicks and saves', `${match.coins} C`], [won ? 'Win prize' : 'For turning up', `${prize} C`], ...(banked.prize ? [['Cup prize', `${banked.prize} C`]] : []), ...banked.opened.map((text) => ['New', text])];
       const playedIndex = match.index;
-      sheet = 'result';
       return ui.dialog({
         title: won ? 'You win!' : `${match.rival.name} win`,
         dismissable: false,
@@ -489,13 +496,15 @@
       sfx.buzz(8);
     };
 
-    input.onDrag(({ phase, x, y, nx, ny }) => {
+    // `time` is when the finger was there, not when this frame got round to it: a flick is measured in milliseconds.
+    input.onDrag(({ phase, x, y, nx, ny, time: now }) => {
       if (ctx.paused || !match) return;
-      const now = performance.now();
       if (phase === 'start') {
         if (flow.is('aiming')) {
           keyAim.isActive = false;
           ratchetStep = 0;
+          // The hint has done its job once a thumb is down; the power lamps take its place.
+          hint.hide();
           sling.begin(x, y, now);
         } else diveTo(stage.pickKeeperPlane(nx, ny));
       } else if (phase === 'move') sling.move(x, y, now);
@@ -587,15 +596,51 @@
       'menu'
     );
 
-    ctx.on('resize', () => stage.resize());
+    ctx.on('resize', () => {
+      stage.resize();
+      // The taker waits where the picture has room for them; a turned screen has different room.
+      if (match && flow.is('aiming')) showCast();
+    });
 
-    // Hooks for scripted playtests: play a kick without a finger, jump the ladder, read the rules' state.
-    ctx.debug = {
-      progress,
-      shoot: (aim) => flow.is('aiming') && releaseShot({ curve: 0, isArmed: true, ...aim }),
-      dive: (x, y) => diveTo({ x, y }),
-      beginMatch,
-      showClubhouse,
+    // ---------------------------------------------------- the camera's promises ----------------------------------------------------
+
+    const overlaps = (first, second) => Boolean(first && second) && first.left < second.right && second.left < first.right && first.top < second.bottom && second.top < first.bottom;
+    const isWhole = (rect) => Boolean(rect) && rect.left > 0 && rect.top > 0 && rect.right < ctx.size.w && rect.bottom < ctx.size.h;
+    /**
+     * What each seat promises, as checks over the screen rectangles of `stage.framing()`. A check that returns
+     * false on a frame counts as broken on it. `cast` is `{ taker, keeper }`: the rectangles of the two on the pitch.
+     * @type {Object<string, function(Object, {taker: ?Object, keeper: ?Object}): boolean>}
+     */
+    const PROMISES = {
+      'the whole goal is on screen': ({ goal }) => isWhole(goal),
+      'the taker never covers the goal': ({ goal }, { taker }) => play.role !== 'taker' || !overlaps(taker, goal),
+      'the taker never covers their keeper': (_seen, { taker, keeper }) => play.role !== 'taker' || !overlaps(taker, keeper),
+      // While the taker runs in and swings, the boot and the ball must meet: the promise holds before and after.
+      'the taker never covers the ball': ({ ball }, { taker }) => play.role !== 'taker' || flow.is('running') || !overlaps(taker, ball),
+      'the taker is seen whole while aiming': (_seen, { taker }) => !flow.is('aiming') || isWhole(taker),
+      'their keeper is on screen': (_seen, { keeper }) => play.role !== 'taker' || Boolean(keeper),
+      // The cut steps over the ball, so it enters the new picture from below a moment after the strike: it must be in
+      // within the grace, never leave once it is in, and stay until it reaches the keeper's plane (a ball may then fly over the bar and out).
+      'the ball is on screen': ({ ball }) => {
+        if (flow.is('aiming') || flow.is('facing')) return Boolean(ball);
+        if (!flow.is('flight') || play.kick.crossed || play.kick.outcome) return true;
+        if (ball) framing.enteredKick = play.kick;
+        return Boolean(ball) || (play.kick.time <= CUT_GRACE && framing.enteredKick !== play.kick);
+      },
+      'your keeper never covers the ball before the strike': ({ ball }, { keeper }) => !flow.is('facing') || !overlaps(keeper, ball),
+      'your keeper is seen whole before the strike': (_seen, { keeper }) => !flow.is('facing') || play.hasDived || isWhole(keeper),
+    };
+    const checkFraming = () => {
+      const seen = stage.framing();
+      const [taker, keeper] = onPitch().map((each) => seen.figures[match.order.indexOf(each)]);
+      framing.frames += 1;
+      Object.keys(PROMISES)
+        .filter((name) => !PROMISES[name](seen, { taker, keeper }))
+        .forEach((name) => {
+          framing.broken[name] = (framing.broken[name] || 0) + 1;
+          // Where it first broke, so a failed run says which moment to look at.
+          framing.first[name] = framing.first[name] || { phase: flow.state, role: play.role, seat: stage.seat(), kickTime: play.kick ? play.kick.time : 0, ball: play.kick ? { ...play.kick.ball.position } : null };
+        });
     };
 
     // A first visit goes straight to the spot; a returning player starts in the clubhouse.
@@ -613,13 +658,54 @@
           if (isNetted && kick && !kick.touched.net) sfx.noise({ dur: 0.12, vol: 0.12, freq: 3000, type: 'highpass' });
         }
         stage.update(dt, time);
+        if (framing.isWatched && match) checkFraming();
       },
       render: () => stage.render(),
       dispose: () => stage.dispose(),
+      /**
+       * Handles for scripted playtests (`Kit.debug.tools()` in a `node tools/dev.js play` step): play a kick
+       * without a finger, jump the ladder, and measure the picture and its cost.
+       */
+      tools: {
+        progress,
+        shoot: (aim) => flow.is('aiming') && releaseShot({ curve: 0, isArmed: true, ...aim }),
+        dive: (x, y) => diveTo({ x, y }),
+        /** Ends the match in play at once, five kicks to none, for or against the player (to reach the result sheet). */
+        finish(won) {
+          match.shootout = { first: 'you', you: Array.from({ length: RULES.kicks }, () => won), them: Array.from({ length: RULES.kicks }, () => !won) };
+          flow.go('result');
+        },
+        /** Jumps to a kick with the player in goal (a fresh shootout that the rival starts). */
+        face() {
+          match.shootout = SIM.createShootout('them');
+          beginKick();
+        },
+        beginMatch,
+        showClubhouse,
+        /** Starts (or stops) checking the camera's promises every frame; `debugState().framing` reports the count. */
+        watchFraming: (isWatched = true) => Object.assign(framing, { isWatched, frames: 0, broken: {}, first: {} }),
+        framing: () => stage.framing(),
+        /** The aim the player's last shot was struck with (pull, angle, curve). */
+        lastShot: () => play.shot || null,
+        budget: () => stage.budget(),
+        handsOff: () => onPitch()[1].handsOff(),
+        /**
+         * Times the game's own work on the main thread: `frames` updates and renders run back to back.
+         * @param {number} frames
+         * @returns {{updateMs: number, renderMs: number}} mean milliseconds per frame (draw calls and triangles: `Kit.debug.probe()`)
+         */
+        measure(frames) {
+          const timed = (work) => {
+            const startedAt = performance.now();
+            for (let frame = 0; frame < frames; frame++) work();
+            return (performance.now() - startedAt) / frames;
+          };
+          return { updateMs: timed(() => game.update(DATA.STEP * 2, ctx.time)), renderMs: timed(() => game.render()) };
+        },
+      },
       /** Facts for the developer overlay and `node tools/dev.js play` ("until state.phase === 'aiming'"). */
       debugState: () => ({
         phase: flow.state,
-        sheet,
         role: play.role,
         outcome: play.lastOutcome,
         kickTime: play.kick ? play.kick.time : 0,
@@ -636,23 +722,10 @@
         coins: progress.wallet.get(),
         rungs: progress.rungsWon(),
         hasSavedCharacter: Boolean(saved),
+        seat: stage.seat(),
+        framing: { frames: framing.frames, broken: { ...framing.broken }, first: { ...framing.first } },
         ball: play.kick ? { ...play.kick.ball.position } : null,
       }),
-    };
-    /**
-     * Times the game's own work on the main thread: `frames` updates and renders run back to back.
-     * @param {number} frames
-     * @returns {{updateMs: number, renderMs: number}} mean milliseconds per frame (draw calls and triangles: `Kit.debug.probe()`)
-     */
-    ctx.debug.measure = (frames) => {
-      const timed = (work) => {
-        const startedAt = performance.now();
-        for (let frame = 0; frame < frames; frame++) work();
-        return (performance.now() - startedAt) / frames;
-      };
-      const updateMs = timed(() => game.update(DATA.STEP * 2, ctx.time));
-      const renderMs = timed(() => game.render());
-      return { updateMs, renderMs };
     };
     return game;
   };

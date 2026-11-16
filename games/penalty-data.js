@@ -249,8 +249,8 @@
     {
       id: 'park', name: 'Park Cup', ground: 'Marsh Lane Rec', blurb: 'Jumpers for goalposts, nearly. Still air, patient crowds.', wind: 0, pressure: 0, look: 'park', prize: 120,
       rivals: [
-        rival('marsh', 'Marsh Lane', 101, [DYE.olive, DYE.cream, DYE.rust], keeperOf(0.36, 3.8, 0.4, 0.05, 0, 0), takerOf(0.6, 0.1, [0.5, 0.66], 0, 0.085, 0.3, 0.05, 0, 1)),
-        rival('whistle', 'Tin Whistle', 102, [DYE.crimson, DYE.charcoal, DYE.sky], keeperOf(0.32, 4.1, 0.42, 0.3, 0.7, 0), takerOf(-0.7, 0.25, [0.55, 0.74], 0, 0.075, 0.4, 0.08, 0.2, 0.9)),
+        rival('marsh', 'Marsh Lane', 101, [DYE.olive, DYE.cream, DYE.rust], keeperOf(0.36, 3.8, 0.4, 0.05, 0, 0), takerOf(0.6, 0.1, [0.42, 0.58], 0, 0.045, 0.3, 0.05, 0, 1)),
+        rival('whistle', 'Tin Whistle', 102, [DYE.crimson, DYE.charcoal, DYE.sky], keeperOf(0.32, 4.1, 0.42, 0.3, 0.7, 0), takerOf(-0.7, 0.25, [0.5, 0.7], 0, 0.055, 0.4, 0.08, 0.2, 0.9)),
         rival('oldmill', 'Old Mill', 103, [DYE.navy, DYE.cream, DYE.coral], keeperOf(0.3, 4.3, 0.44, 0.15, -0.3, 0.3), takerOf(0.3, 0.45, [0.58, 0.8], 0.2, 0.07, 0.5, 0.1, 0.35, 0.85)),
         rival('ferry', 'Ferry Road', 104, [DYE.mustard, DYE.navy, DYE.plum], keeperOf(0.28, 4.5, 0.45, 0.3, 0, 0.5), takerOf(0, 0.45, [0.62, 0.84], 0.3, 0.06, 0.6, 0.14, 0.5, 0.8)),
       ],
@@ -280,6 +280,9 @@
     id: 'road', name: "Champions' Road", blurb: 'No trophy at the end. Just a harder rival, every time.',
     /** How far a road rival's numbers move per rung, towards these limits. */
     growth: 0.08,
+    /** The seed of rung 0 (each rung adds one), and the ranges a road rival's habits are drawn from. */
+    seed: 9000,
+    vary: Object.freeze({ bias: [-0.7, 0.7], guess: [0.15, 0.65], side: [-0.8, 0.8], high: [0.25, 0.7], honesty: [0.3, 0.9] }),
     best: Object.freeze({ keeper: keeperOf(0.18, 5.4, 0.5, 0.5, 0, 1, 19, 0.15), taker: takerOf(0, 0.5, [0.76, 0.88], 0.6, 0.03, 1, 0.26, 1, 0.4) }),
     names: Object.freeze(['Vagabonds', 'Long Shadows', 'Tall Order', 'Last Bus', 'Paper Lions', 'Second Wind', 'Loose Cannons', 'Quiet Storm']),
     winPrize: 90,
@@ -299,12 +302,12 @@
   const roadRival = (rung) => {
     const champion = CUPS[CUPS.length - 1].rivals[3];
     const share = clamp(1 - Math.pow(1 - ROAD.growth, rung + 1));
-    const rng = Kit.rng(9000 + rung);
+    const rng = Kit.rng(ROAD.seed + rung);
     const dyes = Object.values(DYE);
-    const keeper = { ...mixTraits(champion.keeper, ROAD.best.keeper, share), bias: rng.range(-0.7, 0.7), guess: rng.range(0.15, 0.65) };
-    const taker = { ...mixTraits(champion.taker, ROAD.best.taker, share), side: rng.range(-0.8, 0.8), high: rng.range(0.25, 0.7), honesty: rng.range(0.3, 0.9) };
+    const keeper = { ...mixTraits(champion.keeper, ROAD.best.keeper, share), bias: rng.range(...ROAD.vary.bias), guess: rng.range(...ROAD.vary.guess) };
+    const taker = { ...mixTraits(champion.taker, ROAD.best.taker, share), side: rng.range(...ROAD.vary.side), high: rng.range(...ROAD.vary.high), honesty: rng.range(...ROAD.vary.honesty) };
     const name = `${ROAD.names[rung % ROAD.names.length]} ${romanOf(Math.floor(rung / ROAD.names.length) + 1)}`;
-    return { ...rival(`road${rung}`, name, 9000 + rung, [rng.pick(dyes), rng.pick(dyes), rng.pick(dyes)], keeper, taker), cup: { ...CUPS[rung % CUPS.length], id: ROAD.id, name: ROAD.name } };
+    return { ...rival(`road${rung}`, name, ROAD.seed + rung, [rng.pick(dyes), rng.pick(dyes), rng.pick(dyes)], keeper, taker), cup: { ...CUPS[rung % CUPS.length], id: ROAD.id, name: ROAD.name } };
   };
 
   /** @type {Array<[number, string]>} */

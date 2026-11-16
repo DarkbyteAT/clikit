@@ -26,6 +26,14 @@
    * thrown faster than this no longer reads as a dive).
    */
   const TIMING = Object.freeze({ strikeAt: 0.4, settle: 0.12, leastDive: 0.16 });
+  /**
+   * After a dive's contact the body falls and lands at the speed it was authored at, whatever rate got the
+   * hands there in time; once it has landed (`landedAt` of the way through) it gets up `getUpRate` times as fast,
+   * so the next kick is not kept waiting.
+   */
+  const AFTER_CONTACT = Object.freeze({ landedAt: 0.62, getUpRate: 2.5 });
+  /** Numbers per bone position in a pose's `translation`. */
+  const STRIDE = Kit.rig.VECTOR_STRIDE;
   /** A point closer to the standing keeper than this (world metres across) is gathered standing, not dived for. */
   const STANDING_REACH = 0.55;
   /** Where a taker looks to show a side: this far across and ahead of them, at this height, world metres. */
@@ -46,13 +54,38 @@
     const motion = Kit.act.cast(Kit.motion.state(figure.bake, Kit.act.character({ fidgets: [] })), figure.bake.seed || 1);
     const place = { x: 0, z: 0, heading: 0 };
     /** What the actor is doing, as the game named it; `run`: the run-up under way; `queued`: a reaction waiting for a dive to finish. */
-    const state = { mode: 'stand', seconds: 0, run: null, pendingDive: null, queued: null };
+    const state = { mode: 'stand', seconds: 0, run: null, pendingDive: null, queued: null, diveRate: 0 };
     const rootOffset = [0, 0];
     const footing = (figure.footing = { x: 0, z: 0 });
     const inFigure = (value) => value / scale;
     const playAt = (id, point, options) => Kit.act.play(motion, id, { target: [inFigure(point.x), inFigure(point.y), inFigure(point.z)], ...options });
-    /** A one-shot's rate so that its moment of contact comes `seconds` from now. */
-    const rateFor = (id, seconds) => (Kit.act.REPERTOIRE[id].seconds * Kit.act.CONTACT[id]) / Math.max(seconds, TIMING.leastDive);
+    /**
+     * The play options that put a one-shot's moment of contact `seconds` from now. This is the only place that
+     * knows how: today by a rate for the whole performance (so a fast dive also lands and gets up fast); when
+     * `Kit.act.play` takes a contact time, this returns that option instead and nothing else changes.
+     */
+    const contactIn = (id, seconds) => ({ rate: (Kit.act.REPERTOIRE[id].seconds * Kit.act.CONTACT[id]) / Math.max(seconds, TIMING.leastDive) });
+    /**
+     * The share of real time this body's motion advances by: 1, except after the contact of a dive, where the
+     * rate that `contactIn` asked for is undone (the stand-in for a contact time in `Kit.act.play`: with that
+     * option this returns 1 always).
+     */
+    const timeShare = (id) => {
+      if (!state.diveRate || !Kit.act.CONTACT[id] || Kit.act.progress(motion) < Kit.act.CONTACT[id]) return 1;
+      return (Kit.act.progress(motion) < AFTER_CONTACT.landedAt ? 1 : AFTER_CONTACT.getUpRate) / state.diveRate;
+    };
+    const hands = ['handLeft', 'handRight'].map((name) => figure.bake.plan.boneIndex(name));
+    /** How far the nearer hand is from the point the rules sent the hands to, world metres; smallest seen in this dive. */
+    const reach = { target: null, shortfall: Infinity };
+    const measureReach = () => {
+      const { translation } = figure.world;
+      const [sine, cosine] = [Math.sin(place.heading), Math.cos(place.heading)];
+      hands.forEach((bone) => {
+        const [x, y, z] = [translation[bone * STRIDE] * scale, translation[bone * STRIDE + 1] * scale, translation[bone * STRIDE + 2] * scale];
+        const distance = Math.hypot(place.x + x * cosine + z * sine - reach.target.x, y - reach.target.y);
+        reach.shortfall = Math.min(reach.shortfall, distance);
+      });
+    };
 
     /** Takes up whatever a finished kick or dive moved the body by, so the next thing starts where it ended. */
     const collectTravel = () => {
@@ -64,7 +97,10 @@
 
     const startDive = ({ target, seconds }) => {
       const id = Math.abs(target.x - place.x) < STANDING_REACH ? 'catch' : 'dive';
-      playAt(id, { x: target.x, y: target.y, z: place.z }, { rate: rateFor(id, seconds), fade: Math.min(TIMING.settle, seconds / 2) });
+      Object.assign(reach, { target, shortfall: Infinity });
+      const timing = contactIn(id, seconds);
+      state.diveRate = timing.rate || 0;
+      playAt(id, { x: target.x, y: target.y, z: place.z }, { ...timing, fade: Math.min(TIMING.settle, seconds / 2) });
     };
 
     return {
@@ -78,6 +114,7 @@
       stand(x, z, heading) {
         Object.assign(place, { x, z, heading });
         Object.assign(state, { mode: 'stand', seconds: 0, run: null, pendingDive: null, queued: null });
+      reach.target = null;
         Kit.act.base(motion, null);
         Kit.act.stop(motion, 0);
         Kit.act.takeRootMotion(motion, rootOffset);
@@ -105,7 +142,7 @@
       kick(ball) {
         Object.assign(state, { mode: 'kick', seconds: 0, run: null });
         Kit.act.lookAhead(motion);
-        playAt('kick', ball, { rate: rateFor('kick', TIMING.strikeAt), fade: TIMING.settle });
+        playAt('kick', ball, { ...contactIn('kick', TIMING.strikeAt), fade: TIMING.settle });
       },
       /**
        * Dives so that the hands are on a point of the keeper's plane at a moment the rules chose.
@@ -153,7 +190,7 @@
           state.mode = state.queued;
           state.queued = null;
         }
-        Kit.motion.advance(motion, dt, inFigure(place.x), 0, inFigure(place.z), place.heading);
+        Kit.motion.advance(motion, dt * (isDiving ? timeShare(oneShot) : 1), inFigure(place.x), 0, inFigure(place.z), place.heading);
         Kit.rig.copy(motion.pose, figure.local);
         figure.root.position.set(place.x, 0, place.z);
         figure.root.rotation.set(0, place.heading, 0);
@@ -163,7 +200,13 @@
         footing.z = place.z + rootOffset[1] * scale;
         figure.face(Kit.act.face(motion));
         figure.pose();
+        if (reach.target && isDiving) measureReach();
       },
+      /**
+       * How close the hands got to the point of the last dive (for the contact sheet of a playtest).
+       * @returns {{target: ?{x: number, y: number}, shortfall: number}} `shortfall`: world metres, across the keeper's plane
+       */
+      handsOff: () => ({ target: reach.target, shortfall: reach.shortfall }),
       /** Which performance is on (for the flow and the debug state). */
       mode: () => state.mode,
     };

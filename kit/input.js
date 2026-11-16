@@ -81,6 +81,7 @@
    * @property {?number} id pointerId of the gesture (other fingers are ignored until it ends)
    * @property {boolean} swiped has this gesture already fired its swipe?
    * @property {number} moved farthest the gesture has strayed from its start, pixels
+   * @property {number} time when the browser saw the pointer at this position, `performance.now()` milliseconds (the event's own time)
    */
 
   /**
@@ -95,6 +96,8 @@
    * @property {number} dy movement since the previous event, pixels
    * @property {number} tx total offset from the gesture's start, pixels
    * @property {number} ty total offset from the gesture's start, pixels
+   * @property {number} time when the browser saw the finger there, milliseconds on the `performance.now()` clock: the
+   *   event's own time, not the handler's, so speed and flicks are measured rightly on a frame that ran late
    */
 
   /**
@@ -117,7 +120,7 @@
     const canvas = ctx.renderer.domElement;
     const bus = Kit.bus();
     /** @type {PointerState} */
-    const pointer = { down: false, x: 0, y: 0, nx: 0, ny: 0, sx: 0, sy: 0, t0: 0, id: null, swiped: false, moved: 0 };
+    const pointer = { down: false, x: 0, y: 0, nx: 0, ny: 0, sx: 0, sy: 0, t0: 0, id: null, swiped: false, moved: 0, time: 0 };
     const stick = { x: 0, y: 0, active: false };
     const heldKeys = new Set();
     const stickElement = document.getElementById('stick');
@@ -126,7 +129,10 @@
     // ---- pointer bookkeeping ----
 
     /** Records where the pointer is, in pixels and in normalised device coordinates (y flipped: up is positive). */
+    /** The event's own time; a synthetic event without one takes the clock's. */
+    const timeOf = (event) => (event.timeStamp > 0 ? event.timeStamp : performance.now());
     const trackPosition = (event) => {
+      pointer.time = timeOf(event);
       pointer.x = event.clientX;
       pointer.y = event.clientY;
       pointer.nx = (pointer.x / ctx.size.w) * 2 - 1;
@@ -136,6 +142,7 @@
     /** @returns {PointerEventInfo} a snapshot of the pointer for an event payload */
     const describePointer = (phase, deltaX = 0, deltaY = 0) => ({
       phase,
+      time: pointer.time,
       x: pointer.x,
       y: pointer.y,
       nx: pointer.nx,
@@ -207,6 +214,7 @@
 
     const onPointerUp = (event) => {
       if (!pointer.down || event.pointerId !== pointer.id) return;
+      pointer.time = timeOf(event);
       bus.emit('drag', describePointer('end'));
       pointer.down = false;
       setStick({ x: 0, y: 0 }, false);

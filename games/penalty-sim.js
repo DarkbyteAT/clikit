@@ -35,9 +35,13 @@
   /** What the net does to a ball: it keeps `keep` of the speed along the netting and `bounce` back out of it, and drags. */
   const NET = Object.freeze({ keep: 0.3, bounce: 0.12, drag: 3 });
   /** A kick's outcome stays on show this long before the kick is over, seconds. */
-  const AFTER = Object.freeze({ goal: 1.3, save: 0.9, other: 0.8 });
-  /** A parried or rebounding ball this far back up the pitch (metres from the keeper's plane) is no longer a threat. */
-  const CLEAR_DISTANCE = 1.6;
+  const AFTER = Object.freeze({ goal: 1.2, save: 0.7, other: 0.55 });
+  /**
+   * A parried or rebounding ball that is travelling back up the pitch and is this far in front of the keeper's
+   * plane (metres) is no longer a threat: nothing in the air turns it round, so the kick is decided there and
+   * the ball rolls on behind the callout.
+   */
+  const CLEAR_DISTANCE = 0.4;
   /** A knuckling ball's sideways force swings at about this rate, radians per second. */
   const WOBBLE_RATE = 13;
 
@@ -319,7 +323,7 @@
 
   /** Where a launch crosses the keeper's plane with nothing in its way, or null when it never gets there. */
   const crossingOf = (launch, ballRow, wind = 0) => {
-    const path = Kit.flight.trace(ballAtSpot(launch), { air: airOf(ballRow, wind), step: 1 / 60, maxSteps: 150, stopWhen: (now) => now.position.z <= KEEPER_Z });
+    const path = Kit.flight.trace(ballAtSpot(launch), { air: airOf(ballRow, wind), step: LOOK_AHEAD.step, maxSteps: LOOK_AHEAD.steps, stopWhen: (now) => now.position.z <= KEEPER_Z });
     const { end } = path;
     if (end.position.z > KEEPER_Z) return null;
     const before = path.points.length > 1 ? path.points[path.points.length - 2] : SPOT;
@@ -361,6 +365,8 @@
   // ==================================================== a rival keeper's mind ====================================================
 
   /** Where a gambling keeper throws themselves: how far across, and the heights they choose between. */
+  /** How a flight is traced ahead when someone works out where a ball will go: the step, seconds, and the most steps. */
+  const LOOK_AHEAD = Object.freeze({ step: 1 / 60, steps: 150 });
   const GAMBLE = Object.freeze({ across: [1.5, 2.2], heights: [0.45, 1.05, 1.6], sideWeight: 0.8 });
 
   /**
@@ -381,9 +387,9 @@
       const side = rng.chance(0.5 + 0.5 * lean) ? 1 : -1;
       return { ...diveOf({ x: side * rng.range(...GAMBLE.across), y: rng.pick(GAMBLE.heights) }, 0, traits), kind: 'gamble' };
     }
-    const seen = Kit.flight.trace(ballAtSpot(launch), { air: airOf(ballRow, wind), step: 1 / 60, maxSteps: Math.max(1, Math.round(traits.reaction * 60)) }).end;
+    const seen = Kit.flight.trace(ballAtSpot(launch), { air: airOf(ballRow, wind), step: LOOK_AHEAD.step, maxSteps: Math.max(1, Math.round(traits.reaction / LOOK_AHEAD.step)) }).end;
     // From what has been seen, the ball is carried on without spin or wind: gravity and drag only.
-    const guessed = Kit.flight.trace({ ...seen, spin: { x: 0, y: 0, z: 0 } }, { air: airOf({ ...ballRow, curl: 0 }), step: 1 / 60, maxSteps: 150, stopWhen: (now) => now.position.z <= KEEPER_Z }).end;
+    const guessed = Kit.flight.trace({ ...seen, spin: { x: 0, y: 0, z: 0 } }, { air: airOf({ ...ballRow, curl: 0 }), step: LOOK_AHEAD.step, maxSteps: LOOK_AHEAD.steps, stopWhen: (now) => now.position.z <= KEEPER_Z }).end;
     const target = { x: guessed.position.x + rng.range(-traits.readNoise, traits.readNoise), y: guessed.position.y + rng.range(-traits.readNoise, traits.readNoise) };
     return { ...diveOf(target, traits.reaction, traits), kind: 'read' };
   };
@@ -391,7 +397,8 @@
   // ==================================================== a rival taker's mind ====================================================
 
   /** Where takers aim: how far across for a corner, how often down the middle, and how nerves widen the spray. */
-  const TAKER = Object.freeze({ across: [1.35, 2.2], middleChance: 0.08, middle: 0.5, highPull: 0.78, pressureSpray: 1.5, pullSprayShare: 0.5, curlAmount: [0.5, 1] });
+  /** A taker's choices. `safeMargin`: metres kept between the aim and the post per radian of the taker's own spray (a wild taker aims well inside, so most of their shots are on target and reachable). */
+  const TAKER = Object.freeze({ across: [1.35, 2.2], safeMargin: 9, middleChance: 0.08, middle: 0.5, highPull: 0.78, pressureSpray: 1.5, pullSprayShare: 0.5, curlAmount: [0.5, 1] });
 
   /** A bell-shaped random number around 0 with about unit spread, from three uniform draws. */
   const bell = (rng) => rng.range(-1, 1) + rng.range(-1, 1) + rng.range(-1, 1);
@@ -413,7 +420,9 @@
   const takerIntent = (traits, rng) => {
     const isMiddle = rng.chance(TAKER.middleChance);
     const side = rng.chance(0.5 + 0.5 * traits.side) ? 1 : -1;
-    const targetX = isMiddle ? rng.range(-TAKER.middle, TAKER.middle) : side * rng.range(...TAKER.across);
+    // A taker knows their own accuracy: the wilder the boot, the further inside the post they aim.
+    const widest = Math.min(TAKER.across[1], goal.halfWidth - traits.spray * TAKER.safeMargin);
+    const targetX = isMiddle ? rng.range(-TAKER.middle, TAKER.middle) : side * rng.range(Math.min(TAKER.across[0], widest - 0.3), widest);
     const [least, most] = traits.pull;
     // Going high means pulling harder: the top of their range when it reaches, else as hard as they dare.
     const pull = rng.chance(traits.high) ? rng.range(Math.max(least, Math.min(TAKER.highPull, most - 0.03)), most) : rng.range(least, Math.min(most, TAKER.highPull));

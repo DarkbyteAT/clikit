@@ -604,6 +604,7 @@ Kit.register({ id: 'orbit', name: 'Orbit', theme: { skin: 'neon' }, create: (ctx
   - `update` *function(number, number): void* - called every frame with (dt, t) in game seconds
   - `[dispose]` *function(): void* - called when the game is left or restarted
   - `[debugState]` *function(): Object* - plain data describing the run right now (score, phase, positions); surfaced as `Kit.debug.state().state` to the developer overlay and to `node tools/dev.js play` predicates
+  - `[tools]` *Object\<string, \*\>* - handles for scripted playtests and measurements (jump to a level, fire an action without a finger, time a frame), reached as `Kit.debug.tools()`; never used by the game itself
 - **GameDefinition**
   - `id` *string* - unique id; also the save namespace and the smoke-test name
   - `name` *string* - title on the menu
@@ -3640,6 +3641,7 @@ _Undocumented: add a JSDoc block in the source._
   - `dy` *number* - movement since the previous event, pixels
   - `tx` *number* - total offset from the gesture's start, pixels
   - `ty` *number* - total offset from the gesture's start, pixels
+  - `time` *number* - when the browser saw the finger there, milliseconds on the `performance.now()` clock: the event's own time, not the handler's, so speed and flicks are measured rightly on a frame that ran late
 
 ## fx.js
 
@@ -5750,7 +5752,7 @@ Opens the overlay when it is closed and closes it when it is open.
   - `time` *number* - game seconds since the game started
   - `paused` *boolean*
   - `timeScale` *number*
-  - `modal` *?string* - title of the open modal, or null
+  - `modal` *?string* - title of the open modal or `ui.dialog` sheet, or null
   - `hud` *Object\<string, (number\|string)\>* - the stats row as label -> value
   - `actions` *string[]* - labels of the enabled bottom-bar buttons
   - `state` *?Object* - what the game's own `debugState()` returned, or null when it has none

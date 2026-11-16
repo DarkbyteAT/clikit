@@ -794,3 +794,47 @@ machine at load 20 to 40, so only the ratios mean anything.
   cannot buy the ladder; rivals sharpen faster than perks cover. Medals (lifetime goals, saves, matches) pay in
   between rungs so a player stuck on one rival still earns something new (`make sim` dead stretches fell from
   eleven warnings to seven; the rest are 10 to 15 minutes on the hardest rivals and are reported, not hidden).
+
+### Round 2: framing, the keeper's picture and the cost of the scene
+
+- **The taker's view is a raised seat that cuts to a seat past the taker at the strike, then cuts back.** While
+  aiming, the camera sits high enough that the taker stands whole (head to boots) low and to one side, under the
+  goal; the moment the ball is struck it cuts to a `flight` seat beside and in front of the taker, where nothing
+  can stand between the lens and the goal. Rejected: a raised seat alone (to clear a run-up and follow-through it
+  has to be so high that the goal is a flat strip and the top corners cannot be read), a side step without a cut
+  (the camera moves during the kick, which shimmers in a perspective pixel view and moves the aim line under the
+  thumb), and fading the taker (a dithered body over the goal is still over the goal, and hides the kick itself).
+  Cost: one hard cut per kick; the ball enters the new picture from under the lens, at most `CUT_GRACE` (0.12 s) late.
+- **A seat is a rule solved per screen (`solveSeat`), not a camera position.** Each seat names a plane that must
+  fit from edge to edge (by backing off at a fixed lens, or by opening the lens from a fixed place) and an anchor
+  that sits just under the HUD band (`HUD_BAND`, CSS pixels per orientation) or at a share of the screen's height.
+  A new screen shape is then a solve, not a new table row; rotating mid-kick re-solves the seat in use.
+- **What the camera promises is a table checked from projected rectangles (`PROMISES` in games/penalty.js).** The
+  goal whole on screen; the taker never over the goal, their keeper or the ball (the ball excepted while the boot
+  swings at it); the taker whole while aiming; the ball on screen until it crosses the keeper's plane; your keeper
+  never over the ball, and whole before the dive. `Kit.debug.tools().watchFraming()` counts broken frames and
+  records where each promise first broke; scripted playtests assert the count is empty at 390x844, 360x640 and 844x390.
+- **In goal, the back and roof of the net are drawn only while the ball is in them.** The camera sits above and
+  behind the keeper, so a full net is a grid across the hero. The sides always show (they frame the goal); the
+  back and roof appear when the net is moving and go when it has come to rest. Rejected: a camera inside the goal
+  (the keeper fills the screen and the dive leaves it) and a faded net (pixel lines do not fade, they dither).
+- **The incoming ball is read by four cues, each a row of the seat or the stage**: drawn 1.5 times its size from the
+  keeper's seat (`ballScale`), a ground shadow, a short trail of dots, and a thin ring where the tap landed.
+- **Dive timing stays in the adapter (`contactIn` in games/penalty-perform.js), the one place that knows about
+  rate.** It plays a dive at the rate that puts `Kit.act.CONTACT` on the rules' arrival, then scales time after
+  contact back to the authored speed until the landing and faster through the getting-up. When Kit.act takes a
+  contact time per play this is a one-line swap. Open, for the act owner: there is no jumping or crouching catch,
+  so a ball at the high centre is met 0.71 m short by the drawn hands and at the low centre 0.26 m short; corners
+  and mid sides are within 0.03 m.
+- **Characters are built at the kit's `low` level and the crowd is two-quad cards.** At 300 rows of picture a
+  character is about 90 texels tall; `high` spent 19 to 20 thousand triangles on each. The crowd was boxes (7.9
+  thousand triangles); it is now one instanced mesh of crossed cards per stand colour block. Posts, poles and
+  shadows are merged or instanced. Not reached: draw calls. A kit figure is 32 to 38 meshes whatever its level,
+  so two characters are 70 of the scene's 87 calls; the rest of the ground is 17. For the figure owner.
+- **A flick is measured from event time stamps (`PointerEventInfo.time`), not frame time.** A curl is a sideways
+  flick in the last 150 ms of the pull; at 12 frames a second (software GL, or a slow phone) frame time cannot see
+  it. Kit.input now carries `event.timeStamp`; the play tool's `flick` step stamps its touch events the same way.
+- **Play tool**: `press` and `choose` reach buttons of an open `ui.dialog`, `modal` reports it, `wait` runs (and
+  says so) while the game is paused, `down` / `move` / `up` hold a drag across a screenshot, `flick` and `resize`
+  exist, and a game hands its test handles to scripts through `tools` on its instance (`Kit.debug.tools()`),
+  which replaces the game-private `ctx.debug` field.

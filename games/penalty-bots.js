@@ -13,7 +13,7 @@
  */
 (() => {
   const DATA = window.SPOT_KICK_DATA, SIM = window.SPOT_KICK_SIM;
-  const { FIELD, KEEPER, REWARDS, RUN_UP } = DATA;
+  const { REWARDS } = DATA;
   const { clamp, lerp } = Kit.math;
 
   /**
@@ -50,7 +50,7 @@
     const angle = aim.angle + bell(rng) * skilled(BOT.aimError, practice) + SIM.swayAt(rng.range(0, 10), pressure, stats.get('sway')) * skilled(BOT.swayShare, practice);
     const launch = SIM.launchOf({ ...aim, angle }, ballRow, boot);
     const dive = SIM.rivalDive(rival.keeper, { launch, ballRow, wind, history }, rng);
-    return SIM.createKick({ launch, ballRow, keeper: rival.keeper, dive, wind, wobblePhase: rng.range(0, 6) });
+    return SIM.createKick({ launch, ballRow, keeper: rival.keeper, dive, wind, wobblePhase: rng.range(0, Math.PI * 2) });
   };
 
   /** The bot keeps: it gambles on the tell just before the strike, or reads the ball and taps late. */
@@ -60,7 +60,7 @@
     const isGamble = rng.chance(BOT.gamble.chance);
     const early = isGamble ? SIM.diveOf({ x: intent.tell * BOT.gamble.across, y: rng.pick(BOT.gamble.heights) }, -BOT.gamble.early, keeper) : null;
     const launch = SIM.launchOf(SIM.takerAim(SIM.takerAnswer(intent, rival.taker, early, rng), rival.taker, ballRow, pressure, rng), ballRow);
-    const kick = SIM.createKick({ launch, ballRow, keeper, dive: early, wind, wobblePhase: rng.range(0, 6) });
+    const kick = SIM.createKick({ launch, ballRow, keeper, dive: early, wind, wobblePhase: rng.range(0, Math.PI * 2) });
     const tapAt = skilled(BOT.reaction, practice);
     const error = skilled(BOT.readError, practice);
     return SIM.playKick(kick, (live) => {

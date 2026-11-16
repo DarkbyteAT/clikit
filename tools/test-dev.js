@@ -160,6 +160,16 @@ test('play: steps parse from text and objects, with errors that name the fix', (
   assert.strictEqual(parseStep('choose 1').option, 1);
   assert.strictEqual(parseStep('choose Bigger boat').option, 'Bigger boat');
   assert.strictEqual(parseStep('press Buy Pick').label, 'Buy Pick');
+  assert.deepStrictEqual(parseStep('down 0.5,0.7'), { verb: 'down', label: 'down 0.5,0.7', at: [0.5, 0.7] }, 'a held press: the drag stays down across later steps');
+  assert.deepStrictEqual(parseStep('move 0.4,0.9 in 0.5'), { verb: 'move', label: 'move 0.4,0.9 in 0.5', at: [0.4, 0.9], seconds: 0.5 });
+  assert.strictEqual(parseStep({ move: 'left' }).at, 'left');
+  assert.strictEqual(parseStep('up').verb, 'up');
+  assert.deepStrictEqual(parseStep('resize 844x390'), { verb: 'resize', label: 'resize 844x390', width: 844, height: 390 });
+  assert.throws(() => parseStep('resize wide'), /resize needs <width>x<height>/);
+  assert.deepStrictEqual(parseStep('flick 0.7,0.9'), { verb: 'flick', label: 'flick 0.7,0.9', at: [0.7, 0.9] });
+  assert.throws(() => parseStep('flick'), /flick needs a point/);
+  assert.throws(() => parseStep('down'), /down needs a point/);
+  assert.throws(() => parseStep('move'), /move needs a point/);
   assert.strictEqual(parseStep({ assert: 'hud.Score > 0', message: 'scored' }).message, 'scored');
   const predicate = (state) => state.lives > 0;
   assert.strictEqual(parseStep({ until: predicate }).test, predicate, 'a JS module may pass a function');

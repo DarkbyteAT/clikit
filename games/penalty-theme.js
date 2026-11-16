@@ -37,17 +37,33 @@
     & .sk-power i[data-zone="over"] { box-shadow: inset 0 -3px 0 var(--hot); }
     & .sk-power i[data-on][data-zone="over"] { background: var(--hot); }
     & .sk-power[hidden] { display: none; }
-    & .toast { font: 400 30px var(--display); color: #fff; text-shadow: 3px 3px 0 #0c1020, -1px -1px 0 #0c1020; letter-spacing: .04em; }
-    /* The hint sits under the board, clear of the ball the thumb is about to drag. */
-    & .hint { font: 500 15px var(--body); background: rgba(10, 14, 32, .85); border: 2px solid var(--line); border-radius: 0; top: calc(216px + env(safe-area-inset-top, 0px)); bottom: auto; }
+    /* Callouts land on the turf in front of the goal, never across it. */
+    & .toast { top: 47%; font: 400 30px var(--display); color: #fff; text-shadow: 3px 3px 0 #0c1020, -1px -1px 0 #0c1020; letter-spacing: .04em; }
+    /* The hint sits low, over the turf the thumb drags on: clear of the goal, the ball and the bench's note. */
+    & .hint { font: 500 15px var(--body); background: rgba(10, 14, 32, .85); border: 2px solid var(--line); border-radius: 0; top: auto; bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
     & .modal-card { border-radius: 0; border: 2px solid var(--line); box-shadow: 0 6px 0 rgba(0, 0, 0, .5); }
     & .modal-card h2 { font: 400 24px var(--display); color: var(--accent); }
-    /* A phone on its side: the board and the bench's note move to the left edge, clear of the goal. */
+    /*
+     * A phone on its side: the board is one slim row along the top, right of the kit's own buttons and title,
+     * with the chips under it; the bench's note sits bottom right and the hint bottom centre, so nothing lies
+     * over the goal or over another panel. The top band must stay within the stage's HUD_BAND.landscape.
+     */
     @media (orientation: landscape) and (max-height: 520px) {
-      & .sk-top { left: calc(12px + env(safe-area-inset-left, 0px)); transform: none; width: 232px; align-items: flex-start; }
-      & .sk-strip { justify-content: flex-start; }
-      & .sk-bottom { left: calc(12px + env(safe-area-inset-left, 0px)); transform: none; width: 232px; align-items: flex-start; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
-      & .hint { top: auto; bottom: 8px; }
+      /* The HUD layer begins under the kit's top bar; the strip is lifted to sit beside it. */
+      & .sk-top { top: calc(-42px + env(safe-area-inset-top, 0px)); left: auto; right: calc(10px + env(safe-area-inset-right, 0px)); transform: none; width: auto; max-width: calc(100% - 330px); align-items: flex-end; gap: 3px; }
+      & .toast { top: 62%; }
+      & .sk-board { display: flex; flex-wrap: nowrap; gap: 8px; width: auto; padding: 3px 8px 2px; box-shadow: 0 2px 0 rgba(0, 0, 0, .45); }
+      & .sk-board > :nth-child(4) { order: 6; }
+      & .sk-board > :nth-child(5) { order: 5; }
+      & .sk-board > :nth-child(6) { order: 4; }
+      & .sk-board b { font-size: 11px; max-width: none; overflow: visible; }
+      & .sk-board output { font-size: 14px; }
+      & .sk-lamps { gap: 3px; }
+      & .sk-lamp { width: 10px; height: 10px; }
+      & .sk-strip { justify-content: flex-end; flex-wrap: nowrap; gap: 4px; }
+      & .sk-chip { padding: 2px 6px 1px; font-size: 10px; }
+      & .sk-bottom { left: auto; right: calc(10px + env(safe-area-inset-right, 0px)); transform: none; width: 230px; align-items: flex-end; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+      & .hint { bottom: calc(8px + env(safe-area-inset-bottom, 0px)); max-width: calc(100% - 500px); font-size: 13px; }
     }
     /* The clubhouse sheet (a dialog: outside the HUD layer, inside the game's scope). */
     & .sk-club { display: flex; flex-direction: column; gap: 10px; }
