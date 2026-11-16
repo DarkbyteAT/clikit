@@ -235,7 +235,7 @@
     const mountSuffix = `${Kit.body.SOCKET_PATH_SEPARATOR}${Kit.body.MOUNT_BONE}`;
     const isHidden = (bone) => plan.boneNames[bone].endsWith(mountSuffix);
     const inkKeys = Array.from({ length: plan.boneCount }, (_unused, bone) => inkKeyOf(plan, bone));
-    const rules = { isHidden, skipChild: (from, child) => isProp(child) !== isProp(from) || isHidden(child), isSameRegion: (bone, child) => inkKeys[bone] === inkKeys[child] };
+    const rules = { isHidden, skipChild: (from, child) => isProp(child) !== isProp(from) || isHidden(child), isSameRegion: (bone, child) => inkKeys[bone] === inkKeys[child], shapes: bake.shapes };
     const pieces = [];
     for (let bone = 0; bone < plan.boneCount; bone++) {
       const surfaces = Kit.figure.describeShapes(plan, bone, rules);
