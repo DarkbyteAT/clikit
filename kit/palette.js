@@ -143,7 +143,7 @@
    * byte for byte. With one shadow tone the step down from it stays gentle (the reasoning of `SHADOW_REACH`: a
    * face half in a deep shadow reads as half a face); each further tone reaches deeper, down to the ramp's
    * darkest. The lightest tone stops short of the ramp's end, so a highlight is a colour, not chalk.
-   * @type {Record<number, number[]>}
+   * @type {Readonly<Record<number, ReadonlyArray<number>>>}
    */
   const TONE_POSITIONS = Object.freeze({
     2: Object.freeze([0.28, 0.5]),
@@ -338,6 +338,7 @@
    * @param {number} position 0..1 along the ramp
    * @param {number} toneCount 2..6
    * @returns {number} a tone column 0..toneCount - 1, or `DEEP_COLUMN`
+   * @complexity O(toneCount) time, O(1) space
    * @example Kit.palette.columnAt(0, 3) // 6: the deep column
    */
   const columnAt = (position, toneCount) => {

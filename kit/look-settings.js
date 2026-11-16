@@ -2,7 +2,8 @@
  * Kit look settings: the look as data and small pure functions. What a tone band is, how dither thresholds are
  * laid out, how a figure sits on a texel grid, and the three presets with the knobs each exposes.
  *
- * Owns:  the band lookup and ordered-dither tables the shaders mirror (`bandOf`, `edgesFor`, `bayerAt`); the grid
+ * Owns:  the band lookup, the light value and the ordered-dither tables the shaders mirror (`bandOf`, `lightOf`,
+ *        `edgesFor`, `bayerAt`); the grid
  *        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`);
  *        the lights and how kinds of surface answer them (`LIGHTING`, `RESPONSES`); and the presets and knobs
  *        (`PRESETS`, `KNOBS`, `settings`).
@@ -16,19 +17,20 @@
 
   /**
    * Band edges on the light value n.L (-1 facing away .. 1 facing the light), by tone count. A pixel's tone is
-   * the number of edges at or below its light. The top edge is high so the highlight stays a small accent, and
-   * the shadow edges sit below zero so a form turned a little from the light is not half dark. With the key
-   * light of `LIGHTING` a ball shows about a sixth of its disc in shadow and a tenth in highlight: two or three
-   * clean tones on a large form. The second-lightest band (the ramp's own colour) always contains
+   * the number of edges at or below its light. The edges are placed by what they leave of a ball under the key
+   * light of `LIGHTING`: about an eighth of its disc in highlight, a fifth in shadow (a crescent, with the deeper
+   * tones of higher counts nested inside it) and the rest, well over half, in the ramp's own colour: two or
+   * three clean tones on a large form. The second-lightest band (the ramp's own colour) always contains
    * `LIGHTING.fillCap`, which is what lets the fill light lift a face to its own colour and no further.
+   * tools/test-looks.js measures both.
    * @type {Record<number, number[]>}
    */
   const BAND_EDGES = {
-    2: [-0.08],
-    3: [-0.08, 0.8],
-    4: [-0.38, -0.02, 0.8],
-    5: [-0.45, -0.12, 0.24, 0.82],
-    6: [-0.5, -0.24, 0.02, 0.3, 0.84],
+    2: [0.1],
+    3: [0.1, 0.91],
+    4: [-0.25, 0.1, 0.91],
+    5: [-0.3, 0, 0.3, 0.91],
+    6: [-0.35, -0.1, 0.1, 0.32, 0.91],
   };
 
   /**
@@ -71,7 +73,7 @@
    */
   const RESPONSES = Object.freeze({
     form: Object.freeze({ fillGain: 0, fillBias: -2, dither: 1 }),
-    face: Object.freeze({ fillGain: 1.2, fillBias: -0.5, dither: 0 }),
+    face: Object.freeze({ fillGain: 2, fillBias: -0.55, dither: 0 }),
   });
   /** An edge no light value reaches: pads the shader's fixed-length edge array. */
   const UNUSED_EDGE = 9;
@@ -88,6 +90,23 @@
   const BAYER_LEVELS = 16;
 
   // ---- bands and dither (the shaders in look-toon.js compute exactly these) ---------------------------------------------
+
+  const unit = (vector) => {
+    const length = Math.hypot(vector[0], vector[1], vector[2]);
+    return vector.map((component) => component / length);
+  };
+  const dot = (first, second) => first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+
+  /**
+   * The light value of a surface: the brighter of the key light's n.L and what the surface's response takes of
+   * the capped fill light. The fragment shader's `lightOf` is this function.
+   * @param {number[]} normal unit normal in view space [right, up, toward the viewer]
+   * @param {LightResponse} [response] a row of `RESPONSES` (default: a form)
+   * @returns {number} -1..1; pass it to `bandOf`
+   * @example Kit.look.bandOf(Kit.look.lightOf([0, 0, 1], Kit.look.RESPONSES.face), Kit.look.edgesFor(3)) // 1: a face seen head-on is its own colour
+   */
+  const lightOf = (normal, response = RESPONSES.form) =>
+    Math.max(dot(normal, unit(LIGHTING.key)), Math.min(response.fillGain * dot(normal, unit(LIGHTING.fill)) + response.fillBias, LIGHTING.fillCap));
 
   /**
    * The tone of a light value: how many band edges lie at or below it.
@@ -146,6 +165,23 @@
   const texelScale = (bufferHeight, rows) => (rows > 0 ? Math.max(1, Math.round(bufferHeight / rows)) : 1);
 
   /**
+   * How much of a look's dither a frame draws, by the world size of a texel. Dither trades resolution for an
+   * extra apparent tone, which pays on a figure large enough to hold the pattern; on a small sprite a 4 x 4
+   * checker along every band edge is speckle. It is whole while a texel is finer than `full` world units (a
+   * person about 140 texels tall or more) and gone at `none` (about 70 texels tall).
+   */
+  const DITHER_TEXEL_FADE = Object.freeze({ full: 0.012, none: 0.024 });
+
+  /**
+   * The dither strength to draw with.
+   * @param {number} dither the look's dither strength (`LookSettings.dither`)
+   * @param {number} texelWorld world units one target texel covers; 0 when unknown (a perspective camera): no fade
+   * @returns {number} 0..dither
+   * @example Kit.look.ditherAt(0.07, 0.018) // 0.035: half way through the fade
+   */
+  const ditherAt = (dither, texelWorld) => dither * Math.min(1, Math.max(0, (DITHER_TEXEL_FADE.none - texelWorld) / (DITHER_TEXEL_FADE.none - DITHER_TEXEL_FADE.full)));
+
+  /**
    * Averages the normals of vertices that share a position. An inverted-hull outline pushes vertices along
    * their normals; where a mesh has hard edges (a box, a cylinder's cap) the copies of a corner would part
    * and open a gap in the line, so the hull uses these welded normals instead.
@@ -180,7 +216,8 @@
    * @typedef {Object} LookSettings
    * Everything that decides how a view draws. Plain data: store it, diff it, send it.
    * @property {number} toneCount tones per ramp, 2..6 (the band count)
-   * @property {number} dither strength of the ordered dither on the light value, 0 (off) .. 0.3
+   * @property {number} dither strength of the ordered dither on the light value, 0 (off) .. 0.3; a frame draws less of
+   *   it as its texels grow against the figures (`ditherAt`), and none on faces or tightly curved forms
    * @property {'screen'|'anchored'|'object'} ditherSpace what the dither pattern is fixed to: the screen, the
    *   figure's snapped screen position, or the surface itself
    * @property {number} softness half-width of the blend across a band edge, in light units; 0 is a hard edge.
@@ -305,5 +342,5 @@
     return { ...merged, preset: presetId, isIndexed: merged.outline === 'ink' || merged.pixelRows > 0 };
   };
 
-  Kit.look = { MAX_EDGES, BAND_EDGES, LIGHTING, RESPONSES, BAYER_4, PRESETS, KNOBS, bandOf, edgesFor, bayerAt, snapToTexel, stepYaw, texelScale, weldNormals, settings };
+  Kit.look = { MAX_EDGES, BAND_EDGES, LIGHTING, RESPONSES, DITHER_TEXEL_FADE, ditherAt, lightOf, BAYER_4, PRESETS, KNOBS, bandOf, edgesFor, bayerAt, snapToTexel, stepYaw, texelScale, weldNormals, settings };
 })();
