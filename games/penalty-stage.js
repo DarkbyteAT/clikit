@@ -393,12 +393,14 @@
       /**
        * Builds a character from a recipe and stands it in the scene.
        * @param {Object} recipe a `Recipe` of the wardrobe catalogue
-       * @returns {Object} a `Figure` (kit/figure.js) with `shadow`, a mesh that follows it on the turf
+       * @returns {Object} a `Figure` (kit/figure.js) with `shadow`, a mesh on the turf under `footing` (a point with x and z: the root's place by default)
        */
       addFigure(recipe) {
         const figure = Kit.figure.build(view, bakery.bakeRecipe(recipe));
         figure.root.scale.setScalar(FIGURE_SCALE);
         figure.shadow = shadowOf();
+        // Where the body is over the turf: the root, until whoever animates it says otherwise (a dive carries the body off its root).
+        figure.footing = figure.root.position;
         figure.shadow.scale.set(0.42, 1, 0.3);
         figures.push(figure);
         return figure;
@@ -573,14 +575,13 @@
           bitMesh.setMatrixAt(index, bit.life > 0 ? seatMatrix.makeRotationZ(bit.life * 9).setPosition(bit.x, bit.y, bit.z) : hiddenMatrix);
           bitMesh.instanceMatrix.needsUpdate = true;
         }
-        figures.forEach((figure) => figure.shadow.position.set(figure.root.position.x, MARKS.lift + 0.002, figure.root.position.z));
+        figures.forEach((figure) => figure.shadow.position.set(figure.footing.x, MARKS.lift + 0.002, figure.footing.z));
       },
       /** Draws the frame. */
       render() {
         view.render(camera, { clearColor: look.sky });
       },
       /** Draw calls and triangles of the last frame, for the performance note in the report. */
-      counters: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, figures: figures.length, meshes: figures.reduce((sum, figure) => sum + figure.counters().meshes, 0) }),
       dispose() {
         stage.clearFigures();
         view.dispose();

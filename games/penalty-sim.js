@@ -139,6 +139,10 @@
    * @property {boolean} isOver the outcome has been on show long enough
    * @property {{keeper: boolean, wood: boolean, held: boolean, net: boolean}} touched what the ball has met
    * @property {?{x: number, y: number}} crossed where the ball crossed the keeper's plane (for scouting and bonuses)
+   * @property {{air: Object, ground?: Object, bars: ReadonlyArray<Object>}} world what the ball flies through and can hit
+   * @property {number} wobble the ball's wobble: a sideways push that swings as it flies, metres per second squared
+   * @property {number} wobblePhase where in its swing the wobble starts, radians
+   * @property {?number} outcomeAt `time` when the outcome was decided
    */
 
   /**

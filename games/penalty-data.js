@@ -166,7 +166,23 @@
     { id: 'coral', name: 'Away Coral', cost: 120, shirt: DYE.coral, shorts: DYE.navy, keeper: DYE.forest },
     { id: 'night', name: 'Night Plum', cost: 220, shirt: DYE.plum, shorts: DYE.charcoal, keeper: DYE.sky },
     { id: 'sun', name: 'Sunday Mustard', cost: 340, shirt: DYE.mustard, shorts: DYE.forest, keeper: DYE.crimson },
+    { id: 'sky', name: 'Skyline', cost: 520, shirt: DYE.sky, shorts: DYE.navy, keeper: DYE.rust },
+    { id: 'ink', name: 'Ink and Cream', cost: 760, shirt: DYE.charcoal, shorts: DYE.cream, keeper: DYE.coral },
+    { id: 'grove', name: 'Olive Grove', cost: 1100, shirt: DYE.olive, shorts: DYE.cream, keeper: DYE.plum },
   ]);
+
+  /**
+   * Medals: lifetime milestones that pay coins, so a player stuck on one rival still earns something new.
+   * @type {ReadonlyArray<{stat: string, name: string, steps: number[], coins: number}>} `steps`: the counts of the
+   *   profile stat that earn the medal's next grade; `coins`: paid per grade, times the grade
+   */
+  const MEDALS = Object.freeze([
+    { stat: 'goals', name: 'Marksman', steps: [5, 15, 30, 50, 80, 120, 170, 230, 300, 400], coins: 20 },
+    { stat: 'saves', name: 'Safe Hands', steps: [3, 10, 20, 35, 55, 80, 110, 150, 200, 260], coins: 20 },
+    { stat: 'matches', name: 'Regular', steps: [3, 8, 15, 25, 40, 60, 85, 115, 150], coins: 15 },
+  ]);
+  /** The grade of a medal for a count: how many of its steps have been reached. */
+  const medalGrade = (medal, count) => medal.steps.filter((step) => count >= step).length;
 
   // ================================================= cups, grounds, rivals =================================================
 
@@ -291,6 +307,7 @@
     return { ...rival(`road${rung}`, name, 9000 + rung, [rng.pick(dyes), rng.pick(dyes), rng.pick(dyes)], keeper, taker), cup: { ...CUPS[rung % CUPS.length], id: ROAD.id, name: ROAD.name } };
   };
 
+  /** @type {Array<[number, string]>} */
   const ROMAN = [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
   /** A small whole number in Roman numerals (road rivals come round again as "II", "III"). */
   const romanOf = (value) => ROMAN.reduce(({ left, text }, [worth, mark]) => ({ left: left % worth, text: text + mark.repeat(Math.floor(left / worth)) }), { left: value, text: '' }).text;
@@ -430,7 +447,7 @@
        * Banks a finished match: coins, lifetime numbers, and a rung when it was won.
        * @param {{won: boolean, coins: number, goals?: number, saves?: number, index?: number}} result `index`: the
        *   rung played (default the next one); replaying an earlier rung pays but does not climb
-       * @returns {{climbed: boolean, opened: string[], prize: number}} `opened`: sentences for what the win opened
+       * @returns {{climbed: boolean, opened: string[], prize: number}} `opened`: sentences for what the match opened (medals, cups)
        */
       recordMatch({ won, coins, goals = 0, saves = 0, index = rungsWon }) {
         const played = matchAt(index);
@@ -438,16 +455,23 @@
         const isCupFinal = climbed && !played.isRoad && played.rung === played.cup.rivals.length - 1;
         const prize = isCupFinal ? played.cup.prize : 0;
         wallet.add(Math.round((coins + prize) * stats.get('coinShare')));
+        const gradesBefore = MEDALS.map((medal) => medalGrade(medal, profile.stat(medal.stat)));
         profile.count('matches');
         profile.count('goals', goals);
         profile.count('saves', saves);
         if (won) profile.count('wins');
         profile.endRun({ rival: played.rival.id, won, coins });
-        if (!climbed) return { climbed, opened: [], prize };
+        // Medals: each new grade pays, and is named in what the match opened.
+        const opened = MEDALS.flatMap((medal, index) => {
+          const grade = medalGrade(medal, profile.stat(medal.stat));
+          if (grade === gradesBefore[index]) return [];
+          wallet.add(medal.coins * grade);
+          return [`${medal.name} ${romanOf(grade)} medal (+${medal.coins * grade} C)`];
+        });
+        if (!climbed) return { climbed, opened, prize };
         rungsWon = keep('rungs', rungsWon + 1);
         profile.best('rungs', rungsWon);
         const nextUp = matchAt(rungsWon);
-        const opened = [];
         if (isCupFinal) {
           profile.unlock(cupUnlockId(played.cup));
           opened.push(`${played.cup.name} won`, nextUp.isRoad ? `${ROAD.name} opens` : `${nextUp.cup.name} opens at ${nextUp.cup.ground}`);
@@ -532,5 +556,5 @@
     return withOverrides(base, { ...BARE, ...(role === 'keeper' ? { 'fill:gloves': 'gloves', 'color:gloves': LEATHER.gloves } : {}) });
   };
 
-  window.SPOT_KICK_DATA = { FIELD, STEP, SHOT, SWAY, PRESSURE, PLAYER_STATS, KEEPER, RUN_UP, BALLS, PERKS, DYE, KITS, CUPS, ROAD, LADDER, RULES, REWARDS, SCOUT, roadRival, scoutOf, cupUnlockId, createProgress, stripOf, rivalRecipe, playerRecipe };
+  window.SPOT_KICK_DATA = { FIELD, STEP, SHOT, SWAY, PRESSURE, PLAYER_STATS, KEEPER, RUN_UP, BALLS, PERKS, DYE, KITS, MEDALS, medalGrade, CUPS, ROAD, LADDER, RULES, REWARDS, SCOUT, roadRival, scoutOf, cupUnlockId, createProgress, stripOf, rivalRecipe, playerRecipe };
 })();

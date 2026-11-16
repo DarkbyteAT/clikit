@@ -82,6 +82,7 @@
     /** @type {Array<{x: number, y: number, ms: number}>} oldest first */
     let samples = [];
     let origin = null;
+    /** @returns {[number, number]} a sample's offset from where the drag began, pixels */
     const offsetOf = (sample) => [sample.x - origin.x, sample.y - origin.y];
     const last = () => samples[samples.length - 1];
     return {

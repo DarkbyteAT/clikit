@@ -25,8 +25,8 @@
  *
  * This file owns: the match flow, input, the HUD and the clubhouse, and all feedback (sound, shake, callouts).
  * It does not own: tables and the long arc (games/penalty-data.js), the rules of a kick (games/penalty-sim.js),
- * the scene (games/penalty-stage.js), how characters act (games/penalty-perform.js: the one adapter to swap for
- * `Kit.act`), the theme (games/penalty-theme.js), or generic pieces (Kit.flight, Kit.slingshot, Kit.netting, Kit.look).
+ * the scene (games/penalty-stage.js), how characters act (games/penalty-perform.js: the adapter onto `Kit.act`),
+ * the theme (games/penalty-theme.js), or generic pieces (Kit.flight, Kit.slingshot, Kit.netting, Kit.look).
  */
 (() => {
   const DATA = window.SPOT_KICK_DATA, SIM = window.SPOT_KICK_SIM, BOTS = window.SPOT_KICK_BOTS;
@@ -38,8 +38,8 @@
   /** Where the characters stand, world metres. The player's taker waits where the camera seat says (games/penalty-stage.js `SEATS`). */
   const MARKS = Object.freeze({
     keeper: { x: 0, z: SIM.KEEPER_Z },
-    playerTaker: { strike: { x: -0.4, z: 0.3 }, seconds: 0.42 },
-    rivalTaker: { wait: { x: 0.9, z: RUN_UP.startDistance }, strike: { x: 0.2, z: 0.32 } },
+    playerTaker: { strike: { x: -0.3, z: 0.8 }, seconds: 0.3 },
+    rivalTaker: { wait: { x: 0.9, z: RUN_UP.startDistance }, strike: { x: 0.3, z: 0.8 } },
   });
   const FACING = Object.freeze({ goal: Math.PI, taker: 0 });
 
@@ -122,6 +122,8 @@
     const keyAim = { isActive: false, angle: 0, pull: KEYS.startPull };
     let liveAim = { pull: 0, angle: 0, isArmed: false };
     let ratchetStep = 0;
+    /** Which sheet is open: 'clubhouse', 'result' or null (for scripted playtests). */
+    let sheet = null;
     let heartbeatIn = 0;
 
     // -------------------------------------------------------- HUD --------------------------------------------------------
@@ -163,7 +165,7 @@
     const refreshBoard = () => {
       const status = SIM.statusOf(match.shootout);
       board.value = { you: match.shootout.you, them: match.shootout.them, rival: match.rival.name.toUpperCase(), kicker: status.winner ? null : SIM.kickerOf(match.shootout), score: status.score };
-      strip.value = { ...strip.value, role: play.role, round: status.round, isSuddenDeath: status.isSuddenDeath, pressure: play.pressure, wind: play.wind, streak: match.streak, coins: match.coins };
+      strip.value = { ...strip.value, role: play.role, round: status.round, isSuddenDeath: status.isSuddenDeath && !status.winner, pressure: play.pressure, wind: play.wind, streak: match.streak, coins: match.coins };
     };
 
     // ------------------------------------------------------ the cast ------------------------------------------------------
@@ -275,6 +277,7 @@
 
     /** Starts a match against a ladder entry. */
     const beginMatch = (index) => {
+      sheet = null;
       const entry = progress.matchAt(index);
       match = { ...entry, shootout: SIM.createShootout(), cast: null, streak: 0, coins: 0, goals: 0, saves: 0, history: [] };
       stage.setLook(entry.cup.look, progress.ball().colors);
@@ -294,7 +297,8 @@
       fx.shake(FEEL.strike.shake * strength(pace));
       stage.burst(SIM.SPOT, { count: 7, speed: 2, up: 2, colors: [3] });
       sfx.buzz(18);
-      onPitch()[1].dive(() => SIM.keeperAt(play.kick.dive, play.kick.time));
+      // Their keeper moves when the rules say; the player's keeper is already moving if the player has tapped.
+      if (play.role === 'taker' && dive) onPitch()[1].dive(diveShown(dive, 0));
       flow.go('flight');
     };
 
@@ -310,6 +314,9 @@
       strike(SIM.launchOf(SIM.takerAim(answered, match.rival.taker, progress.ball(), play.pressure, random), progress.ball()), play.earlyDive);
     };
 
+    /** A dive of the rules as the actor is asked for it: where, how long until the body moves, and how long it then takes. */
+    const diveShown = (dive, now) => ({ target: dive.target, delay: Math.max(0, dive.start - now), seconds: dive.windup + dive.duration - Math.max(0, now - dive.start) });
+
     /** Sends the player's keeper to a point of the keeper's plane: once per kick, before or after the strike. */
     const diveTo = (point) => {
       if (play.role !== 'keeper' || play.hasDived || !point) return;
@@ -317,12 +324,12 @@
       play.hasDived = true;
       hint.hide();
       const keeper = playerKeeper();
-      if (play.kick) play.kick.dive = SIM.diveOf(point, play.kick.time, keeper);
-      else {
-        play.earlyDive = SIM.diveOf(point, play.clock - RUN_UP.seconds, keeper);
-        onPitch()[1].dive(() => SIM.keeperAt(play.earlyDive, play.clock - RUN_UP.seconds));
-      }
-      stage.marker.show(play.kick ? play.kick.dive.target : play.earlyDive.target);
+      const now = play.kick ? play.kick.time : play.clock - RUN_UP.seconds;
+      const dive = SIM.diveOf(point, now, keeper);
+      if (play.kick) play.kick.dive = dive;
+      else play.earlyDive = dive;
+      onPitch()[1].dive(diveShown(dive, now));
+      stage.marker.show(dive.target);
       sfx.play('whoosh', { pitch: 1.2 });
       sfx.buzz(12);
     };
@@ -401,6 +408,7 @@
 
     const showClubhouse = () => {
       flow.go('menu');
+      sheet = 'clubhouse';
       return openClubhouse().then((index) => beginMatch(Number.isInteger(index) ? index : progress.rungsWon()));
     };
 
@@ -414,6 +422,7 @@
       if (won) stage.cheer(1);
       const rows = [['Shootout', `${status.score.you} - ${status.score.them}`], ['Kicks and saves', `${match.coins} C`], [won ? 'Win prize' : 'For turning up', `${prize} C`], ...(banked.prize ? [['Cup prize', `${banked.prize} C`]] : []), ...banked.opened.map((text) => ['New', text])];
       const playedIndex = match.index;
+      sheet = 'result';
       return ui.dialog({
         title: won ? 'You win!' : `${match.rival.name} win`,
         dismissable: false,
@@ -545,7 +554,7 @@
         running: {
           update(dt, seconds) {
             const [taker] = onPitch();
-            if (seconds >= MARKS.playerTaker.seconds && taker.mode() === 'runUp') taker.kick();
+            if (seconds >= MARKS.playerTaker.seconds && taker.mode() === 'runUp') taker.kick(SIM.SPOT);
             if (seconds >= MARKS.playerTaker.seconds + taker.STRIKE_SECONDS) strikeAsTaker();
           },
         },
@@ -561,7 +570,7 @@
             const [taker] = onPitch();
             const untilStrike = RUN_UP.seconds - play.clock;
             if (progress.stats.get('tellHint') > 0 && untilStrike < RUN_UP.tellAt) stage.tell.show(play.intent.tell, taker.figure.root.position.x, taker.figure.root.position.z);
-            if (untilStrike <= taker.STRIKE_SECONDS && taker.mode() === 'runUp') taker.kick();
+            if (untilStrike <= taker.STRIKE_SECONDS && taker.mode() === 'runUp') taker.kick(SIM.SPOT);
             if (untilStrike <= 0) strikeAsKeeper();
           },
           exit: () => stage.tell.show(0, 0, 0),
@@ -587,14 +596,13 @@
       dive: (x, y) => diveTo({ x, y }),
       beginMatch,
       showClubhouse,
-      counters: () => stage.counters(),
     };
 
     // A first visit goes straight to the spot; a returning player starts in the clubhouse.
     if (progress.profile.stat('matches') === 0) beginMatch(0);
     else showClubhouse();
 
-    return {
+    const game = {
       update(dt, time) {
         flow.update(dt);
         if (match && match.cast) {
@@ -611,9 +619,11 @@
       /** Facts for the developer overlay and `node tools/dev.js play` ("until state.phase === 'aiming'"). */
       debugState: () => ({
         phase: flow.state,
+        sheet,
         role: play.role,
         outcome: play.lastOutcome,
         kickTime: play.kick ? play.kick.time : 0,
+        waited: play.role === 'taker' ? play.aimSeconds : play.clock,
         pull: liveAim.pull,
         angle: liveAim.angle,
         pressure: play.pressure,
@@ -629,6 +639,22 @@
         ball: play.kick ? { ...play.kick.ball.position } : null,
       }),
     };
+    /**
+     * Times the game's own work on the main thread: `frames` updates and renders run back to back.
+     * @param {number} frames
+     * @returns {{updateMs: number, renderMs: number}} mean milliseconds per frame (draw calls and triangles: `Kit.debug.probe()`)
+     */
+    ctx.debug.measure = (frames) => {
+      const timed = (work) => {
+        const startedAt = performance.now();
+        for (let frame = 0; frame < frames; frame++) work();
+        return (performance.now() - startedAt) / frames;
+      };
+      const updateMs = timed(() => game.update(DATA.STEP * 2, ctx.time));
+      const renderMs = timed(() => game.render());
+      return { updateMs, renderMs };
+    };
+    return game;
   };
 
   Kit.register({

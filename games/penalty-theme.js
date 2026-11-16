@@ -38,7 +38,8 @@
     & .sk-power i[data-on][data-zone="over"] { background: var(--hot); }
     & .sk-power[hidden] { display: none; }
     & .toast { font: 400 30px var(--display); color: #fff; text-shadow: 3px 3px 0 #0c1020, -1px -1px 0 #0c1020; letter-spacing: .04em; }
-    & .hint { font: 500 15px var(--body); background: rgba(10, 14, 32, .85); border: 2px solid var(--line); border-radius: 0; }
+    /* The hint sits under the board, clear of the ball the thumb is about to drag. */
+    & .hint { font: 500 15px var(--body); background: rgba(10, 14, 32, .85); border: 2px solid var(--line); border-radius: 0; top: calc(216px + env(safe-area-inset-top, 0px)); bottom: auto; }
     & .modal-card { border-radius: 0; border: 2px solid var(--line); box-shadow: 0 6px 0 rgba(0, 0, 0, .5); }
     & .modal-card h2 { font: 400 24px var(--display); color: var(--accent); }
     /* A phone on its side: the board and the bench's note move to the left edge, clear of the goal. */
@@ -46,14 +47,17 @@
       & .sk-top { left: calc(12px + env(safe-area-inset-left, 0px)); transform: none; width: 232px; align-items: flex-start; }
       & .sk-strip { justify-content: flex-start; }
       & .sk-bottom { left: calc(12px + env(safe-area-inset-left, 0px)); transform: none; width: 232px; align-items: flex-start; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
-      & .hint { bottom: 8px; }
+      & .hint { top: auto; bottom: 8px; }
     }
     /* The clubhouse sheet (a dialog: outside the HUD layer, inside the game's scope). */
     & .sk-club { display: flex; flex-direction: column; gap: 10px; }
     & .sk-club h3 { margin: 6px 0 0; font: 400 13px var(--display); color: var(--accent); letter-spacing: .06em; }
     & .sk-club p { margin: 0; font: 500 14px var(--body); color: var(--dim); }
     & .sk-purse { align-self: flex-end; padding: 3px 10px; border: 2px solid var(--accent); color: var(--accent); font: 400 13px var(--display); }
-    & .sk-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    & .sk-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+    & .ui-tabs { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    & .ui-tablist { flex: none; min-height: 48px; overflow: visible; }
+    & .ui-tablist button { min-height: 44px; }
     & .sk-club .ui-card { border-radius: 0; border-width: 2px; text-align: left; }
     & .sk-club .ui-card.sk-on { border-color: var(--accent); box-shadow: inset 0 0 0 2px rgba(255, 196, 69, .25); }
     & .sk-club .ui-card.sk-done { opacity: .7; }

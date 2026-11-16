@@ -37,6 +37,7 @@
   const bell = (rng) => rng.range(-1, 1) + rng.range(-1, 1) + rng.range(-1, 1);
   /** How practised a player is after some matches, 0..1. */
   const practiceOf = (matches) => 1 - Math.exp(-matches / BOT.practice);
+  /** A `[first match, with practice]` pair of `BOT` at a level of practice. @param {number[]} pair @param {number} practice 0..1 */
   const skilled = ([raw, practised], practice) => lerp(raw, practised, practice);
 
   /** The bot shoots: at a corner away from the keeper's habit, with a human's error and an untimed sway. */
@@ -125,7 +126,7 @@
       const result = playMatch(progress.next(), { stats: progress.stats, ballRow: progress.ball(), matches: state.matches }, Kit.rng(Math.floor(random() * 0xffffffff)));
       state.matches += 1;
       const banked = progress.recordMatch({ ...result, index, coins: result.coins + matchPrize(result.won, index) });
-      return { seconds: result.seconds, unlocked: banked.climbed ? [`beat ${progress.matchAt(index).rival.name}`, ...banked.opened] : [] };
+      return { seconds: result.seconds, unlocked: [...(banked.climbed ? [`beat ${progress.matchAt(index).rival.name}`] : []), ...banked.opened] };
     },
     summary: ({ progress }) => ({
       currency: progress.wallet.get(),

@@ -761,3 +761,36 @@ machine at load 20 to 40, so only the ratios mean anything.
   `degrade`); faces at under about 25 texels across must carry expression (they do not: author a small-face
   frame set); thumbnails of parts are wanted (render a figure to a small target with a shared view and
   `atlas.free`).
+
+## Spot Kick Showdown (games/penalty*.js) and Kit.flight, Kit.slingshot, Kit.netting (football branch)
+
+- **Ball flight is its own pure module (`Kit.flight`), not cannon.js.** A penalty needs drag, spin lift (curl), wind
+  and a bounce off thin bars, stepped identically in the page, in unit tests and in the stand-in players of
+  `make sim`. Rejected: cannon bodies (no spin lift, tunnelling through a 6 cm post at 19 m/s without CCD, and
+  not available to the headless bots without the vendor file). Cost: no general collisions; bars and a ground only.
+- **A keeper is two shapes in a plane, not a ragdoll.** The rules know the hands (a sphere of `reach`) and a
+  capsule from hips to hands, moved by an eased dive with a wind-up. Held or parried is decided by how central
+  the ball is to the palms and how fast it is. The drawn body follows the rules' dive (target and arrival time),
+  never the other way round, so what is fair is testable.
+- **One pull is side, power and height together.** Power is coupled to loft, so the top corners are a narrow
+  band under "over the bar" and the power lamps mark it. Rejected: a separate height gesture (two thumbs, or a
+  second phase, on a phone) and a free cursor aim (no skill in the release).
+- **Perspective camera on fixed seats, not the look's orthographic framing.** Behind the ball and behind the
+  net are the two pictures a penalty is remembered by, and a hero character close to the lens sells the pixel
+  look. Cost: `Kit.look.view` snaps texels only for orthographic cameras, so slow sub-texel motion can shimmer;
+  the cameras never move during a kick, which hides most of it. Revisit if the view grows perspective snapping.
+- **The whole ground is dressed into the look view** (one world palette block of the atlas, rewritten per
+  ground: a new stadium is a palette, not new meshes). The view is built with 128 atlas rows: 64 could not
+  hold the ground plus four characters of 16 rows each.
+- **The net is position-based (`Kit.netting`, Verlet with distance links)**, drawn as one line-segment mesh
+  whose index buffer is the links. Rejected: springs (stiffness tuned against frame rate; a 19 m/s ball
+  explodes them) and a canned bulge animation (the net must react where the ball actually is).
+- **Performances go through one adapter (games/penalty-perform.js) onto `Kit.act`** (merged from branch `act`).
+  The adapter owns only timing: a kick or dive is played at the `rate` that puts its contact frame
+  (`Kit.act.CONTACT`) on the moment the rules strike or arrive. Cost: the one rate also speeds the landing and
+  the getting-up of a fast dive. Wanted from Kit.act: a contact time per play (rate before contact, authored
+  rate after).
+- **Both sides kick the ball the player equipped; one perk per role.** Purchases are trade-offs, so the shop
+  cannot buy the ladder; rivals sharpen faster than perks cover. Medals (lifetime goals, saves, matches) pay in
+  between rungs so a player stuck on one rival still earns something new (`make sim` dead stretches fell from
+  eleven warnings to seven; the rest are 10 to 15 minutes on the hardest rivals and are reported, not hidden).

@@ -120,7 +120,7 @@
     spin.z *= keptSpin;
   };
 
-  /** Bounces or rolls the ball on the ground; returns the hit when it bounced, else null. */
+  /** Bounces or rolls the ball on the ground; returns the hit when it bounced, else null. @returns {?FlightHit} */
   const meetGround = (state, dt, ground) => {
     const { position, velocity } = state;
     const floor = ground.height + state.radius;
@@ -143,7 +143,7 @@
     return null;
   };
 
-  /** Bounces the ball off one bar when they overlap; returns the hit, else null. */
+  /** Bounces the ball off one bar when they overlap; returns the hit, else null. @returns {?FlightHit} */
   const meetBar = (state, obstacle) => {
     const { position, velocity } = state;
     const { from, to } = obstacle;
@@ -191,6 +191,7 @@
    * if (hits.some((hit) => hit.id === 'post')) playClang();
    */
   const step = (state, dt, { air = AIR, ground = GROUND, bars = [] } = {}) => {
+    /** @type {FlightHit[]} */
     const hits = [];
     if (state.isResting) return hits;
     const speed = Math.hypot(state.velocity.x, state.velocity.y, state.velocity.z);
@@ -234,6 +235,7 @@
     const { step: seconds = TRACE_DEFAULTS.step, maxSteps = TRACE_DEFAULTS.maxSteps, stopWhen = () => false } = options;
     const flying = copy(state);
     const points = [];
+    /** @type {FlightHit[]} */
     const hits = [];
     for (let index = 0; index < maxSteps && !flying.isResting; index++) {
       const before = copy(flying);
