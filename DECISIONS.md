@@ -761,3 +761,60 @@ machine at load 20 to 40, so only the ratios mean anything.
   `degrade`); faces at under about 25 texels across must carry expression (they do not: author a small-face
   frame set); thumbnails of parts are wanted (render a figure to a small target with a shared view and
   `atlas.free`).
+
+## Sculpted bodies: one blended, skinned surface per paint instead of a rigid piece per bone (sculpt branch)
+
+- **What is drawn.** `Kit.figure.build` now draws a body as the surface of a distance field: every bone
+  shape becomes a solid (kit/sculpt.js), the solids of one paint are blended and meshed over a grid
+  (surface nets), and the mesh is bound to the skeleton with up to four owners per vertex. A garment (a
+  region with a raise) is the same field pushed out by its raise and cut by the region's predicate; hair is
+  one such layer. `options.sculpt === false` keeps the rigid path, and `Kit.figure.crowd` is still rigid
+  (instanced pieces per bone: a crowd of skinned bodies needs a bone texture per instance, not built).
+  Rejected: more rigid pieces with overlap tricks (the seams at shoulders, hips and necks are the defect, and
+  every garment was a second copy of the piece under it); a field per bone meshed apart and stitched (the
+  stitch is the hard part); marching cubes (sliver triangles and a vertex per edge: three times the
+  vertices for the same cell); GPU ray-marched fields (no outline or pixel preset without a second pipeline).
+- **What stays rigid, and why.** (1) A solid thinner than 1.6 grid cells (`isTooThin`: an earring, glasses,
+  a fish's fins at 14 mm, a hound's legs at low detail) would fall between samples, and letting it set the
+  cell made one earring cost a second for a whole body; it is drawn as the rigid piece it was. (2) Parts on
+  their own sockets that are objects, not flesh (hats, cloaks, skirts, props, horns): they are separate ink
+  groups with hard edges and should not melt into the body. (3) Face stamps. A consequence that is visible:
+  a rigid skirt or cloak does not follow the legs, so a knee passes through a skirt in a run exactly as it
+  did before.
+- **Blending rule.** A plain smooth minimum swells wherever two surfaces run side by side (a waist inside
+  a chest) and rippled every torso. The fillet between the two nearest solids is sized by the groove they
+  make: `GROOVE_FILL` x thinness x (1 - cos(half the angle between their outward directions)), capped by the
+  solids' `blend`. Aligned surfaces get none; a limb leaving a trunk gets all of it. A limb (an ink group)
+  joins the rest only near its anchor (its first joint), so an arm hanging beside the ribs stays an arm.
+  Rejected: a fixed blend per joint kind (needs a table per species: amendment 24); a blend by distance
+  between surfaces alone (cannot tell a groove from a gap).
+- **Speed.** Baseline (prototype, dense grid, exact sections): 2.6 to 3.2 s for the wardrobe person at high
+  detail. Now the grid is walked in blocks of 8 nodes halved only where a surface can pass (a distance
+  changes at most 1.2 m per metre), each block keeps only the solids that can matter in it, lathe and
+  extrude sections are 2D tables (exact polygon beyond the table), a cut is asked only at band nodes near the
+  solids its garment is on, and layers are kept by a signature of what they depend on (shapes, regions, rest
+  pose, detail; not colours), 24 most recent. Node 22, 4 cores, load average 14 (other agents), wardrobe
+  person, six layers, best of 8 warm runs, process CPU time: high 190 ms, medium 88 ms, low 28 ms; first
+  call in a fresh process (cold JIT) 0.6 to 1.2 s at high. Samples human (two layers): 68 / 31 / 13 ms;
+  hound: 39 / 18 / 6 ms. The targets of 150 / 60 / 20 ms are met for the samples plans and missed for the
+  six-layer wardrobe person. Where the rest goes: sampling about 45% (about 107 k band nodes, 340 k distance
+  calls), six surfaces about 35%, weights about 10%. Rejected to close the gap: a coarser cell (it is
+  quality, not speed). Not done: passing coordinates through typed scratch instead of arguments (each
+  non-inlined distance call boxes four doubles: about 100 MB of short-lived numbers per sculpt, 40 scavenges).
+- **Memory and draw calls.** Wardrobe person, high: 36 rigid pieces (bone shapes and the garment shells copied
+  from them) become 6 skinned meshes plus 5 rigid pieces (two earrings, the face stamps, the skirt and the
+  cloak panel): 28.2 k vertices, 55.6 k triangles, 1.65 MB of arrays (0.69 MB at medium, 0.25 MB
+  at low), shared by every figure with the same signature. The grid's scratch (about 23 bytes a node) is
+  module-level and reused between sculpts. Samples human: 25 pieces -> 2 skinned + 4 rigid, 1.0 MB.
+- **Editing.** `setBake(next, changes, { settle: false })` bends the existing surfaces through the skeleton
+  (the bind pose is the pose they were sculpted in) and marks the figure stale; `settle()` sculpts. The
+  creator calls it 0.18 s after the last change. A bake with the same signature (a colour) never sculpts.
+  Rejected: sculpting in a worker (the kit has no build step and the pure modules would have to be loaded
+  twice; revisit if cold sculpts on phones hurt).
+- **Known limits.** Two sheets of a surface that pass through one grid cell share its vertex (a pinched
+  edge: closed, but a web one cell wide in a tight armpit); skins of different paints are separate fields
+  and meet without a fillet (a seraph's arm paint against its shoulder); normals are averaged over about
+  44 mm, which softens authored creases as well as grid wobble.
+- **Revisit if** crowds must match close-up figures (skin the crowd from a bone texture); a skirt must
+  follow legs (make it a garment layer on the thighs with its own cut, or give it dynamics); cold sculpt time
+  matters on phones (worker, or sculpt at low first and refine).

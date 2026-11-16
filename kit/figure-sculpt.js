@@ -173,8 +173,8 @@
    * @param {Object} bake
    * @param {Limb[]} limbs
    * @param {function(number, number, number): number} trunkDistance signed distance to the trunk, rest space
-   * @returns {{leads: Int16Array, turns: Float32Array}} per opened limb: its lead bone, and the quaternion to
-   *   put in front of the lead's local rotation in any pose
+   * @returns {{leads: Int16Array, turns: Float32Array, angles: number[]}} per opened limb: its lead bone, the
+   *   quaternion to put in front of the lead's local rotation in any pose, and the angle it was opened by, radians
    * @complexity O(limbs x steps x bones)
    * @example const { leads, turns } = Kit.figure.limbClearance(bake, Kit.figure.limbsOf(bake), trunkDistance);
    */
@@ -405,7 +405,7 @@
       for (let index = 0; index < trunk.length; index++) nearest = Math.min(nearest, trunk[index].distance(x, y, z));
       return nearest;
     };
-    const clearance = trunk.length ? limbClearance(bake, limbsOf(bake), trunkDistance) : { leads: new Int16Array(0), turns: new Float32Array(0) };
+    const clearance = trunk.length ? limbClearance(bake, limbsOf(bake), trunkDistance) : { leads: new Int16Array(0), turns: new Float32Array(0), angles: [] };
 
     const layers = [];
     groups.forEach((group) => {

@@ -2783,6 +2783,8 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-settings
 require('./test-figure.js')({ Kit, sandbox, test, assert });
 require('./test-gait.js')({ Kit, sandbox, test, assert });
 require('./test-proof.js')({ Kit, sandbox, test, assert });
+// ---- Kit.sculpt and Kit.figure.sculptLayers: a body as blended, skinned layers ----
+require('./test-sculpt.js')({ Kit, sandbox, test, assert });
 // ---- the character creator's pure pieces (rows, session, slots, camera) over the wardrobe catalogue ----
 require('./test-creator.js')({ Kit, sandbox, test, assert });
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

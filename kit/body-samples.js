@@ -22,7 +22,12 @@
 
   /** A drawn limb or trunk segment: a capsule of this radius (metres), narrowing to `taper` of it at a tail's end. */
   const drawn = (radius, taper) => ({ kind: 'capsule', radius, ...(taper === undefined ? {} : { taper }) });
-  /** The same, pressed to `depth` of its width front to back (a torso) or `width` of it side to side (a fish). */
+  /**
+   * The same, pressed to `depth` of its width front to back (a torso) or `width` of it side to side (a fish).
+   * @param {number} radius metres
+   * @param {{width?: number, depth?: number, taper?: number}} [press]
+   * @returns {Object} a shape row
+   */
   const flattened = (radius, { width = 1, depth = 1, taper } = {}) => ({ ...drawn(radius, taper), scale: [width, 1, depth] });
   /** A flat fin or wing: an outline [[across, along], ...] in the plane of the bone's long axis and `across`. */
   const fin = (outline, across, depth = 0.014) => ({ kind: 'extrude', outline, depth, across });

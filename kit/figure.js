@@ -236,11 +236,13 @@
    * Builds a figure in a view.
    * @param {Object} view from `Kit.look.view`
    * @param {Object} bake from a bakery (kit/body-recipe.js), or a part alone `{ plan, boneRamp, ramps }`
-   * @param {{level?: string, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
+   * @param {{level?: string, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, sculpt?: boolean, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
    *   `level` of detail (default 'high'); `cache` shared between figures (default one per module); `rows`: a
    *   block from `loadRows` to share (default: the figure loads its own, and frees it on `dispose`); `ground`:
    *   stand the body's lowest point at rest on y = 0 (default true); `center`: turn about the middle of the
-   *   footprint rather than the plan's origin (default true); `featuresOf` and `regionMapOf`: the two extension
+   *   footprint rather than the plan's origin (default true); `sculpt`: draw the body as blended, skinned
+   *   surfaces with its garments as layers (kit/figure-sculpt.js; default true), false: one rigid piece per bone
+   *   shape, as `crowd` draws; `featuresOf` and `regionMapOf`: the two extension
    *   points of `Kit.figure.layout` (default: the body system's, so a bake with a face and clothes shows them;
    *   null draws the bare bones)
    * @returns {Figure}

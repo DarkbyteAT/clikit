@@ -116,7 +116,7 @@
    * @example Kit.sculpt.polygonDistance([[0, 0], [1, 0], [1, 1], [0, 1]], 0.5, 0.5) // -0.5
    */
   const polygonDistance = (points, u, v) => {
-    const flat = typeof points[0] === 'number' ? points : points.flat();
+    const flat = typeof points[0] === 'number' ? /** @type {ArrayLike<number>} */ (points) : /** @type {number[][]} */ (points).flat();
     let nearest = Infinity;
     let isInside = false;
     // Hot loop (a table of a section is thousands of calls): index arithmetic over the flat corners.
@@ -300,17 +300,31 @@
   /** Kinds whose distance function writes `SLOPE`. */
   const SLOPED = Object.freeze({ capsule: true, sphere: true, lathe: true });
 
+  /** Where a column-major 4 x 4 keeps its 3 x 3 part, row by row, and its translation. */
+  const AFFINE_ROWS = Object.freeze([0, 4, 8, 1, 5, 9, 2, 6, 10]);
+  const AFFINE_MOVE = Object.freeze([12, 13, 14]);
   /** The identity as a column-major 4 x 4. */
   const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-  /** Inverts the upper 3 x 4 of a column-major 4 x 4 affine matrix; returns the 12 numbers row by row. */
+  /**
+   * Inverts the upper 3 x 4 of a column-major 4 x 4 affine matrix.
+   * @param {ArrayLike<number>} matrix 16 numbers, column-major
+   * @returns {number[]} the inverse's 12 numbers row by row (three rows of x, y, z, translation)
+   * @throws {Error} when the matrix has no inverse
+   * @complexity O(1)
+   * @example Kit.sculpt.invertAffine([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 1, 0, 0, 1]) // [0.5, 0, 0, -0.5, 0, 0.5, 0, 0, 0, 0, 0.5, 0]
+   */
   const invertAffine = (matrix) => {
-    const [a, b, c, d, e, f, g, h, i] = [matrix[0], matrix[4], matrix[8], matrix[1], matrix[5], matrix[9], matrix[2], matrix[6], matrix[10]];
-    const determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    const [xx, xy, xz, yx, yy, yz, zx, zy, zz] = AFFINE_ROWS.map((index) => matrix[index]);
+    const determinant = xx * (yy * zz - yz * zy) - xy * (yx * zz - yz * zx) + xz * (yx * zy - yy * zx);
     if (Math.abs(determinant) < EPSILON) fail('solid', 'the transform has no inverse (a scale of zero?).');
-    const inverse = [(e * i - f * h) / determinant, (c * h - b * i) / determinant, (b * f - c * e) / determinant, (f * g - d * i) / determinant, (a * i - c * g) / determinant, (c * d - a * f) / determinant, (d * h - e * g) / determinant, (b * g - a * h) / determinant, (a * e - b * d) / determinant];
-    const [tx, ty, tz] = [matrix[12], matrix[13], matrix[14]];
-    return [inverse[0], inverse[1], inverse[2], -(inverse[0] * tx + inverse[1] * ty + inverse[2] * tz), inverse[3], inverse[4], inverse[5], -(inverse[3] * tx + inverse[4] * ty + inverse[5] * tz), inverse[6], inverse[7], inverse[8], -(inverse[6] * tx + inverse[7] * ty + inverse[8] * tz)];
+    const rows = [
+      [(yy * zz - yz * zy) / determinant, (xz * zy - xy * zz) / determinant, (xy * yz - xz * yy) / determinant],
+      [(yz * zx - yx * zz) / determinant, (xx * zz - xz * zx) / determinant, (xz * yx - xx * yz) / determinant],
+      [(yx * zy - yy * zx) / determinant, (xy * zx - xx * zy) / determinant, (xx * yy - xy * yx) / determinant],
+    ];
+    const [moveX, moveY, moveZ] = AFFINE_MOVE.map((index) => matrix[index]);
+    return rows.flatMap(([x, y, z]) => [x, y, z, -(x * moveX + y * moveY + z * moveZ)]);
   };
 
   /**
@@ -496,21 +510,24 @@
 
   /**
    * A typed list that grows by doubling: `items[0, count)` are what was pushed.
-   * @param {Function} Type a typed array constructor
+   * @param {new (length: number) => any} Type a typed array constructor
    * @param {number} capacity items to start with room for
    * @returns {{items: Object, count: number, push: function(number): void, taken: function(): Object}} `taken`: a view of exactly what was pushed
    */
   const growingList = (Type, capacity) => {
-    const list = { items: new Type(capacity), count: 0 };
-    list.push = (value) => {
-      if (list.count === list.items.length) {
-        const grown = new Type(list.items.length * 2);
-        grown.set(list.items);
-        list.items = grown;
-      }
-      list.items[list.count++] = value;
+    const list = {
+      items: new Type(capacity),
+      count: 0,
+      push: (value) => {
+        if (list.count === list.items.length) {
+          const grown = new Type(list.items.length * 2);
+          grown.set(list.items);
+          list.items = grown;
+        }
+        list.items[list.count++] = value;
+      },
+      taken: () => list.items.subarray(0, list.count),
     };
-    list.taken = () => list.items.subarray(0, list.count);
     return list;
   };
 
@@ -982,23 +999,23 @@
       let cutCrossings = 0;
       let isOnSurface = false;
       for (let edge = 0; edge < edgeEnds.length; edge += 2) {
-        const a = edgeEnds[edge];
-        const b = edgeEnds[edge + 1];
-        const valueA = values[base + cornerStep[a]];
-        const valueB = values[base + cornerStep[b]];
+        const cornerA = edgeEnds[edge];
+        const cornerB = edgeEnds[edge + 1];
+        const valueA = values[base + cornerStep[cornerA]];
+        const valueB = values[base + cornerStep[cornerB]];
         const first = valueA - offset;
         const second = valueB - offset;
         if (first >= 0 || second >= 0) isOnSurface = true;
-        if (((mask >> a) & 1) === ((mask >> b) & 1)) continue;
-        const ax = originX + (cellX + cornerPlace[a * VECTOR]) * cell;
-        const ay = originY + (cellY + cornerPlace[a * VECTOR + 1]) * cell;
-        const az = originZ + (cellZ + cornerPlace[a * VECTOR + 2]) * cell;
-        const bx = originX + (cellX + cornerPlace[b * VECTOR]) * cell;
-        const by = originY + (cellY + cornerPlace[b * VECTOR + 1]) * cell;
-        const bz = originZ + (cellZ + cornerPlace[b * VECTOR + 2]) * cell;
+        if (((mask >> cornerA) & 1) === ((mask >> cornerB) & 1)) continue;
+        const ax = originX + (cellX + cornerPlace[cornerA * VECTOR]) * cell;
+        const ay = originY + (cellY + cornerPlace[cornerA * VECTOR + 1]) * cell;
+        const az = originZ + (cellZ + cornerPlace[cornerA * VECTOR + 2]) * cell;
+        const bx = originX + (cellX + cornerPlace[cornerB * VECTOR]) * cell;
+        const by = originY + (cellY + cornerPlace[cornerB * VECTOR + 1]) * cell;
+        const bz = originZ + (cellZ + cornerPlace[cornerB * VECTOR + 2]) * cell;
         // Both ends inside the pushed-out field and above the shell's floor: only the cut can part them.
         if (first < 0 && second < 0 && valueA >= floor && valueB >= floor) {
-          const share = cutCrossing(((mask >> a) & 1) === 1, ax, ay, az, bx, by, bz);
+          const share = cutCrossing(((mask >> cornerA) & 1) === 1, ax, ay, az, bx, by, bz);
           cutX += ax + (bx - ax) * share;
           cutY += ay + (by - ay) * share;
           cutZ += az + (bz - az) * share;
