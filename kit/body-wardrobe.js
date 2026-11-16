@@ -1838,8 +1838,10 @@
    */
   const CONTRAST = [
     // An eye reads as an eye: its white (or its void) apart from the skin round it, and the iris apart from that.
+    // The iris needs a wide gap from its white: a feature a few texels across reads on value, or on a strong
+    // colour against a white one (amber and gold on ivory), and a mid iris on a void sclera does neither.
     { between: ['skin', 'sclera'], lightness: 0.1 },
-    { between: ['eyes', 'sclera'], lightness: 0.25, chroma: 0.12 },
+    { between: ['eyes', 'sclera'], lightness: 0.3, chroma: 0.097 },
     { between: ['skin', 'hair'], lightness: 0.1, chroma: 0.045 },
     { between: ['skin', 'top'], lightness: 0.12, chroma: 0.05 },
     { between: ['skin', 'bottom'], lightness: 0.12, chroma: 0.05 },
