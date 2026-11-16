@@ -176,6 +176,7 @@
     inkClass: piece.ramp,
     shiny: piece.shiny,
     emissive: piece.emissive,
+    response: piece.inkGroup === Kit.figure.INK_GROUPS.head ? 'face' : undefined,
     tone: piece.tone,
     blockRow: block.offset,
     regions: piece.regions ? textures.acquire(piece.regions) : undefined,
