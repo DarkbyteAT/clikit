@@ -59,6 +59,8 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `seeded.js` | `Kit.seeded`: values from (seed, field name), not a stream, so adding a field never re-rolls old ones; a 53-bit content hash |
 | `pack.js` | `Kit.pack`: records as bytes (varint, uint32, text) and bytes as a URL-safe code |
 | `palette.js` | `Kit.palette`: colour ramps (shades dark to light with a hue drift) as data |
+| `surface.js` | `Kit.surface`: signed distance to a primitive (capsule, sphere, box, lathe, extrude); azimuth / elevation -> surface point, normal and up; along / around coordinates |
+| `region.js` | `Kit.region`: areas of a surface as predicate trees (band, stripe, checker, edge, facing; union, intersect, mask, not) and the topmost layer at a point |
 | `rig.js` | `Kit.rig`: a joint hierarchy as flat arrays and the one forward pass that places it in the world |
 | `reach.js` | `Kit.reach`: inverse kinematics over a rig (exact two-bone, FABRIK chain, aim, joint limits) |
 | `dynamics.js` | `Kit.dynamics`: a damped spring and a point chain on a fixed clock (the same at 20 and 60 fps) |
@@ -167,7 +169,7 @@ core  model  meta  flow  lanes  scrub  span  blend  space  hash  music  place  p
 loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
 input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
-lineage  flags  columns  seeded  pack  palette  rig  reach  dynamics
+lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
 body-plan  body-parts  body-recipe  body-edit  body-store  body-samples  body-debug  body-gallery
 games/*.js  ui/gallery
 shell

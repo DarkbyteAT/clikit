@@ -688,4 +688,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     same([...body.debug.project(0.5, 1.7, 0, { centerX: 100, groundY: 300, scale: 100 }, [])], [150, 130]);
     close(body.debug.project(0, 0, 1, { centerX: 100, groundY: 300, scale: 100, turn: Math.PI / 2 }, [])[0], 0, 1e-9, 'a quarter turn shows depth as width');
   });
+
+  // The character-creator cases (surface, regions, features, sided dials, the wardrobe catalogue) live in their own file.
+  require('./test-wardrobe.js')({ Kit, sandbox, test, assert });
 };
