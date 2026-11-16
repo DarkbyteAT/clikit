@@ -231,7 +231,8 @@ async function openArcade({ landscape = false, touch = false, size: ownSize } = 
     });
     await page.waitForTimeout(BLOOM_MS);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    await page.screenshot({ path: file });
+    // A big software-GL canvas on a loaded machine takes longer to read back than the 30 s default.
+    await page.screenshot({ path: file, timeout: 180000 });
     await page.evaluate((shouldResume) => {
       if (Kit.post_) Kit.post_.disable();
       if (shouldResume && Kit.current) Kit.current.paused = false;

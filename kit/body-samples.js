@@ -375,6 +375,9 @@
         plan: 'biped',
         dials: { ...LIMB_DIALS, armLength: { min: 0.9, max: 1.15, affects: [{ roles: ['arm'], channel: 'length' }] } },
         colors: { cloth: 'dyes', metal: 'metals' },
+        // A roll rule (kit/body-recipe.js): cloth is rolled to stand apart from the skin it lies against. These
+        // dyes are all of one value, so here it is the hue that tells them from a skin.
+        contrast: [{ between: ['skin', 'cloth'], lightness: 0.12, hue: 60 }],
         fills: { headTop: { hat: 1, none: 3 } },
       },
       limits: { 'dials.height': { min: 0.6, max: 1.4 } },

@@ -19,9 +19,17 @@
 
   /** Ink is drawn on the farther of two surfaces when the nearer one is in front by more than this, world units. */
   const INK_DEPTH_STEP = { betweenGroups: 0.035, withinGroup: 0.22 };
+  /**
+   * A line is one texel whatever the size of the figure, so a small sprite can carry fewer of them. The depth
+   * steps are never less than this many texels of world size (a figure fifty texels tall keeps the line of an arm
+   * across its chest and loses the one between two fingers), and lines between line classes on one surface (a hem,
+   * a stripe) are drawn only while a texel is smaller than `classMostTexel` world units, about a figure 120 texels tall.
+   */
+  const INK_SCALE = { betweenGroupsTexels: 2.5, withinGroupTexels: 6, classMostTexel: 0.016 };
   /** A valid size for the targets before the first resize, texels. */
   const PLACEHOLDER_SIZE = 4;
-  const { TONE_SLOTS, INK_COLUMN } = Kit.palette;
+  const { TONE_SLOTS, INK_COLUMN, DEEP_COLUMN } = Kit.palette;
+  const { CLASS_STEP, ROW_HIGH_STEP, ROW_HIGH_BIT } = Kit.look;
 
   const QUAD_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
 
@@ -36,8 +44,11 @@
    *  - a surface texel becomes ink when the neighbour is of a higher line class (the tone byte holds
    *    tone + ${Kit.look.CLASS_STEP} x class) and about as deep: two paints meeting on one surface, a sleeve and the skin
    *    below it. The line lands on the lower class, so the garment keeps its size.
-   * Group 0 never gives or takes ink. When several neighbours qualify the nearest one wins, and the line takes
-   * that neighbour's ramp: ink colour comes from the ink column of the shape the line belongs to.
+   * Group 0 never gives or takes ink. When several neighbours qualify the nearest one wins. A silhouette line
+   * takes that neighbour's ramp and its ink column: the outline belongs to the shape. An inner line is drawn in
+   * the deep column of the surface it lands on, the texel's own ramp: a contact shadow in the surface's colour,
+   * so overlapping forms part without a second black outline cutting a small sprite to pieces.
+   * The ramp byte and the top bit of the tone byte together name the palette row (look-toon.js, INDEXED_ROWS).
    */
   const RESOLVE_FRAGMENT = `
     uniform sampler2D uIndex;
@@ -46,27 +57,32 @@
     uniform vec2 uTexel;        // one texel of the index target, in uv
     uniform vec2 uDepthSteps;   // x: between groups, y: within a group; in depth-byte units (0..1)
     uniform float uInk;         // 1 when screen-space ink is on
+    uniform float uClassInk;    // 1 when lines between line classes are drawn (texels are small enough)
     varying vec2 vUv;
     vec3 paletteColor(float column, float row) {
       return texture2D(uPalette, vec2((column + 0.5) / ${TONE_SLOTS}.0, (row + 0.5) / uPaletteRows)).rgb;
     }
-    float classOf(vec4 texel) { return floor((texel.g * 255.0 + 0.5) / ${Kit.look.CLASS_STEP}.0); }
-    // x: the neighbour's ramp byte when it inks this texel, else -1; y: its depth, for choosing the nearest.
-    vec2 inkFrom(vec4 own, vec2 offset) {
+    float toneByte(vec4 texel) { return floor(texel.g * 255.0 + 0.5); }
+    float classOf(vec4 texel) { return floor(mod(toneByte(texel), ${ROW_HIGH_BIT}.0) / ${CLASS_STEP}.0); }
+    float rowOf(vec4 texel) { return floor(texel.r * 255.0 + 0.5) + ${ROW_HIGH_STEP}.0 * step(${ROW_HIGH_BIT}.0, toneByte(texel)); }
+    // x: the palette row of the line when the neighbour inks this texel, else -1; y: the neighbour's depth, for
+    // choosing the nearest; z: the column of the line (ink for a silhouette, deep for an inner line).
+    vec3 inkFrom(vec4 own, vec2 offset) {
       vec4 other = texture2D(uIndex, vUv + offset * uTexel);
       bool otherInks = other.a > 0.0 && other.b > 0.0;
       bool sameGroup = abs(other.b - own.b) < 0.002;
       float lead = own.a - other.a;
       bool overEmpty = own.a == 0.0;
       bool overSurface = own.a > 0.0 && own.b > 0.0 && lead > (sameGroup ? uDepthSteps.y : uDepthSteps.x);
-      bool overClass = own.a > 0.0 && own.b > 0.0 && classOf(other) > classOf(own) + 0.5 && abs(lead) <= uDepthSteps.x;
-      return otherInks && (overEmpty || overSurface || overClass) ? vec2(other.r, other.a) : vec2(-1.0, 2.0);
+      bool overClass = uClassInk > 0.5 && own.a > 0.0 && own.b > 0.0 && classOf(other) > classOf(own) + 0.5 && abs(lead) <= uDepthSteps.x;
+      if (!otherInks || !(overEmpty || overSurface || overClass)) return vec3(-1.0, 2.0, 0.0);
+      return overEmpty ? vec3(rowOf(other), other.a, ${INK_COLUMN}.0) : vec3(rowOf(own), other.a, ${DEEP_COLUMN}.0);
     }
     void main() {
       vec4 own = texture2D(uIndex, vUv);
-      vec2 ink = vec2(-1.0, 2.0);
+      vec3 ink = vec3(-1.0, 2.0, 0.0);
       if (uInk > 0.5) {
-        vec2 candidate = inkFrom(own, vec2(1.0, 0.0));
+        vec3 candidate = inkFrom(own, vec2(1.0, 0.0));
         if (candidate.y < ink.y) ink = candidate;
         candidate = inkFrom(own, vec2(-1.0, 0.0));
         if (candidate.y < ink.y) ink = candidate;
@@ -75,9 +91,9 @@
         candidate = inkFrom(own, vec2(0.0, -1.0));
         if (candidate.y < ink.y) ink = candidate;
       }
-      if (ink.x >= 0.0) gl_FragColor = vec4(paletteColor(${INK_COLUMN}.0, floor(ink.x * 255.0 + 0.5)), 1.0);
+      if (ink.x >= 0.0) gl_FragColor = vec4(paletteColor(ink.z, ink.x), 1.0);
       else if (own.a == 0.0) gl_FragColor = vec4(0.0);
-      else gl_FragColor = vec4(paletteColor(mod(floor(own.g * 255.0 + 0.5), ${Kit.look.CLASS_STEP}.0), floor(own.r * 255.0 + 0.5)), 1.0);
+      else gl_FragColor = vec4(paletteColor(mod(toneByte(own), ${CLASS_STEP}.0), rowOf(own)), 1.0);
     }`;
 
   /**
@@ -136,6 +152,7 @@
         uTexel: { value: new THREE.Vector2(1, 1) },
         uDepthSteps: { value: new THREE.Vector2(0, 0) },
         uInk: { value: 1 },
+        uClassInk: { value: 1 },
       },
       vertexShader: QUAD_VERTEX,
       fragmentShader: RESOLVE_FRAGMENT,
@@ -178,7 +195,13 @@
         const screenTarget = renderer.getRenderTarget();
         const hadAutoClear = renderer.autoClear;
         const [near, far] = shading.uniforms.uDepthRange.value.toArray();
-        resolve.uniforms.uDepthSteps.value.set(INK_DEPTH_STEP.betweenGroups / (far - near), INK_DEPTH_STEP.withinGroup / (far - near));
+        // The world size of a texel is known under an orthographic camera (0 otherwise: no scaling).
+        const texelWorld = shading.uniforms.uTexelWorld.value;
+        resolve.uniforms.uDepthSteps.value.set(
+          Math.max(INK_DEPTH_STEP.betweenGroups, INK_SCALE.betweenGroupsTexels * texelWorld) / (far - near),
+          Math.max(INK_DEPTH_STEP.withinGroup, INK_SCALE.withinGroupTexels * texelWorld) / (far - near)
+        );
+        resolve.uniforms.uClassInk.value = texelWorld <= INK_SCALE.classMostTexel ? 1 : 0;
         resolve.uniforms.uInk.value = settings.outline === 'ink' ? 1 : 0;
         // Alpha 0 is the "nothing here" depth byte, so both small targets are cleared to transparent black.
         renderer.autoClear = true;
@@ -202,5 +225,5 @@
     };
   };
 
-  Object.assign(Kit.look, { inkPass, INK_DEPTH_STEP });
+  Object.assign(Kit.look, { inkPass, INK_DEPTH_STEP, INK_SCALE });
 })();

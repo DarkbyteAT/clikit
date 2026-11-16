@@ -2,7 +2,7 @@
  * Kit look toon: the materials of the stylised look. A toon material turns n.L into a tone band and looks the
  * colour up in the palette texture; a hull material draws the mesh's outline in its ramp's ink colour.
  *
- * Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
+ * Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, the lights, ordered dither, accents, palette
  *        lookup, hull extrusion, region maps and their boundary lines, stamps) as named strings; `Kit.look.shading`: the uniforms every material of one look
  *        shares, `dress(mesh, part)` to put a mesh in the look, and `apply(settings, frame)` to change the look
  *        of every dressed mesh at once.
@@ -12,7 +12,8 @@
  * Why a ShaderMaterial and not a patched MeshToonMaterial: the palette contract needs the fragment's last
  * word (a tone index or a table colour, never lit RGB, never tone mapped), and the standard material's
  * lighting, fog and tone-mapping chunks would all have to be cut back out through string patches that break
- * with the next three.js release. The cost: no scene lights, shadows or fog; the look has one key light of its own.
+ * with the next three.js release. The cost: no scene lights, shadows or fog; the look has its own lights (a key, a
+ * capped fill and a back light: Kit.look.LIGHTING), fixed in view space.
  *
  * GLSL here is WebGL1-safe (constant loop bounds, no integer bit operations, no MRT); three.js converts it for
  * WebGL2. Skinned and instanced meshes are supported through three.js's own vertex chunks; morph targets are not.
@@ -21,10 +22,6 @@
 (() => {
   // ---- tunables --------------------------------------------------------------------------------------------------------
 
-  /** The key light, in view space (x right, y up, z toward the viewer): from the upper left, in front. */
-  const KEY_LIGHT = [-0.45, 0.75, 0.5];
-  /** Rim: a lit pixel whose normal leans this little toward the viewer (view-space z) is lifted one tone. */
-  const RIM = { maxFacing: 0.32, minLight: 0.25 };
   /** Shiny: n.h (h is halfway between the light and the viewer) above this takes the lightest tone. */
   const GLINT_EDGE = 0.93;
   /** Surface-fixed dither: pattern cells per world unit of a mesh's own space. */
@@ -40,12 +37,34 @@
    * under the kit's orthographic cameras (40 m deep).
    */
   const STAMP_DEPTH_STEP = 0.00002;
+  /**
+   * A hull is drawn this far behind its mesh's true depth, world units. An outline is for a form that stands
+   * clear of what is behind it; without the step, the hull of a piece that merely touches its neighbour (a neck
+   * in a collar, a band round a hat) shows through the neighbour's surface as a stray line.
+   */
+  const HULL_BACK = 0.012;
   /** A region line never reaches further than this share of the map from its fragment (near a pole the angle's gradient is unbounded). */
   const REGION_LINE_MOST_REACH = 0.06;
   /** Line classes pack into the tone byte of the index target above the tone: tone + CLASS_STEP x class. */
   const CLASS_STEP = 8;
-  const { TONE_SLOTS, INK_COLUMN } = Kit.palette;
-  const { MAX_EDGES } = Kit.look;
+  /**
+   * The index target names a palette row in nine bits: the ramp byte, and the top bit of the tone byte for rows
+   * from `ROW_HIGH_STEP` up (tone 0..7 and class 0..15 leave that bit free). So the indexed path reaches this
+   * many rows of an atlas; `apply` refuses a look that dressed a higher row rather than draw it in the wrong colours.
+   */
+  const INDEXED_ROWS = 512;
+  const ROW_HIGH_STEP = 256;
+  const ROW_HIGH_BIT = 128;
+  /**
+   * Dither is for broad, slowly turning surfaces. `fade` is the turn of the normal per target pixel over which
+   * it fades out: a form whose radius is under about ten pixels gets none, because there a checker along a band
+   * edge is as large as the form and reads as noise.
+   */
+  const DITHER_CURVATURE_FADE = [0.05, 0.1];
+  const { TONE_SLOTS, INK_COLUMN, DEEP_COLUMN, TONE_POSITIONS, MAX_TONES } = Kit.palette;
+  /** Slots a region byte or a stamp can name from its figure's first row (a region texel holds a slot below this). */
+  const BLOCK_SLOTS = 16;
+  const { MAX_EDGES, LIGHTING, RESPONSES } = Kit.look;
 
   // ---- GLSL chunks -----------------------------------------------------------------------------------------------------
 
@@ -109,6 +128,35 @@
     float softBandOf(float light) {
       float tone = 0.0;
       for (int edge = 0; edge < ${MAX_EDGES}; edge++) tone += smoothstep(uEdges[edge] - uSoftness, uEdges[edge] + uSoftness, light);
+      return tone;
+    }`;
+
+  /**
+   * The light value of a fragment. The key light gives n.L. The fill light comes from the viewer's side and is
+   * capped inside the band of the ramp's own colour, so taking the brighter of the two can lift a shadow off a
+   * surface but never adds a highlight; `response` (x: gain, y: bias) says how much of the fill this surface
+   * takes, which is none for an ordinary form and enough to keep a face out of the shadow band (Kit.look.RESPONSES).
+   */
+  const GLSL_LIGHT = `
+    float lightOf(vec3 normal, vec2 response) {
+      return max(dot(normal, uLight), min(response.x * dot(normal, uFill.xyz) + response.y, uFill.w));
+    }`;
+
+  /**
+   * The table column of a paint fixed at a position of its ramp (0 darkest .. 1 lightest): the nearest tone the
+   * ramp has at this tone count, or the deep column for a position less than half way up to its darkest tone.
+   * uTonePositions is where each tone sits along a graded ramp (entries past the tone count are out of reach);
+   * Kit.palette.columnAt is the same rule in JavaScript.
+   */
+  const GLSL_FIXED_TONE = `
+    float fixedTone(float position) {
+      if (position < 0.5 * uTonePositions[0]) return ${DEEP_COLUMN}.0;
+      float tone = 0.0;
+      float nearest = abs(uTonePositions[0] - position);
+      for (int index = 1; index < ${MAX_TONES}; index++) {
+        float gap = abs(uTonePositions[index] - position);
+        if (gap < nearest) { nearest = gap; tone = float(index); }
+      }
       return tone;
     }`;
 
@@ -267,8 +315,13 @@
     uniform float uDither;
     uniform float uDitherCells;
     uniform float uSoftness;
-    uniform vec3 uLight;
+    uniform vec3 uLight;     // the key light, view space
+    uniform vec4 uFill;      // xyz: the fill light, view space; w: the light value it never exceeds
+    uniform vec4 uBack;      // xyz: the back light, view space; w: least n.back that counts as facing it
     uniform vec3 uRim;       // x: largest view-space normal z that still counts as an edge, y: least light, z: 1 when on
+    uniform float uBounce;   // 1 when the back light is on
+    uniform float uTonePositions[${MAX_TONES}];  // where each tone sits along a graded ramp, 0..1
+    uniform vec3 uResponse;  // how the part answers the light: x fill gain, y fill bias, z its share of the dither
     uniform float uGlintEdge;
     uniform vec2 uDepthRange;
     uniform vec2 uAnchor;
@@ -287,17 +340,27 @@
     ${GLSL_BAYER}
     ${GLSL_DITHER_CELL}
     ${GLSL_BANDS}
+    ${GLSL_LIGHT}
+    ${GLSL_FIXED_TONE}
     ${GLSL_PALETTE}
     ${GLSL_DEPTH_BYTE}
     ${GLSL_REGIONS}
     ${GLSL_REGION_LINE}
+    // The two bytes that name a fragment's palette row, tone and line class in the index target.
+    vec2 indexBytes(float row, float tone, float inkClass) {
+      float high = step(${ROW_HIGH_STEP}.0, row);
+      return vec2(row - ${ROW_HIGH_STEP}.0 * high, floor(tone + 0.5) + ${CLASS_STEP}.0 * inkClass + ${ROW_HIGH_BIT}.0 * high) / 255.0;
+    }
     void main() {
       float row = uRamp + vRampOffset;
       float inkClass = uInkClass;
       float lineRow = -1.0;
+      vec3 response = uResponse;
       #ifdef LOOK_REGIONS
         vec2 regionPoint = regionUv(vLocalPosition);
         vec4 region = regionAt(regionPoint);
+        // A response other than a form's is for the bare surface: paint over it (hair, a band) and raised shells are forms.
+        if (mod(region.a, 2.0) > 0.5 || uShell > 0.5) response = vec3(${RESPONSES.form.fillGain.toFixed(1)}, ${RESPONSES.form.fillBias.toFixed(1)}, ${RESPONSES.form.dither.toFixed(1)});
         #ifdef LOOK_STAMP
           // A stamp shows only on bare surface: where hair or a band is painted over the skin, it is hidden.
           if (mod(region.a, 2.0) > 0.5) discard;
@@ -313,7 +376,9 @@
       vec3 normal = normalize(vViewNormal);
       float lightest = uToneCount - 1.0;
       // Dither moves the light value, never the colour: thresholds 0..15/16 are centred on zero (their mean is 15/32).
-      float light = dot(normal, uLight) + (bayer4(ditherCell()) - 0.46875) * uDither;
+      float turning = max(length(dFdx(normal)), length(dFdy(normal)));
+      float dither = uDither * response.z * (1.0 - smoothstep(${DITHER_CURVATURE_FADE[0]}, ${DITHER_CURVATURE_FADE[1]}, turning));
+      float light = lightOf(normal, response.xy) + (bayer4(ditherCell()) - 0.46875) * dither;
       #ifdef LOOK_SOFT
         float tone = softBandOf(light);
       #else
@@ -321,13 +386,15 @@
       #endif
       // Rim: a lit surface seen edge-on steps up one tone, which draws a light line along the lit silhouette.
       if (uRim.z > 0.5 && normal.z < uRim.x && light > uRim.y) tone = min(tone + 1.0, lightest);
+      // Bounce: shadowed surface that faces the back light steps up one tone, toward the ramp's own colour and never past it.
+      if (uBounce > 0.5 && dot(normal, uBack.xyz) > uBack.w) tone = min(tone + 1.0, max(tone, lightest - 1.0));
       // Glint: where the normal bisects the light and the viewer (the viewer is +z in view space), a shiny part takes the lightest tone.
       if (uPart.x > 0.5 && dot(normal, normalize(uLight + vec3(0.0, 0.0, 1.0))) > uGlintEdge) tone = lightest;
       if (uPart.y > 0.5) tone = lightest;
-      if (uPart.z >= 0.0) tone = floor(uPart.z * lightest + 0.5);
+      if (uPart.z >= 0.0) tone = fixedTone(uPart.z);
       #ifdef LOOK_STAMP
         row = uBlockRow + vStampPaint.x;
-        tone = floor(vStampPaint.y * lightest + 0.5);
+        tone = fixedTone(vStampPaint.y);
       #endif
       if (lineRow >= 0.0) {
         row = lineRow;
@@ -335,9 +402,10 @@
       }
       #ifdef LOOK_INDEX_OUTPUT
         // (ramp, tone + line class, ink group, depth) as four bytes; colour is resolved later, by look-ink.js.
-        gl_FragColor = vec4(row / 255.0, (floor(tone + 0.5) + ${CLASS_STEP}.0 * inkClass) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
+        gl_FragColor = vec4(indexBytes(row, tone, inkClass), uInkGroup / 255.0, depthByte(vViewDepth));
       #else
         #ifdef LOOK_SOFT
+          // A fixed tone is whole (and may be the deep column), so its blend weight is zero and it is read as it is.
           vec3 color = mix(paletteColor(floor(tone), row), paletteColor(min(floor(tone) + 1.0, lightest), row), fract(tone));
         #else
           vec3 color = paletteColor(tone, row);
@@ -371,6 +439,9 @@
       vec2 direction = (projectionMatrix * vec4(transformedNormal, 0.0)).xy * uViewport;
       direction /= max(length(direction), 0.0001);
       gl_Position.xy += direction * (2.0 * uInkWidth / uViewport) * gl_Position.w;
+      // The step back is made in view space and only the depth is taken from it, so the line keeps its place on screen.
+      vec4 behind = projectionMatrix * vec4(mvPosition.xy, mvPosition.z - ${HULL_BACK}, 1.0);
+      gl_Position.z = behind.z / behind.w * gl_Position.w;
       vViewDepth = -mvPosition.z;
     }`;
 
@@ -397,7 +468,8 @@
         if (region.g < 254.5) inkClass = region.g;
       #endif
       #ifdef LOOK_INDEX_OUTPUT
-        gl_FragColor = vec4(row / 255.0, (${INK_COLUMN}.0 + ${CLASS_STEP}.0 * inkClass) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
+        float high = step(${ROW_HIGH_STEP}.0, row);
+        gl_FragColor = vec4((row - ${ROW_HIGH_STEP}.0 * high) / 255.0, (${INK_COLUMN}.0 + ${CLASS_STEP}.0 * inkClass + ${ROW_HIGH_BIT}.0 * high) / 255.0, uInkGroup / 255.0, depthByte(vViewDepth));
       #else
         gl_FragColor = vec4(toOutput(paletteColor(${INK_COLUMN}.0, row)), 1.0);
       #endif
@@ -436,7 +508,12 @@
    *   part is never outlined and never drawn over by ink (eyes, glows)
    * @property {boolean} [shiny] takes the lightest tone where it mirrors the light (hair, metal, gems)
    * @property {boolean} [emissive] always the lightest tone; its ink group defaults to 0
-   * @property {number} [tone] a fixed tone, 0 (darkest) .. 1 (lightest) of the ramp, instead of shading
+   * @property {number} [tone] a fixed position along the ramp, 0 (its deepest colour) .. 1 (lightest), instead of
+   *   shading; it is drawn with the nearest tone the ramp has (`Kit.palette.columnAt`)
+   * @property {string} [response='form'] a key of `Kit.look.RESPONSES`: how the part answers the light. 'face' is
+   *   for skin that carries features (a head): the fill light keeps what is turned to the viewer at the ramp's
+   *   own colour, and it is never dithered. Where a region map paints over the mesh (hair on a scalp) and on
+   *   its raised shells, the part answers as a form again
    * @property {{value: THREE.Vector2}} [anchor] from `shading.follow(root)`: the figure this part's dither moves with
    * @property {boolean} [instanceRamp] an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
    * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below
@@ -490,6 +567,11 @@
    * shading.dress(eyeMesh, { ramp: hero.rows.eye, tone: 0, inkGroup: 0 });
    * shading.apply(Kit.look.settings('toon'), { width: 780, height: 1560, lineWidth: 5 });
    */
+  /** A position no paint is near: pads the shader's fixed-length list of tone positions. */
+  const UNUSED_POSITION = 9;
+  /** The tone positions of a tone count padded to the shader's fixed length, tagged with the count they are for. */
+  const tonePositionsFor = (toneCount) => Object.assign(Array.from({ length: MAX_TONES }, (_, index) => (index < toneCount ? TONE_POSITIONS[toneCount][index] : UNUSED_POSITION)), { toneCount });
+
   const shading = ({ atlas, output = 'display' }) => {
     const palette = paletteTexture(atlas);
     const uniforms = {
@@ -500,8 +582,12 @@
       uDither: { value: 0 },
       uDitherCells: { value: DITHER_CELLS_PER_UNIT },
       uSoftness: { value: 0 },
-      uLight: { value: new THREE.Vector3(...KEY_LIGHT).normalize() },
-      uRim: { value: new THREE.Vector3(RIM.maxFacing, RIM.minLight, 0) },
+      uLight: { value: new THREE.Vector3(...LIGHTING.key).normalize() },
+      uFill: { value: new THREE.Vector4(...new THREE.Vector3(...LIGHTING.fill).normalize().toArray(), LIGHTING.fillCap) },
+      uBack: { value: new THREE.Vector4(...new THREE.Vector3(...LIGHTING.back).normalize().toArray(), LIGHTING.bounceEdge) },
+      uRim: { value: new THREE.Vector3(LIGHTING.rim.maxFacing, LIGHTING.rim.minLight, 0) },
+      uBounce: { value: 0 },
+      uTonePositions: { value: tonePositionsFor(atlas.toneCount) },
       uGlintEdge: { value: GLINT_EDGE },
       uDepthRange: { value: new THREE.Vector2(0, 1) },
       uViewport: { value: new THREE.Vector2(1, 1) },
@@ -513,10 +599,18 @@
     const dressed = [];
     const anchors = [];
     let defineKey = '';
+    /** The highest palette row any dressed part can name, for the indexed path's nine-bit limit. */
+    let highestRow = 0;
 
     const baseDefines = () => (output === 'linear' ? { LOOK_LINEAR_OUTPUT: '' } : {});
+    const responseOf = (part) => {
+      const response = RESPONSES[part.response || 'form'];
+      if (!response) throw new Error(`Kit.look.shading.dress: no light response "${part.response}". Responses: ${Object.keys(RESPONSES).join(', ')}.`);
+      return new THREE.Vector3(response.fillGain, response.fillBias, response.dither);
+    };
     const partUniforms = (part) => ({
       ...uniforms,
+      uResponse: { value: responseOf(part) },
       uAnchor: part.anchor || noAnchor,
       uRamp: { value: part.ramp },
       uInkGroup: { value: part.inkGroup === undefined ? (part.emissive ? 0 : 1) : part.inkGroup },
@@ -578,8 +672,9 @@
           fragmentShader: TOON_FRAGMENT,
           defines: { ...baseDefines(), ...partDefines(part), ...(part.instanceRamp ? { LOOK_INSTANCE_RAMP: '' } : {}) },
         });
-        // The region line measures the map's gradient on screen; WebGL1 needs the derivatives extension for that.
-        if (part.regions) toon.extensions = { derivatives: true };
+        // Dither fades with the screen-space turn of the normal and the region line measures the map's gradient
+        // on screen; WebGL1 needs the derivatives extension for both.
+        toon.extensions = { derivatives: true };
         const hull = new THREE.ShaderMaterial({
           uniforms: partValues,
           vertexShader: HULL_VERTEX,
@@ -592,6 +687,9 @@
         hull.visible = false;
         mesh.material = [toon, hull];
         const entry = { mesh, toon, hull, setRamp: (row) => (partValues.uRamp.value = row) };
+        // A region or stamp may name any slot of its figure's block, so the block's last row counts too (a per-instance
+        // row offset is the caller's to keep in range).
+        highestRow = Math.max(highestRow, part.ramp, part.regions || part.stamps ? (part.blockRow || 0) + BLOCK_SLOTS - 1 : 0);
         dressed.push(entry);
         defineKey = '';
         return entry;
@@ -625,9 +723,15 @@
        * @complexity O(1) for knob changes; O(dressed meshes) when the output kind or the hull visibility changes
        */
       apply(settings, frame) {
+        if (settings.isIndexed && Math.min(highestRow, atlas.height - 1) >= INDEXED_ROWS)
+          throw new Error(
+            `Kit.look.shading.apply: a part is dressed in palette row ${Math.min(highestRow, atlas.height - 1)}, but a look with screen-space ink or a pixel grid addresses ${INDEXED_ROWS} rows. Create the view with atlasRows of ${INDEXED_ROWS} or fewer (free a figure's block before loading the next), or use a hull outline at native resolution.`
+          );
         palette.sync();
         uniforms.uEdges.value = Kit.look.edgesFor(settings.toneCount);
         uniforms.uToneCount.value = settings.toneCount;
+        if (uniforms.uTonePositions.value.toneCount !== settings.toneCount) uniforms.uTonePositions.value = tonePositionsFor(settings.toneCount);
+        uniforms.uBounce.value = settings.bounce ? 1 : 0;
         uniforms.uDither.value = settings.dither;
         uniforms.uSoftness.value = settings.softness;
         uniforms.uRim.value.z = settings.rim ? 1 : 0;
@@ -671,5 +775,5 @@
     return look;
   };
 
-  Object.assign(Kit.look, { shading, paletteTexture, CLASS_STEP, GLSL: { GLSL_TRANSFORM, GLSL_BAYER, GLSL_DITHER_CELL, GLSL_BANDS, GLSL_PALETTE, GLSL_DEPTH_BYTE, GLSL_REGIONS, GLSL_REGION_LINE } });
+  Object.assign(Kit.look, { shading, paletteTexture, CLASS_STEP, INDEXED_ROWS, ROW_HIGH_STEP, ROW_HIGH_BIT, GLSL: { GLSL_TRANSFORM, GLSL_BAYER, GLSL_DITHER_CELL, GLSL_BANDS, GLSL_LIGHT, GLSL_FIXED_TONE, GLSL_PALETTE, GLSL_DEPTH_BYTE, GLSL_REGIONS, GLSL_REGION_LINE } });
 })();

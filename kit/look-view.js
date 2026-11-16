@@ -149,6 +149,8 @@
         shading.apply(settings, { width: target.width, height: target.height, lineWidth, depthRange: fitDepthRange(camera) });
         // Stamps (the layers of a face) keep a least size in target texels; only an orthographic camera has one texel size.
         shading.uniforms.uTexelWorld.value = camera.isOrthographicCamera ? ((camera.top - camera.bottom) / camera.zoom) * (scale / bufferSize.y) : 0;
+        // Dither pays only while a figure is large enough to hold the pattern; below native resolution it fades with the texel.
+        if (scale > 1) shading.uniforms.uDither.value = Kit.look.ditherAt(settings.dither, shading.uniforms.uTexelWorld.value);
         const restoreFigures = placeFigures(camera, settings, target);
         scene.updateMatrixWorld();
 

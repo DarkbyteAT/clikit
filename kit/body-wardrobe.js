@@ -1443,8 +1443,9 @@
 
   /**
    * Palettes by name. Ten natural skins from pale to deep, eight fantasy skins, ten hair colours (six natural,
-   * two greys, two dyes), eight irises, two natural eye whites and three fantasy ones, six lip tones, twelve dyes for cloth, six leathers,
-   * six metals and stones, four inks.
+   * two greys, two dyes), eight irises, two natural eye whites and three fantasy ones, six lip tones, nineteen dyes for cloth
+   * (twelve colours, four neutrals and three muted colours), six leathers, six metals and stones, four inks.
+   * A palette only ever grows at its end: a recipe stores the index of a ramp.
    */
   const PALETTES = {
     skins: [
@@ -1456,8 +1457,9 @@
       skinTone('olive', 0.11, 0.28, 0.72, 0.32),
       skinTone('tawny', 0.065, 0.24, 0.68, 0.5),
       skinTone('umber', 0.06, 0.16, 0.56, 0.45),
-      skinTone('mahogany', 0.03, 0.12, 0.46, 0.45),
-      skinTone('ebony', 0.05, 0.07, 0.36, 0.35),
+      // The two deepest skins keep enough light in their middle for brows, lashes and a mouth line to read on them.
+      skinTone('mahogany', 0.035, 0.14, 0.52, 0.48),
+      skinTone('ebony', 0.05, 0.1, 0.44, 0.42),
     ],
     fantasySkins: [
       skinTone('ash', 0.6, 0.2, 0.75, 0.08),
@@ -1518,6 +1520,15 @@
       ramp('sky', 0.56, { saturation: 0.5, darkest: 0.3, lightest: 0.86 }),
       ramp('olive', 0.2, { saturation: 0.4 }),
       ramp('coral', 0.02, { saturation: 0.7, darkest: 0.3, lightest: 0.85 }),
+      // Neutrals and muted colours, added after the first twelve so their indices stay what saved recipes hold.
+      // An outfit needs something quiet to set a colour against: these are what the scheme of neutrals draws on.
+      ramp('stone', 0.1, { saturation: 0.12, darkest: 0.3, lightest: 0.8 }),
+      ramp('slate', 0.6, { saturation: 0.14, darkest: 0.16, lightest: 0.6 }),
+      ramp('ink', 0.65, { saturation: 0.16, darkest: 0.07, lightest: 0.36 }),
+      ramp('chalk', 0.12, { saturation: 0.12, darkest: 0.55, lightest: 0.97 }),
+      ramp('denim', 0.6, { saturation: 0.34, darkest: 0.16, lightest: 0.64 }),
+      ramp('sage', 0.3, { saturation: 0.2, darkest: 0.24, lightest: 0.74 }),
+      ramp('wine', 0.96, { saturation: 0.5, darkest: 0.1, lightest: 0.48 }),
     ],
     leathers: [
       ramp('tan', 0.08, { saturation: 0.45, darkest: 0.2, lightest: 0.7 }),
@@ -1749,15 +1760,19 @@
 
   // ---- species ------------------------------------------------------------------------------------------------------------
 
-  /** Socket fills of the base species: weights per option ('none' leaves it empty). */
+  /**
+   * Socket fills of the base species: weights per option ('none' leaves it empty). Curated so that a crowd reads
+   * as people: nearly everyone has brows, most hands are empty, and the loud options (a crest, a visor, a
+   * monocle, face stripes) are the occasional ones.
+   */
   const FILLS = {
     eyes: { eyesRound: 1, eyesAlmond: 1, eyesNarrow: 1, eyesDowncast: 1, eyesUpturned: 1 },
-    brows: { browsStraight: 3, browsArched: 3, browsHeavy: 2, browsRising: 2, browsFine: 2, none: 1 },
+    brows: { browsStraight: 3, browsArched: 3, browsHeavy: 2, browsRising: 2, browsFine: 2, none: 0.3 },
     nose: { noseButton: 1, noseStraight: 1, nosePointed: 1, noseBroad: 1, noseHooked: 1 },
     mouth: { mouthNeutral: 2, mouthWide: 1, mouthFull: 1, mouthSmall: 1, mouthSmirk: 1 },
     ears: { earsRound: 3, earsSmall: 2, earsLarge: 2, earsPointed: 1 },
-    marks: { none: 6, freckles: 2, blush: 2, scar: 1, mole: 1, stripes: 1 },
-    hair: { hairCrop: 2, hairBuzz: 1, hairSwept: 2, hairBob: 2, hairLong: 2, hairPonytail: 2, hairBun: 1, hairCrest: 1, hairCurls: 2, hairBraids: 1, none: 1 },
+    marks: { none: 7, freckles: 2, blush: 2, scar: 0.7, mole: 1, stripes: 0.4 },
+    hair: { hairCrop: 2, hairBuzz: 1, hairSwept: 2, hairBob: 2, hairLong: 2, hairPonytail: 2, hairBun: 1, hairCrest: 0.5, hairCurls: 2, hairBraids: 1, none: 0.6 },
     facialHair: { none: 8, stubble: 2, moustache: 1, beard: 2, chinTuft: 1 },
     top: { tee: 3, longSleeve: 3, tank: 2, stripedKnit: 2, cropTop: 1, tunic: 2 },
     bottom: { trousers: 4, shorts: 2, skirt: 2, longSkirt: 1, leggings: 2 },
@@ -1765,11 +1780,11 @@
     outerwear: { none: 5, jacket: 2, vest: 1, cloak: 1, longCoat: 1, hoodie: 2, scarf: 1 },
     gloves: { none: 8, gloves: 1, fingerless: 1, gauntlets: 1, bracers: 1 },
     hat: { none: 6, cap: 1, beanie: 1, wideBrim: 1, beret: 1, headband: 1, circlet: 1 },
-    glasses: { none: 8, roundGlasses: 1, squareGlasses: 1, visor: 1, monocle: 1 },
+    glasses: { none: 9, roundGlasses: 1, squareGlasses: 1, visor: 0.4, monocle: 0.4 },
     earrings: { none: 6, studs: 1, drops: 1, dangles: 1 },
     back: { none: 6, backpack: 1, satchel: 1, quiver: 1, bedroll: 1 },
-    handLeft: { none: 8, staff: 1, lantern: 1, book: 1, mug: 1 },
-    handRight: { none: 7, shortBlade: 1, umbrella: 1, book: 1, staff: 1, lantern: 1 },
+    handLeft: { none: 10, staff: 1, lantern: 1, book: 1, mug: 1 },
+    handRight: { none: 9, shortBlade: 1, umbrella: 1, book: 1, staff: 1, lantern: 1 },
   };
 
   /** The channels of the base species and the palette each draws from. */
@@ -1790,6 +1805,84 @@
     accent: 'metals',
   };
 
+  /**
+   * How often a ramp is rolled when it is not 1: natural hair and eye colours are the rule and dyed or uncanny
+   * ones the exception, cloth is mostly everyday colours, and marks are mostly quiet. An editor offers them all.
+   */
+  const COLOR_WEIGHTS = {
+    hair: { silver: 0.5, ash: 0.6, teal: 0.25, rose: 0.25 },
+    eyes: { violet: 0.3, gold: 0.3, amber: 0.6 },
+    marks: { cinnabar: 0.5, woad: 0.5 },
+    top: { mustard: 0.6, coral: 0.6, olive: 0.7, ink: 0.6 },
+    bottom: { mustard: 0.3, coral: 0.3, crimson: 0.5, teal: 0.5, sky: 0.6, olive: 0.6, plum: 0.6, denim: 2.5, charcoal: 1.5, slate: 1.5, stone: 1.5, ink: 1.5 },
+    outerwear: { mustard: 0.5, coral: 0.4, charcoal: 1.5, stone: 1.5, slate: 1.5, ink: 1.2 },
+    footwear: { canvas: 0.5, oxblood: 0.6 },
+    accent: { jade: 0.5, garnet: 0.5 },
+  };
+
+  /**
+   * Channels that take their colour from another. Lips are the skin a little deeper and redder (two nearest lip
+   * tones, so two people of one skin can differ); gloves and the leather of belts, straps and bags go with the
+   * footwear. Brows and facial hair need no rule: they are painted with the hair channel itself.
+   */
+  const FOLLOW = {
+    lips: { channel: 'skin', lightness: -0.1, chroma: 0.04, hue: -22, among: 2 },
+    gloves: { channel: 'footwear', among: 2 },
+    gear: { channel: 'footwear', among: 2 },
+  };
+
+  /**
+   * The garments are one outfit: their colours come from one scheme per roll. Analogous and neutral-plus-accent
+   * outfits are the everyday ones; complements, split complements and triads are louder and rarer.
+   */
+  const HARMONY = {
+    schemes: { analogous: 3, neutral: 3, complementary: 2, split: 1.5, triad: 1 },
+    channels: ['top', 'bottom', 'outerwear', 'hat'],
+  };
+
+  /**
+   * Colours that meet must stand apart, in value or in saturation (OKLCH gaps): the parts of an eye, skin from
+   * hair and from each garment that lies against it, and each garment from its neighbour.
+   */
+  const CONTRAST = [
+    // An eye reads as an eye: its white (or its void) apart from the skin round it, and the iris apart from that.
+    // The iris needs a wide gap from its white: a feature a few texels across reads on value, or on a strong
+    // colour against a white one (amber and gold on ivory), and a mid iris on a void sclera does neither.
+    { between: ['skin', 'sclera'], lightness: 0.1 },
+    { between: ['eyes', 'sclera'], lightness: 0.3, chroma: 0.097 },
+    { between: ['skin', 'hair'], lightness: 0.1, chroma: 0.045 },
+    { between: ['skin', 'top'], lightness: 0.12, chroma: 0.05 },
+    { between: ['skin', 'bottom'], lightness: 0.12, chroma: 0.05 },
+    { between: ['skin', 'outerwear'], lightness: 0.12, chroma: 0.05 },
+    { between: ['hair', 'hat'], lightness: 0.12, chroma: 0.06 },
+    { between: ['top', 'bottom'], lightness: 0.12, chroma: 0.08 },
+    { between: ['top', 'outerwear'], lightness: 0.12, chroma: 0.08 },
+    { between: ['bottom', 'footwear'], lightness: 0.1, chroma: 0.06 },
+  ];
+
+  /**
+   * The room a part takes up on the body; two parts in one room are never rolled together. The crown is where
+   * hair with height and a hat's crown both want to be; the brow, a peak or brim and a visor; the back, a cloak
+   * and whatever is slung there; the throat, a scarf and a full beard.
+   */
+  const OCCUPIES = {
+    hairBun: ['crown'],
+    hairCrest: ['crown'],
+    hairCurls: ['crown'],
+    cap: ['crown', 'brow'],
+    beanie: ['crown'],
+    wideBrim: ['crown', 'brow'],
+    beret: ['crown'],
+    visor: ['brow'],
+    cloak: ['back'],
+    backpack: ['back'],
+    satchel: ['back'],
+    quiver: ['back'],
+    bedroll: ['back'],
+    scarf: ['throat'],
+    beard: ['throat'],
+  };
+
   /** Traits: the non-human pieces, pulled in by a variant. */
   const TRAITS = {
     horned: { set: { fills: { horns: { hornNubs: 1, hornsSwept: 2, hornsRam: 2 } } } },
@@ -1808,6 +1901,11 @@
         dials: DIALS,
         colors: COLORS,
         fills: FILLS,
+        colorWeights: COLOR_WEIGHTS,
+        follow: FOLLOW,
+        harmony: HARMONY,
+        contrast: CONTRAST,
+        occupies: OCCUPIES,
         controls: CONTROLS,
         groups: Object.fromEntries(Object.keys(GROUPS).map((group, index) => [group, { label: GROUPS[group][0], icon: GROUPS[group][1], order: index + 1 }])),
       },
