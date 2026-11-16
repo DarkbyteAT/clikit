@@ -325,4 +325,60 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const handSizes = editor.mirror(editor.setDial({ species: 'human', seed: 4 }, 'handSize@left', 0.8), 'left');
     same([handSizes.overrides['dial:handSize@left'], handSizes.overrides['dial:handSize@right']], [0.8, 0.8], 'sided dials mirror too');
   });
+
+  // ---- required sockets on rolls ----
+  const withLantern = (required, edit = () => {}) =>
+    sampleVariant((spec) => {
+      spec.parts.lantern = {
+        fits: ['grip'],
+        bones: [{ name: 'cage', roles: ['root'], tail: [0, -0.2, 0], shape: { kind: 'box', size: [0.1, 0.2, 0.1] } }],
+        sockets: [{ name: 'flame', bone: 'cage', type: 'flame', at: [0, -0.1, 0], required }],
+      };
+      spec.parts.candle = { fits: ['flame'], bones: [{ name: 'wick', roles: ['root'], shape: { kind: 'sphere', radius: 0.02 } }] };
+      spec.parts.wisp = { fits: ['flame'], bones: [{ name: 'glow', roles: ['root'], shape: { kind: 'sphere', radius: 0.03 } }] };
+      spec.nodes.humanoid.set.fills.handLeft = { lantern: 1, none: 1 };
+      edit(spec);
+    });
+
+  test('required sockets: a rolled part with a required socket always gets it filled (control: not required, left empty)', () => {
+    const required = body.catalog(withLantern(true));
+    const optional = body.catalog(withLantern(false));
+    const lanterns = (catalog) => Array.from({ length: 60 }, (_unused, seed) => catalog.resolve({ species: 'human', seed })).filter((individual) => individual.fills.handLeft === 'lantern');
+    const lit = lanterns(required);
+    assert.ok(lit.length > 10, 'enough lanterns rolled to judge');
+    assert.ok(
+      lit.every((individual) => ['candle', 'wisp'].includes(individual.fills['handLeft/flame'])),
+      'every lantern is lit'
+    );
+    same(new Set(lit.map((individual) => individual.fills['handLeft/flame'])).size, 2, 'both flames are rolled: a seeded pick, not the first part');
+    assert.ok(
+      lanterns(optional).every((individual) => !individual.fills['handLeft/flame']),
+      'control: an optional socket with no declared fill stays empty'
+    );
+    const editor = body.editor(required);
+    const handed = required.resolve(editor.setSocket({ species: 'human', seed: 1 }, 'handRight', 'lantern'));
+    assert.ok(handed.fills['handRight/flame'], 'an override that puts the lantern in the other hand lights it too');
+    assert.deepStrictEqual(Object.keys(handed.fills), [...Object.keys(handed.fills)].sort(body.compareSocketPaths), 'fills stay in canonical order');
+    throwsWith(() => editor.setSocket(editor.setSocket({ species: 'human', seed: 1 }, 'handRight', 'lantern'), 'handRight/flame', null), /\[socket-required\]/);
+    const recipe = editor.setSocket({ species: 'human', seed: 1 }, 'handRight', 'lantern');
+    same(required.decode(required.encode(recipe)), required.normalize(recipe), 'round trip');
+    assert.strictEqual(required.hash(required.resolve(recipe)), required.hash(required.resolve(required.decode(required.encode(recipe)))), 'same look after a round trip');
+  });
+  test('required sockets: a declared none for a required nested socket and an unfillable required socket are load errors', () => {
+    throwsWith(
+      () => body.catalog(withLantern(true, (spec) => (spec.nodes.humanoid.set.fills['handLeft/flame'] = { candle: 1, none: 1 }))),
+      /fills.handLeft\/flame offers 'none', but the part "lantern" marks that socket required/
+    );
+    body.catalog(withLantern(true, (spec) => (spec.nodes.humanoid.set.fills['handLeft/flame'] = { candle: 1 }))); // control
+    throwsWith(
+      () =>
+        body.catalog(
+          withLantern(true, (spec) => {
+            delete spec.parts.candle;
+            delete spec.parts.wisp;
+          })
+        ),
+      /the part "lantern" has the required socket "flame" \(type flame\), but no part in `parts` fits a flame socket/
+    );
+  });
 };

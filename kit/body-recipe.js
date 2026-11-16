@@ -175,6 +175,21 @@
 
     /** The socket specs a part offers to further parts (its anchor is used up by attaching). */
     const offeredSockets = (partId) => (compiledParts[partId].spec.sockets || []).filter((socket) => socket.name !== compiledParts[partId].spec.anchor);
+    /** Ids of every part that fits a socket type, sorted so a seeded pick among them is stable. */
+    const partsFitting = (type) =>
+      Object.keys(compiledParts)
+        .filter((partId) => compiledParts[partId].fits.includes(type))
+        .sort();
+    /** Part id -> the names of the sockets it offers that may not be left empty. */
+    const requiredSocketsOfPart = Object.fromEntries(Object.keys(compiledParts).map((partId) => [partId, offeredSockets(partId).filter((socket) => socket.required)]));
+    // A part whose required socket nothing can fill could never be worn: say so at load.
+    Object.keys(requiredSocketsOfPart).forEach((partId) =>
+      requiredSocketsOfPart[partId].forEach((socket) => {
+        if (!partsFitting(socket.type).length)
+          fail('catalog', `the part "${partId}" has the required socket "${socket.name}" (type ${socket.type}), but no part in \`parts\` fits a ${socket.type} socket.`);
+      })
+    );
+    const anyPartRequires = Object.values(requiredSocketsOfPart).some((sockets) => sockets.length > 0);
 
     /**
      * The spec of the socket at a path, given what is already attached; null when there is no such socket.
@@ -287,6 +302,8 @@
         colorDraws: colorIds.map((channel) => Kit.seeded.field(`${KINDS.color}${KEY_SEPARATOR}${channel}`)),
         fillFields: [],
         fillPaths: [],
+        /** @type {string[]} the bare plan's required sockets */
+        requiredTop: [],
         /** @type {Map<number, string>} field hash -> key, for decoding: dials, colours, declared fills and every bare socket */
         keyByHash: new Map(),
       };
@@ -302,6 +319,15 @@
           if (!field || !field.options.length || field.options.some((option) => !option.part))
             fail(where, `the socket "${socket.name}" is required, so fills.${socket.name} must offer at least one part and no '${NO_PART}'.`);
         });
+      // A declared nested fill for a part's required socket may not offer 'none' either.
+      kind.fillFields.forEach(({ path, options }) => {
+        const cut = path.lastIndexOf(SOCKET_PATH_SEPARATOR);
+        if (cut < 0 || !options.some((option) => !option.part)) return;
+        const parentField = kind.fillFields.find((field) => field.path === path.slice(0, cut));
+        const requiredBy = parentField.options.find((option) => option.part && requiredSocketsOfPart[option.part].some((socket) => socket.name === path.slice(cut + 1)));
+        if (requiredBy) fail(where, `fills.${path} offers '${NO_PART}', but the part "${requiredBy.part}" marks that socket required.`);
+      });
+      kind.requiredTop = (plan.spec.sockets || []).filter((socket) => socket.required).map((socket) => socket.name);
       const keys = [
         ...dialIds.map((dialId) => `${KINDS.dial}${KEY_SEPARATOR}${dialId}`),
         ...colorIds.map((channel) => `${KINDS.color}${KEY_SEPARATOR}${channel}`),
@@ -464,6 +490,33 @@
       return individual;
     };
 
+    /**
+     * Fills every required socket left empty, at any depth: a roll or an override may put a part with a required
+     * socket somewhere no fill was declared for (a lantern needs its flame). The part is the seeded pick among
+     * the declared options for that path, else among every catalogue part that fits, so the result depends only
+     * on the seed and the overrides.
+     * @complexity O(filled sockets x required sockets of their parts); nothing at all when no part requires anything
+     */
+    const fillRequiredSockets = (kind, individual) => {
+      if (!anyPartRequires && !kind.requiredTop.length) return;
+      let added = false;
+      const ensure = (path, type) => {
+        if (!individual.fills[path]) {
+          const declared = kind.fillFields.find((field) => field.path === path);
+          const options = declared ? declared.options.filter((option) => option.part) : partsFitting(type).map((part) => ({ part, weight: 1 }));
+          const chosen = Kit.seeded.pick(options, seedUnit(individual.seed, fieldHash(`${KINDS.fill}${KEY_SEPARATOR}${path}`)));
+          if (!chosen) return;
+          individual.fills[path] = chosen.part;
+          added = true;
+        }
+        requiredSocketsOfPart[individual.fills[path]].forEach((socket) => ensure(`${path}${SOCKET_PATH_SEPARATOR}${socket.name}`, socket.type));
+      };
+      kind.requiredTop.forEach((name) => ensure(name, socketTypeAt(kind, {}, name)));
+      Object.keys(individual.fills).forEach((path) => requiredSocketsOfPart[individual.fills[path]].forEach((socket) => ensure(`${path}${SOCKET_PATH_SEPARATOR}${socket.name}`, socket.type)));
+      // Keep fills in canonical order (the hash walks them in order).
+      if (added) individual.fills = canonicalFills(kind, individual.fills);
+    };
+
     /** Shared by resolve, validate and normalize: checks the envelope, derives, applies overrides. */
     const build = (recipe, report) => {
       const blocked = (problem) => {
@@ -489,6 +542,7 @@
       const kind = kinds.get(recipe.species);
       const individual = derive(kind, recipe.seed);
       const overrides = recipe.overrides && Object.keys(recipe.overrides).length ? applyOverrides(kind, recipe.overrides, individual, report) : {};
+      fillRequiredSockets(kind, individual);
       return { kind, individual, overrides };
     };
 
