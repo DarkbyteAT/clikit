@@ -38,20 +38,29 @@
    * The level of detail to show a figure at.
    * @param {number} pixels the figure's height on the target, in target pixels (a pixel look's texels)
    * @param {string} [shown] the level it is shown at now; without it, the band the height falls in
+   * @param {string} [least] the coarsest level it may be given, however small it is drawn: `far` is made for a
+   *   crowd (a face of a few pixels, hair as a cap), so a character the player looks at asks for 'low' or better
    * @returns {string} a level of `DETAIL_BANDS`: `shown` while the height is inside its band or within
-   *   `HYSTERESIS` of it, else the band the height falls in
-   * @throws {Error} for a `shown` that is not a level
+   *   `HYSTERESIS` of it, else the band the height falls in; never coarser than `least`
+   * @throws {Error} for a `shown` or a `least` that is not a level
    * @complexity O(bands)
    * @example Kit.figure.detailFor(96) // 'low': a footballer on a phone pitch
    * @example Kit.figure.detailFor(160, 'low') // 'low' still: 150 is the edge, and 160 is within 16% of it
+   * @example Kit.figure.detailFor(40, undefined, 'low') // 'low': a keeper seen from the spot is small, and still a character
    */
-  const detailFor = (pixels, shown) => {
-    const wanted = DETAIL_BANDS.find((row) => pixels <= row.upTo).level;
+  const detailFor = (pixels, shown, least) => {
+    const orderOf = (level, name) => {
+      const at = DETAIL_BANDS.findIndex((row) => row.level === level);
+      if (at < 0) fail('detailFor', `no level "${level}" (\`${name}\`). Levels: ${DETAIL_BANDS.map((row) => row.level).join(', ')}.`);
+      return at;
+    };
+    const floor = least === undefined ? 0 : orderOf(least, 'least');
+    const wantedAt = Math.max(floor, DETAIL_BANDS.findIndex((row) => pixels <= row.upTo));
+    const wanted = DETAIL_BANDS[wantedAt].level;
     if (shown === undefined || shown === wanted) return wanted;
-    const at = DETAIL_BANDS.findIndex((row) => row.level === shown);
-    if (at < 0) fail('detailFor', `no level "${shown}". Levels: ${DETAIL_BANDS.map((row) => row.level).join(', ')}.`);
+    const at = orderOf(shown, 'shown');
     const lowerEdge = at > 0 ? DETAIL_BANDS[at - 1].upTo : 0;
-    const isNearBand = pixels > lowerEdge * (1 - HYSTERESIS) && pixels <= DETAIL_BANDS[at].upTo * (1 + HYSTERESIS);
+    const isNearBand = at >= floor && pixels > lowerEdge * (1 - HYSTERESIS) && pixels <= DETAIL_BANDS[at].upTo * (1 + HYSTERESIS);
     return isNearBand ? shown : wanted;
   };
 
