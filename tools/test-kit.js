@@ -2579,4 +2579,6 @@ for (const file of ['games/arena-data.js', 'games/arena-sim.js', 'games/arena-bo
     assert.strictEqual(placePanel({ left: 150, top: 700, bottom: 744, width: 90 }, panel, viewport).top, 592, 'flips above when there is no room below');
   });
 }
+// ---- Kit.body and the generic subsystems it is composed of ----
+require('./test-body.js')({ Kit, sandbox, test, assert });
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

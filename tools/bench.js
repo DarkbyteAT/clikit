@@ -26,7 +26,29 @@ const vm = require('vm');
 const ROOT = path.resolve(__dirname, '..');
 const BASELINE_FILE = path.join(__dirname, 'bench-baseline.json');
 /** Pure kit files the benchmarks need, in load order. */
-const KIT_FILES = ['core', 'model', 'flow', 'space', 'loot', 'net'];
+const KIT_FILES = [
+  'core',
+  'model',
+  'flow',
+  'space',
+  'loot',
+  'net',
+  'blend',
+  'lineage',
+  'flags',
+  'columns',
+  'seeded',
+  'pack',
+  'palette',
+  'rig',
+  'reach',
+  'dynamics',
+  'body-plan',
+  'body-parts',
+  'body-recipe',
+  'body-store',
+  'body-samples',
+];
 /** Timing: each sample runs the operation in batches for about this long; each benchmark takes ROUNDS rounds. */
 const SAMPLE_MS = 80;
 const ROUNDS = 7;
@@ -44,7 +66,15 @@ const SIZES = { gridSide: 32, wallChance: 0.2, linePoints: 200, statModifiers: 4
 /** Loads the pure kit modules into a sandbox, as tools/test-kit.js does. */
 const loadKit = () => {
   const stored = {};
-  const sandbox = { console, performance, setInterval, clearInterval, setTimeout, clearTimeout, localStorage: { getItem: (key) => stored[key] || null, setItem: (key, value) => (stored[key] = value) } };
+  const sandbox = {
+    console,
+    performance,
+    setInterval,
+    clearInterval,
+    setTimeout,
+    clearTimeout,
+    localStorage: { getItem: (key) => stored[key] || null, setItem: (key, value) => (stored[key] = value) },
+  };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   KIT_FILES.forEach((name) => vm.runInContext(fs.readFileSync(path.join(ROOT, 'kit', `${name}.js`), 'utf8'), sandbox, { filename: `${name}.js` }));
@@ -108,9 +138,20 @@ const BENCHMARKS = {
     cost: 'O(rarities + bases + affixes)',
     setup: (Kit) => {
       const loot = Kit.loot({
-        rarities: [{ id: 'common', name: 'Common', weight: 70, affixes: 0, mult: 1 }, { id: 'rare', name: 'Rare', weight: 25, affixes: 1, mult: 1.5 }, { id: 'epic', name: 'Epic', weight: 5, affixes: 2, mult: 2 }],
-        bases: [{ id: 'cleaver', name: 'Cleaver', slot: 'weapon', mods: { damage: { add: 4 } } }, { id: 'charm', name: 'Charm', slot: 'charm', mods: { speed: { mul: 1.1 } } }, { id: 'staff', name: 'Staff', slot: 'weapon', mods: { damage: { add: 2 } } }],
-        affixes: [{ id: 'vamp', prefix: 'Vampiric', mods: { leech: { add: 1 } }, slots: ['weapon'] }, { id: 'ember', suffix: 'of Embers', mods: { damage: { mul: 1.2 } } }],
+        rarities: [
+          { id: 'common', name: 'Common', weight: 70, affixes: 0, mult: 1 },
+          { id: 'rare', name: 'Rare', weight: 25, affixes: 1, mult: 1.5 },
+          { id: 'epic', name: 'Epic', weight: 5, affixes: 2, mult: 2 },
+        ],
+        bases: [
+          { id: 'cleaver', name: 'Cleaver', slot: 'weapon', mods: { damage: { add: 4 } } },
+          { id: 'charm', name: 'Charm', slot: 'charm', mods: { speed: { mul: 1.1 } } },
+          { id: 'staff', name: 'Staff', slot: 'weapon', mods: { damage: { add: 2 } } },
+        ],
+        affixes: [
+          { id: 'vamp', prefix: 'Vampiric', mods: { leech: { add: 1 } }, slots: ['weapon'] },
+          { id: 'ember', suffix: 'of Embers', mods: { damage: { mul: 1.2 } } },
+        ],
         rng: Kit.rng(SIZES.seed),
       });
       return () => loot.roll({ level: 3 });
@@ -143,6 +184,46 @@ const BENCHMARKS = {
         stats.mod('source-0', { damage: { add: (bonus = (bonus + 1) % SIZES.statModifiers) } });
         return stats.get('damage');
       };
+    },
+  },
+  'body.resolve': {
+    about: 'one body recipe rolled from a species table and resolved (every dial, colour and socket fill); tools/bench-body.js reports it in ns and bytes',
+    cost: 'O(fields of the species)',
+    setup: (Kit) => {
+      const catalog = Kit.body.catalog(Kit.body.samples.CATALOG);
+      const table = catalog.table([{ species: 'human' }, { species: 'hound' }, { species: 'carp' }]);
+      let index = 0;
+      return () => catalog.resolve(table.roll(SIZES.seed, index++));
+    },
+  },
+  'body.pose': {
+    about: 'one 18-bone biped posed: copy the rest pose, swing four limbs, one forward-kinematics pass',
+    cost: 'O(bones)',
+    setup: (Kit) => {
+      const plan = Kit.body.catalog(Kit.body.samples.CATALOG).plans.biped;
+      const rest = Kit.body.createPose(plan);
+      const pose = Kit.body.createPose(plan);
+      const world = Kit.body.createPose(plan);
+      const limbs = ['thighLeft', 'thighRight', 'upperArmLeft', 'upperArmRight'].map((name) => plan.boneIndex(name));
+      let phase = 0;
+      return () => {
+        phase += 0.1;
+        Kit.rig.copy(rest, pose);
+        limbs.forEach((bone, index) => Kit.rig.turn(pose.rotation, rest.rotation, bone, 0, Math.sin(phase + index)));
+        return Kit.body.worldTransforms(plan, pose, world, phase, 0, 0, phase);
+      };
+    },
+  },
+  'reach.twoBone': {
+    about: 'one two-bone inverse-kinematics solve with joint limits (a leg of the same biped)',
+    cost: 'O(1)',
+    setup: (Kit) => {
+      const plan = Kit.body.catalog(Kit.body.samples.CATALOG).plans.biped;
+      const pose = Kit.body.createPose(plan);
+      const world = Kit.body.worldTransforms(plan, pose, Kit.body.createPose(plan));
+      const [hip, knee, ankle] = ['thighLeft', 'shinLeft', 'footLeft'].map((name) => plan.boneIndex(name));
+      let phase = 0;
+      return () => Kit.reach.twoBone(plan.parent, pose, world, hip, knee, ankle, 0.1, 0.2 + 0.1 * Math.sin((phase += 0.1)), 0.2, 0.1, 0.5, 2, plan.jointLimits);
     },
   },
 };
@@ -237,14 +318,20 @@ function main() {
     const { verdict, change } = judge(scores[name], baseline.scores[name]);
     if (verdict === 'SLOWER') slower.push(name);
     const versus = verdict === 'new' ? 'no baseline' : `${change >= 0 ? '+' : ''}${Math.round(change * 100)}% vs baseline`;
-    console.log(`  ${name.padEnd(16)} ${Math.round(opsPerSecond).toLocaleString('en').padStart(13)} ops/s  rel ${scores[name].toFixed(4)}  ${verdict.padEnd(6)} ${versus.padEnd(22)} ${BENCHMARKS[name].cost}  - ${BENCHMARKS[name].about}`);
+    console.log(
+      `  ${name.padEnd(16)} ${Math.round(opsPerSecond).toLocaleString('en').padStart(13)} ops/s  rel ${scores[name].toFixed(4)}  ${verdict.padEnd(6)} ${versus.padEnd(22)} ${BENCHMARKS[name].cost}  - ${BENCHMARKS[name].about}`
+    );
   });
   if (args.includes('--save')) {
     const entry = { savedOn: runtime, note: 'relative scores (ops/s divided by the calibration loop of the same run)', scores: { ...baseline.scores, ...scores } };
     fs.writeFileSync(BASELINE_FILE, JSON.stringify({ ...saved, [runtimeName]: entry }, null, 2) + '\n');
     console.log(`${runtimeName} baseline saved to ${path.relative(ROOT, BASELINE_FILE)}`);
   }
-  console.log(slower.length ? `REGRESSION: ${slower.join(', ')} more than ${TOLERANCE * 100}% slower than the baseline. Re-run once to rule out machine noise, then look at the change.` : 'no regression against the baseline');
+  console.log(
+    slower.length
+      ? `REGRESSION: ${slower.join(', ')} more than ${TOLERANCE * 100}% slower than the baseline. Re-run once to rule out machine noise, then look at the change.`
+      : 'no regression against the baseline'
+  );
   process.exit(slower.length && args.includes('--strict') ? 1 : 0);
 }
 

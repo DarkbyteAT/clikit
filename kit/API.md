@@ -56,6 +56,23 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [touch.js](#touchjs) (6) - Kit touch: the pure models behind finger-skill moments.
 - [pixel.js](#pixeljs) (9) - Kit pixel: pixel-paper sprites.
 - [dev.js](#devjs) (5) - Kit dev: what a developer sees that a player never does.
+- [lineage.js](#lineagejs) (1) - Kit lineage: definitions that inherit.
+- [flags.js](#flagsjs) (1) - Kit flags: a set of up to 32 named yes/no facts packed into one number, and "does this thing have everything that needs?" answered by one AN
+- [columns.js](#columnsjs) (1) - Kit columns: many small records as typed-array columns (a struct of arrays) with slots that are reused through a free list, so a population 
+- [seeded.js](#seededjs) (7) - Kit seeded: values that depend only on (seed, field name), not on how many values were read before them.
+- [pack.js](#packjs) (4) - Kit pack: small records as bytes, and bytes as text.
+- [palette.js](#palettejs) (4) - Kit palette: colour ramps as data.
+- [rig.js](#rigjs) (9) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
+- [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
+- [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
+- [body-plan.js](#body-planjs) (0) - Kit body plan: the skeleton of any kind of thing (a biped, a fish, a sword) compiled from data into flat typed arrays: a joint hierarchy, ty
+- [body-parts.js](#body-partsjs) (0) - Kit body parts: things that plug into sockets.
+- [body-recipe.js](#body-recipejs) (0) - Kit body recipe: an individual as three small things, `{ species, seed, overrides }`, and everything needed to turn that into a body and bac
+- [body-edit.js](#body-editjs) (0) - Kit body edit: everything a character editor needs from a catalogue, with no editor in it.
+- [body-store.js](#body-storejs) (0) - Kit body store: many body instances as columns - where each is, which way it faces, how far through its movement cycle it is, how much detai
+- [body-samples.js](#body-samplesjs) (0) - Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a one-bone sword with grip and gem soc
+- [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
+- [body-gallery.js](#body-galleryjs) (0) - Kit body gallery: the `bodies` screen (`Kit.play('bodies')`).
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -4307,7 +4324,7 @@ const lives = ui.pips('Lives', { total: 3 }); lives.set(2); lives.pulse();
 
 A full-height scrollable sheet for inventories, skill trees and shops.
 
-- `spec` *{title: string, build: function(HTMLElement, function(\*=): void): void, closeLabel?: string}* - `build(body, close)` fills `body` with your own elements; call `close(value)` to dismiss
+- `spec` *{title: string, build: (body: HTMLElement, close: (value?: any) =\> void) =\> void, closeLabel?: string}* - `build(body, close)` fills `body` with your own elements; call `close(value)` to dismiss
 
 **Returns** *Promise\<\*\>* the value passed to close (undefined from the Close button)
 
@@ -5706,6 +5723,1327 @@ Opens the overlay when it is closed and closes it when it is open.
   - `triangles` *number* - most triangles in one frame
   - `meshes` *number* - visible meshes, points, lines and sprites in the scene at the end
 
+## lineage.js
+
+> Kit lineage: definitions that inherit. A node names a parent and holds only what it changes (archetype ->
+> species -> variant -> individual); traits are named mix-ins a node pulls in; limits are ranges a node imposes on
+> itself and everything below it. `resolve(id)` folds the chain root-first into one frozen definition.
+>
+> Owns:  `Kit.lineage(spec)` - the fold (parent, then the node's traits in declared order, then the node's own
+>        `set`), trait-conflict detection on the paths declared exclusive, limit inheritance and enforcement,
+>        memoisation, and errors that name the node, the path and the fix.
+> Does not own: what the definitions mean. It knows nothing about bodies (kit/body-recipe.js gives the values a
+>        shape), items or enemies; any table of "kinds of thing" with shared ancestry can use it.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.lineage({ nodes, traits = {}, exclusive = [] })`
+
+Builds a lineage over a table of nodes. Nothing is resolved until asked for; a mistake in a node is reported
+when that node (or one below it) is first resolved, and `ids().forEach(resolve)` checks the whole table.
+
+- `spec` *LineageSpec*
+
+**Returns** *Lineage*
+
+**Complexity** `resolve` is O(depth x overrides) the first time for a chain and O(1) after; memory is O(nodes resolved x overrides) because unchanged subtrees are shared with the parent's definition
+
+```js
+const kinds = Kit.lineage({
+  nodes: {
+    creature: { set: { size: 1 } },
+    elf: { parent: 'creature', traits: ['keenEyed'], set: { size: 0.9 }, limits: { size: { min: 0.7, max: 1.1 } } },
+    woodElf: { parent: 'elf', set: { size: 0.8 } },
+  },
+  traits: { keenEyed: { set: { sight: 12 } } },
+});
+kinds.resolve('woodElf').values   // { size: 0.8, sight: 12 }, frozen
+```
+
+#### `Kit.lineage().resolve(id)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.lineage().has(id)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.lineage().ids()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.lineage().childrenOf(id)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.lineage().resolveCount()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### Types
+
+- **LineageRange**
+  - `[min]` *number* - smallest value allowed (default: no lower bound)
+  - `[max]` *number* - largest value allowed (default: no upper bound)
+- **LineageNode**
+  - `[parent]` *string* - id of the node this one inherits from; omitted for a root (an archetype)
+  - `[traits]` *string[]* - trait names, merged in this order after the parent and before `set`
+  - `[set]` *Object* - sparse overrides: plain objects merge key by key; numbers, strings, booleans, null and arrays replace what was inherited. Keys may not contain '.'.
+  - `[limits]` *Object\<string, LineageRange\>* - path -> range, enforced on every number at or under that path in this node and in every node below it. A descendant may narrow a limit, never widen it.
+- **LineageTrait**
+  - `set` *Object* - sparse overrides, same merge rules as `LineageNode.set`
+- **LineageSpec**
+  - `nodes` *Object\<string, LineageNode\>* - every node by id
+  - `[traits]` *Object\<string, LineageTrait\>* - every trait by name
+  - `[exclusive]` *string[]* - paths whose direct children are slots only one trait of a node may write: with `['fills']`, two traits of one node that both write under `fills.back` are an error at resolve time. Everywhere else the later trait wins. The node's own `set` always wins and never conflicts.
+- **ResolvedDefinition**
+  - `id` *string* - the node resolved
+  - `chain` *string[]* - ids from the root to this node
+  - `values` *Object* - the folded definition, deeply frozen (shared with ancestors where unchanged)
+  - `limits` *Object\<string, {min: number, max: number, minOwner: string, maxOwner: string}\>* - the limits in force here: each path's tightest bounds and the node that owns each
+- **Lineage**
+  - `resolve` *function(string): ResolvedDefinition* - fold a node's chain; memoised, so the second call for an id (or for a child of an already resolved parent) does no merging of the shared part
+  - `has` *function(string): boolean* - is this a known node id?
+  - `ids` *function(): string[]* - every node id, in declaration order
+  - `childrenOf` *function(string): string[]* - ids of the nodes whose parent is this id
+  - `resolveCount` *function(): number* - how many folds have actually run (cache misses); for tests and benches
+
+## flags.js
+
+> Kit flags: a set of up to 32 named yes/no facts packed into one number, and "does this thing have everything
+> that needs?" answered by one AND and compare, with a failure that names what is missing.
+>
+> Owns:  `Kit.flags(names, label)` - name <-> bit, `mask`, `namesOf`, and requirements (`requirement`, `fits`,
+>        `missing`): a required mask plus optional minimum counts per flag.
+> Does not own: what the flags mean. `Kit.body` uses one set for bone roles and one for capabilities; collision
+>        layers, unlock sets, damage types or status effects fit the same shape. (`Kit.physics.layers` in
+>        kit/bodies.js keeps its own name -> bit table because it also writes cannon.js bodies; it could be
+>        rebuilt on this.)
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.flags(names, label = 'flag')`
+
+Makes a set of named flags.
+
+- `names` *string[]* - the flags, in bit order; at most 32, no repeats
+- `[label='flag']` *string* - what one of these is called in error messages ('role', 'capability')
+
+**Returns** *FlagSet*
+
+**Complexity** `bit` and `mask` are O(names given x flags); `fits` is O(1) for the mask plus O(counted flags); `namesOf` and `missing` are O(flags). `fits` allocates nothing.
+
+```js
+const abilities = Kit.flags(['legs', 'wings', 'tail'], 'ability');
+const WALK = abilities.requirement({ atLeast: { legs: 2 } });
+abilities.fits(abilities.mask(['wings', 'tail']), [0, 2, 5], WALK)      // false
+abilities.missing(abilities.mask(['wings', 'tail']), [0, 2, 5], WALK)   // ['legs']
+```
+
+### Types
+
+- **FlagRequirementSpec**
+  - `[needs]` *string[]* - flags that must be set
+  - `[atLeast]` *Object\<string, number\>* - flag -> smallest count that will do ({ legs: 4 }); a flag listed here is needed even when `needs` leaves it out
+- **FlagRequirement**
+  - `mask` *number* - bits that must all be set
+  - `countBits` *Uint8Array* - bits that have a minimum count
+  - `minimums` *Uint8Array* - the minimum for each entry of `countBits`
+- **FlagSet**
+  - `names` *ReadonlyArray\<string\>* - bit index -> name
+  - `bit` *function(string): number* - name -> bit index (0..31); throws naming the known flags
+  - `mask` *function(string[]): number* - names -> unsigned 32-bit mask
+  - `namesOf` *function(number): string[]* - mask -> the names set in it, in bit order
+  - `requirement` *function(FlagRequirementSpec=): FlagRequirement* - compile what a consumer needs, once
+  - `fits` *function(number, ArrayLike\<number\>, FlagRequirement): boolean* - fits(mask, counts, requirement): is every needed bit set and every counted flag numerous enough? `counts` is indexed by bit (pass an empty list when nothing is counted)
+  - `missing` *function(number, ArrayLike\<number\>, FlagRequirement): string[]* - what is lacking, in words: 'legs', or 'legs (has 2, needs 4)'; empty when it fits
+
+## columns.js
+
+> Kit columns: many small records as typed-array columns (a struct of arrays) with slots that are reused through
+> a free list, so a population that churns allocates nothing after the store is made.
+>
+> Owns:  `Kit.columns(capacity, schema)` - the columns, `spawn` / `despawn`, generations (is this old handle
+>        still the same record?) and the live range to loop over.
+> Does not own: what the columns mean. `Kit.body.store` (kit/body-store.js) is this with a body schema; bullets,
+>        particles with long lives, pickups or network ghosts fit the same shape. For short-lived things that
+>        die in the order they were born, `Kit.slotRing` (kit/core.js) is simpler; for pooled objects rather
+>        than columns, `Kit.pool`.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.columns(capacity, schema)`
+
+Makes a column store. Every column is allocated here, once.
+
+- `capacity` *number* - a positive whole number of records
+- `schema` *Object\<string, any\>* - column name -> typed-array constructor, e.g. { x: Float32Array, kind: Uint8Array }
+
+**Returns** *ColumnStore & Object\<string, any\>*
+
+**Complexity** `spawn` is O(columns); `despawn`, `isCurrent`, `count` and `liveEnd` are O(1) (despawning the highest slot walks down past dead slots under it, each visited once per time it is freed); `clear` is O(capacity). Space is the columns plus 7 bytes a slot. Nothing allocates after creation.
+
+```js
+const shots = Kit.columns(256, { x: Float32Array, y: Float32Array, damage: Uint8Array });
+const slot = shots.spawn();
+if (slot >= 0) shots.x[slot] = 3;
+for (let each = 0; each < shots.liveEnd(); each++) if (shots.alive[each]) shots.y[each] += dt;
+```
+
+### Types
+
+- **ColumnStore** - The returned object also carries one typed array per schema entry, under the schema's names.
+  - `capacity` *number* - most records it can hold
+  - `alive` *Uint8Array* - 1 when the slot holds a record
+  - `generation` *Uint16Array* - bumped every time a slot is freed, so a kept (slot, generation) pair can be checked
+  - `spawn` *function(): number* - claims a slot, zeroes its columns and returns it; -1 when the store is full
+  - `despawn` *function(number): boolean* - frees a slot; false (and nothing changes) when it was not live
+  - `isCurrent` *function(number, number): boolean* - isCurrent(slot, generation): is the slot live and still the record that had this generation?
+  - `count` *function(): number* - live records
+  - `liveEnd` *function(): number* - one past the highest live slot: loop `slot < liveEnd()` and skip `!alive[slot]`
+  - `clear` *function(): void* - frees every slot
+
+## seeded.js
+
+> Kit seeded: values that depend only on (seed, field name), not on how many values were read before them. Where
+> `Kit.rng` (kit/loot.js) is a stream - the third number depends on the first two having been drawn - this is a
+> lookup: add a field to a record next month and every old seed keeps its old value for every old field.
+>
+> Owns:  `Kit.seeded.hashText` (a stable 32-bit id for a name), `bits` / `unit` (the counter-based hash),
+>        `SHAPES` and `field` (a named, shaped draw), `pick` (a weighted row for a unit) and `hasher` (a 53-bit
+>        content hash of a list of whole numbers, for cache keys).
+> Does not own: sequences of random numbers (`Kit.rng`), what the fields mean (kit/body-recipe.js derives body
+>        recipes with it; generated items, levels, names or daily challenges fit the same shape), or security:
+>        these hashes are for variety and cache keys, never for secrets.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.seeded.hashText(text)`
+
+The stable 32-bit id of a name (FNV-1a). The same text gives the same number on every machine, forever, so
+it can key a derivation and name a field in saved data. Renaming the text changes the id.
+
+- `text` *string* - e.g. 'dial:legLength'
+
+**Returns** *number* unsigned 32-bit, never 0 (so 0 is free to mean "none")
+
+**Complexity** O(characters)
+
+```js
+Kit.seeded.hashText('dial:legLength')
+```
+
+### `Kit.seeded.bits(seed, fieldId, counter = 0)`
+
+32 well-mixed bits for (seed, field, counter).
+
+- `seed` *number* - unsigned 32-bit
+- `fieldId` *number* - from `hashText`
+- `[counter=0]` *number* - for several independent draws of one field, or the index of a row in a generated list
+
+**Returns** *number* unsigned 32-bit
+
+**Complexity** O(1), no allocation
+
+```js
+const childSeed = Kit.seeded.bits(worldSeed, Kit.seeded.hashText('villager'), index);
+```
+
+### `Kit.seeded.unit(seed, fieldId, counter = 0)`
+
+A number in [0, 1) for (seed, field, counter): the counter-based replacement for "the next random number".
+
+- `seed` *number* - unsigned 32-bit
+- `fieldId` *number* - from `hashText`
+- `[counter=0]` *number*
+
+**Returns** *number* in [0, 1)
+
+**Complexity** O(1), no allocation
+
+```js
+const height = Kit.math.lerp(0.9, 1.2, Kit.seeded.unit(seed, Kit.seeded.hashText('height')));
+```
+
+### `Kit.seeded.SHAPES`
+
+How a draw is spread over [0, 1), name -> (seed, field id) -> number. `uniform`: every value equally likely.
+`bell`: the mean of two draws, so the middle is common and the extremes rare. Adding a spread means adding a row.
+
+### `Kit.seeded.field(name, shape = 'uniform')`
+
+A named field of a seeded record: a function from a seed to that field's draw, with the name hashed once.
+
+- `name` *string* - the field's stable name
+- `[shape='uniform']` *string* - a `SHAPES` name
+
+**Returns** *function(number): number* seed -> a number in [0, 1); it also carries `id` (the field's hash) and `field` (its name)
+
+**Complexity** building is O(characters); each draw is O(1) with no allocation
+
+```js
+const drawHeight = Kit.seeded.field('height', 'bell');
+drawHeight(42) === drawHeight(42)   // true, whatever other fields exist
+```
+
+### `Kit.seeded.pick(rows, unitValue, weightOf = weightOfRow)`
+
+The weighted row for a unit number: `Kit.math.pickWeighted` driven by a hash instead of a random source.
+
+- `rows` *T[]*
+- `unitValue` *number* - in [0, 1), e.g. from `unit` or a `field`
+- `[weightOf]` *function(T): number* - defaults to `row.weight`
+
+**Returns** *T* undefined when `rows` is empty
+
+**Complexity** O(rows) time, no allocation
+
+```js
+Kit.seeded.pick(ENEMIES, Kit.seeded.unit(seed, Kit.seeded.hashText('enemy'), wave))
+```
+
+### `Kit.seeded.hasher()`
+
+A content hash built up one whole number at a time: absorb the same numbers in the same order and get the
+same result. Make one, keep it, and `reset` it for each thing hashed.
+
+**Returns** *{reset: function(): void, absorb: function(number): void, value: function(): number}* `value` is a whole number below 2^53 (two independent 32-bit lanes, 53 bits kept): expect one false match in about 10^15 pairs, which suits a cache key and nothing security-related
+
+**Complexity** `absorb` and `value` are O(1) with no allocation
+
+```js
+const hasher = Kit.seeded.hasher();
+hasher.reset(); [3, 1, 4].forEach(hasher.absorb); const key = hasher.value();
+```
+
+#### `Kit.seeded.hasher().reset()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seeded.hasher().absorb(value)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seeded.hasher().value()`
+
+_Undocumented: add a JSDoc block in the source._
+
+## pack.js
+
+> Kit pack: small records as bytes, and bytes as text. A writer appends bytes, variable-length whole numbers,
+> 32-bit numbers and short text; a reader takes them back in the same order and names what went wrong when the
+> data is damaged; `toText` / `fromText` turn bytes into a URL-safe code a person can paste.
+>
+> Owns:  `Kit.pack.writer()`, `Kit.pack.reader(bytes, label)`, `Kit.pack.toText(bytes)`, `Kit.pack.fromText(text)`.
+> Does not own: what a record contains or its version byte (kit/body-recipe.js packs body recipes with it;
+>        share codes for levels, loadouts or replays fit the same shape), compression, or checksums.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.pack.writer()`
+
+Starts a packed record.
+
+**Returns** *PackWriter* each method returns the writer, so calls chain
+
+**Complexity** each append is O(1) amortised (`text` is O(characters)); `bytes` is O(length)
+
+```js
+const bytes = Kit.pack.writer().byte(1).varint(300).uint32(seed).text('gem').bytes();
+```
+
+#### `Kit.pack.writer().byte(value)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.writer().varint(value)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.writer().uint32(value)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.writer().text(value)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.writer().bytes()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.pack.reader(bytes, label = 'Kit.pack.reader')`
+
+Reads a packed record back, in the order it was written.
+
+- `bytes` *ArrayLike\<number\>* - what a writer produced
+- `[label='Kit.pack.reader']` *string* - who is reading, for error messages
+
+**Returns** *PackReader*
+
+**Complexity** each read is O(1) (`text` is O(characters)), no allocation except the text
+
+```js
+const reader = Kit.pack.reader(bytes); const version = reader.byte(), count = reader.varint();
+```
+
+#### `Kit.pack.reader().byte()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.reader().varint()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.reader().uint32()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.reader().text()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.pack.reader().isDone()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.pack.toText(bytes)`
+
+Bytes as a short URL-safe code (base64url without padding): 4 characters for every 3 bytes.
+
+- `bytes` *ArrayLike\<number\>*
+
+**Returns** *string* letters, digits, '-' and '_' only
+
+**Complexity** O(bytes) time and space
+
+```js
+Kit.pack.toText(Uint8Array.of(1, 2, 3)) // 'AQID'
+```
+
+### `Kit.pack.fromText(text)`
+
+A code made by `toText` back into bytes.
+
+- `text` *string*
+
+**Returns** *Uint8Array*
+
+**Complexity** O(characters) time and space
+
+```js
+Kit.pack.fromText('AQID') // Uint8Array [1, 2, 3]
+```
+
+### Types
+
+- **PackWriter**
+  - `byte` *function(number): PackWriter* - append a whole number from 0 to 255
+  - `varint` *function(number): PackWriter* - append a whole number from 0 to 2^32 - 1 in 1 to 5 bytes (small numbers are short)
+  - `uint32` *function(number): PackWriter* - append an unsigned 32-bit number, low byte first
+  - `text` *function(string): PackWriter* - append a varint length and one byte per character (characters above 255 are refused)
+  - `bytes` *function(): Uint8Array* - everything appended so far
+- **PackReader**
+  - `byte` *function(): number* - the next byte
+  - `varint` *function(): number* - the next variable-length whole number
+  - `uint32` *function(): number* - the next unsigned 32-bit number
+  - `text` *function(): string* - the next length-prefixed text
+  - `isDone` *function(): boolean* - has everything been read?
+
+## palette.js
+
+> Kit palette: colour ramps as data. A ramp is a short ordered list of shades of one colour, dark to light, with
+> the hue drifting a little along the way (shadows cooler, highlights warmer), which is what makes flat-shaded,
+> toon and pixel art read as lit instead of as one colour with grey mixed in. A renderer picks a shade by how
+> lit a surface is; a character stores only which ramp it uses.
+>
+> Owns:  `Kit.palette.ramp` (build a ramp from a hue), `Kit.palette.shade` (the shade of a ramp for a light
+>        level) and `Kit.palette.toCss`.
+> Does not own: blending two colours or rows (`Kit.blend`, whose `hsl` this is built on), a game's interface
+>        colours (`Kit.theme`), or which ramps exist (a catalogue's `palettes` table, kit/body-recipe.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.palette.RAMP_DEFAULTS`
+
+Defaults of a generated ramp: five shades from deep shadow to highlight, the hue drifting 4% of the wheel.
+
+### `Kit.palette.toCss(color)`
+
+A colour number as CSS text.
+
+- `color` *number* - 0xRRGGBB
+
+**Returns** *string* '#rrggbb'
+
+```js
+Kit.palette.toCss(0xff8800) // '#ff8800'
+```
+
+### `Kit.palette.ramp(id, hue, options = {})`
+
+Builds a ramp from a hue: evenly spaced lightness from `darkest` to `lightest`, the hue moving by `hueShift`
+across the ramp (negative at the dark end, positive at the light end) and the saturation easing off towards
+the highlights.
+
+- `id` *string* - name for the ramp
+- `hue` *number* - 0..1 around the colour wheel
+- `[options]` *{saturation?: number, shades?: number, hueShift?: number, darkest?: number, lightest?: number}* - defaults: saturation 0.55, 5 shades, hue shift 0.04, lightness from 0.2 to 0.82
+
+**Returns** *Ramp*
+
+**Complexity** O(shades) time and space
+
+```js
+Kit.palette.ramp('moss', 0.3).shades // five greens, dark to light
+```
+
+### `Kit.palette.shade(colorRamp, light)`
+
+The shade of a ramp for a light level: the banding step of a toon or pixel shader, as data.
+
+- `colorRamp` *Ramp*
+- `light` *number* - 0 (unlit) to 1 (fully lit); values outside are clamped
+
+**Returns** *string* one of the ramp's shades
+
+**Complexity** O(1)
+
+```js
+Kit.palette.shade(skinRamp, 0.5) // the middle shade
+```
+
+### Types
+
+- **Ramp**
+  - `id` *string* - name of the ramp ('umber', 'teal')
+  - `shades` *string[]* - CSS colours, darkest first
+
+## rig.js
+
+> Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform
+> relative to its parent into a transform in the world (forward kinematics). It knows nothing about bodies: a
+> rig is a `parents` array (each joint's parent index, parents before children) plus a set of transforms.
+>
+> Owns:  `Kit.rig.create` / `copy` (transform sets), `worldTransforms` (the forward pass, whole or a range),
+>        `turn` (set one joint's rotation from a base and an angle), `carryPoint` (a joint-space point into
+>        the world) and the small quaternion helpers the solvers share (`shortestArc`, `turnWorld`).
+> Does not own: what the joints are (kit/body-plan.js compiles body plans into this shape; a crane, a rope, a
+>        solar system or a UI tree of nested panels fit it too), inverse kinematics (kit/reach.js), or motion
+>        over time (kit/dynamics.js).
+>
+> Conventions: +Y up, +Z forward, +X left (right-handed); rotations are unit quaternions stored x, y, z, w.
+>
+> The transform model (DECISIONS.md, "Kit.body: transforms"): a joint has a translation, a rotation, a
+> three-axis `scale` that stretches its own content (its children's offsets, points carried on it) but is NOT
+> inherited, and a one-number `uniform` scale that IS inherited by its whole subtree. Nothing ever shears.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.rig.VECTOR_STRIDE`
+
+Floats per joint in each transform array.
+
+### `Kit.rig.QUATERNION_W`
+
+Where a quaternion's scalar part sits after its x, y, z.
+
+### `Kit.rig.create(count)`
+
+Allocates a transform set for `count` joints, all at the identity (no offset, no turn, scale 1).
+
+- `count` *number*
+
+**Returns** *JointTransforms*
+
+**Complexity** O(count) time and space
+
+```js
+const local = Kit.rig.create(3), world = Kit.rig.create(3);
+```
+
+### `Kit.rig.copy(from, out)`
+
+Copies one transform set over another of the same size, without allocating.
+
+- `from` *JointTransforms*
+- `out` *JointTransforms*
+
+**Returns** *JointTransforms* `out`
+
+**Complexity** O(joints) time, no allocation
+
+```js
+Kit.rig.copy(restPose, pose);
+```
+
+### `Kit.rig.turn(rotation, base, joint, axis, radians)`
+
+Sets a joint's rotation to a base rotation turned by an angle about one of the joint's own axes: the
+one-line building block of a procedural pose ("swing this hip forward").
+
+- `rotation` *Float32Array* - the rotations to write, 4 per joint
+- `base` *Float32Array* - the rotations to turn from, 4 per joint (usually the rest pose's)
+- `joint` *number* - joint index
+- `axis` *number* - 0 = x (pitch: swings forward and back), 1 = y (yaw), 2 = z (roll: swings sideways)
+- `radians` *number*
+
+**Returns** *void*
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.rig.turn(pose.rotation, rest.rotation, hip, 0, Math.sin(phase) * 0.6);
+```
+
+### `Kit.rig.worldTransforms(parents, local, out, originX = 0, originY = 0, originZ = 0, heading = 0, firstJoint = 0, endJoint = parents.length)`
+
+Forward kinematics: turns local transforms into world transforms in one pass. Parents come before children,
+so there is no recursion; with an `out` allocated once there is no allocation.
+
+- `parents` *Int16Array\|number[]* - joint index -> parent joint index, -1 for a root; every parent has a lower index
+- `local` *JointTransforms* - each joint relative to its parent
+- `out` *JointTransforms* - receives the world transforms; must not be `local`
+- `[originX=0]` *number* - where the roots stand, world units
+- `[originY=0]` *number*
+- `[originZ=0]` *number*
+- `[heading=0]` *number* - radians about +Y applied to the roots; 0 faces +Z
+- `[firstJoint=0]` *number* - refresh only the joints from this index...
+- `[endJoint=parents.length]` *number* - ...up to but not including this one. A partial range that contains a root needs the same origin and heading as the full pass.
+
+**Returns** *JointTransforms* `out`
+
+**Complexity** O(joints in the range) time (about 60 multiplications a joint), no allocation, no recursion
+
+```js
+const world = Kit.rig.create(parents.length);                       // once
+Kit.rig.worldTransforms(parents, local, world, x, 0, z, heading);     // per frame, per instance
+```
+
+### `Kit.rig.carryPoint(world, joint, points, pointAt, out, outAt = 0)`
+
+Carries a point given in a joint's own space into the world: stretched by the joint's scale, turned by its
+rotation, moved to its position. Sockets, bone ends and attachment points are all this.
+
+- `world` *JointTransforms* - the `out` of `worldTransforms`
+- `joint` *number* - joint index
+- `points` *ArrayLike\<number\>* - joint-space points, 3 numbers each
+- `pointAt` *number* - index in `points` of the point's x
+- `out` *Float32Array\|number[]* - receives x, y, z
+- `[outAt=0]` *number* - index in `out` to write at
+
+**Returns** *Float32Array\|number[]* `out`
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.rig.carryPoint(world, hand, GRIP_OFFSET, 0, point);
+```
+
+### `Kit.rig.shortestArc(fromX, fromY, fromZ, toX, toY, toZ, out)`
+
+The smallest rotation that turns one direction onto another, as a quaternion.
+
+- `fromX` *number* - the direction to turn from (any length but zero)
+- `fromY` *number*
+- `fromZ` *number*
+- `toX` *number* - the direction to turn to (any length but zero)
+- `toY` *number*
+- `toZ` *number*
+- `out` *Float32Array\|number[]* - receives x, y, z, w; the identity when either direction has no length
+
+**Returns** *Float32Array\|number[]* `out`
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.rig.shortestArc(0, 1, 0, 1, 0, 0, quaternion);   // a quarter turn from up to left
+```
+
+### `Kit.rig.turnWorld(parents, local, world, joint, turnBy)`
+
+Turns a joint by a rotation given in world space, writing the joint's LOCAL rotation (so the change survives
+the next forward pass) and its world rotation. Children are not refreshed: run `worldTransforms` over the
+joints that hang from it.
+
+- `parents` *Int16Array\|number[]*
+- `local` *JointTransforms*
+- `world` *JointTransforms* - current world transforms of the joint and its parent
+- `joint` *number* - joint index
+- `turnBy` *ArrayLike\<number\>* - a world-space quaternion x, y, z, w (e.g. from `shortestArc`)
+
+**Returns** *void*
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.rig.turnWorld(parents, local, world, elbow, Kit.rig.shortestArc(0, -1, 0, 0, 0, 1, quaternion));
+```
+
+### Types
+
+- **JointTransforms** - One set of per-joint transforms.
+  - `translation` *Float32Array* - 3 per joint
+  - `rotation` *Float32Array* - 4 per joint: x, y, z, w
+  - `scale` *Float32Array* - 3 per joint
+  - `uniform` *Float32Array* - 1 per joint
+
+## reach.js
+
+> Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint
+> rotations. An exact two-bone solver with a bend hint (arms, legs), a chain solver for any number of bones
+> (spines, tails, tentacles, cranes), and the two steps they are built from, usable alone: aim a joint along a
+> direction, and clamp a joint to its limits.
+>
+> Owns:  `Kit.reach.twoBone`, `Kit.reach.chain` (FABRIK), `Kit.reach.follow` (make a chain of joints pass through
+>        given points: the bridge from any point simulation, such as a `Kit.dynamics` chain, back to rotations),
+>        `Kit.reach.aim` and `Kit.reach.clamp`.
+> Does not own: the hierarchy or the forward pass (kit/rig.js), where targets come from (locomotion, input), or
+>        bodies: every function takes a `parents` array, transform sets and joint indices, nothing else.
+>
+> Every solver keeps `world` up to date for the joints of the chain it was given and for nothing else: after
+> solving, run `Kit.rig.worldTransforms` over whatever hangs from the chain (or over everything).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.reach.CHAIN_DEFAULTS`
+
+Tunables of the chain solver.
+
+### `Kit.reach.MOST_CHAIN_JOINTS`
+
+The longest chain the solver's scratch buffers hold.
+
+### `Kit.reach.clamp(local, joint, limits)`
+
+Clamps a joint's local rotation to its limits: the rotation is taken apart into turns about the joint's own
+x, y and z axes relative to the base rotation, each turn is clamped, and the rotation is put back together.
+A rotation already inside its limits is left exactly as it was.
+
+- `local` *Object* - the local `JointTransforms` to correct
+- `joint` *number* - joint index
+- `limits` *JointLimits*
+
+**Returns** *boolean* true when the rotation had to be changed
+
+**Complexity** O(1), no allocation
+
+```js
+if (Kit.reach.clamp(pose, knee, plan.jointLimits)) refreshWhatHangsFromIt();
+```
+
+### `Kit.reach.aim(parents, local, world, joint, child, towardX, towardY, towardZ, limits)`
+
+Turns a joint by the smallest rotation that swings its child from where it is to a wanted point, clamps the
+joint to its limits when given, and refreshes the child's world transform. This is one step of every solver.
+
+- `parents` *Int16Array\|number[]*
+- `local` *Object* - local `JointTransforms`; the joint's rotation is written
+- `world` *Object* - world `JointTransforms`; the joint's and the child's entries are refreshed
+- `joint` *number* - the joint to turn (must have a parent)
+- `child` *number* - a direct child of `joint`: the thing being pointed
+- `towardX` *number* - where the child should lie, world units (only the direction from the joint matters)
+- `towardY` *number*
+- `towardZ` *number*
+- `[limits]` *JointLimits*
+
+**Returns** *void*
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.reach.aim(parents, pose, world, neck, head, prey.x, prey.y, prey.z, limits);   // look at it
+```
+
+### `Kit.reach.follow(parents, local, world, joints, points, limits)`
+
+Makes a chain of joints pass through given points, as nearly as bone lengths and limits allow: each joint
+in turn is aimed so its child lies towards the next point. This is how positions become rotations - the
+last step of the chain solver, and the way to drive bones from a rope or tail simulation.
+
+- `parents` *Int16Array\|number[]*
+- `local` *Object* - local `JointTransforms`; the rotations of every joint but the last are written
+- `world` *Object* - world `JointTransforms`, current on entry for the first joint; refreshed for the chain
+- `joints` *ArrayLike\<number\>* - joint indices from the base outwards; each must be the parent of the next
+- `points` *ArrayLike\<number\>* - 3 numbers per chain joint, world units; the first is ignored (a base does not move)
+- `[limits]` *JointLimits*
+
+**Returns** *void*
+
+**Complexity** O(joints) time, no allocation
+
+```js
+Kit.reach.follow(plan.parent, pose, world, tailBones, rope.positions);
+```
+
+### `Kit.reach.twoBone(parents, local, world, upper, middle, end, targetX, targetY, targetZ, hintX, hintY, hintZ, limits)`
+
+Exact inverse kinematics for a limb of two bones: places the end joint on the target with the middle joint
+(the knee, the elbow) bent towards a hint point. A target out of reach leaves the limb straight towards it;
+a target too close folds it as far as it goes. Limits, when given, are applied to both joints after the
+solve, so a limb whose limits forbid the exact answer stops at its limit short of the target.
+
+- `parents` *Int16Array\|number[]*
+- `local` *Object* - local `JointTransforms`; the rotations of `upper` and `middle` are written
+- `world` *Object* - world `JointTransforms`, current on entry; refreshed for the three joints
+- `upper` *number* - the joint at the body (hip, shoulder); must have a parent
+- `middle` *number* - its child (knee, elbow)
+- `end` *number* - the middle joint's child (ankle, wrist): the point that reaches
+- `targetX` *number* - where the end should be, world units
+- `targetY` *number*
+- `targetZ` *number*
+- `hintX` *number* - a point the middle joint should bend towards (in front of a knee, behind an elbow)
+- `hintY` *number*
+- `hintZ` *number*
+- `[limits]` *JointLimits*
+
+**Returns** *boolean* true when the target was within the limb's reach (limits aside)
+
+**Complexity** O(1) time (two square roots, no trigonometry beyond the limit clamp), no allocation, no iteration
+
+```js
+Kit.reach.twoBone(plan.parent, pose, world, hip, knee, ankle, foot.x, 0, foot.z, foot.x, 0.5, foot.z + 1, plan.jointLimits);
+```
+
+### `Kit.reach.chain(parents, local, world, joints, targetX, targetY, targetZ, options = CHAIN_DEFAULTS)`
+
+Inverse kinematics for a chain of any length by FABRIK (forward and backward reaching): joint positions are
+dragged to the target from the tip and back to the base along the bone lengths until the tip arrives, then
+turned into joint rotations with `follow`. A target beyond the chain's length is answered at once with the
+chain straight towards it. Limits, when given, are applied as the rotations are written, so a tightly
+limited chain may stop short (see DECISIONS.md, "Kit.reach: chain solver").
+
+- `parents` *Int16Array\|number[]*
+- `local` *Object* - local `JointTransforms`; the rotations of every chain joint but the last are written
+- `world` *Object* - world `JointTransforms`, current on entry; refreshed for the chain
+- `joints` *ArrayLike\<number\>* - joint indices from the base outwards, each the parent of the next; 2 to 64
+- `targetX` *number* - where the last joint should be, world units
+- `targetY` *number*
+- `targetZ` *number*
+- `[options]` *{iterations?: number, tolerance?: number, limits?: JointLimits}* - most passes (default 12), how close counts as arrived in world units (default 0.001), joint limits
+
+**Returns** *number* how far the last joint ended from the target, world units
+
+**Complexity** O(iterations x joints) time, no allocation. It typically arrives within the tolerance in 3 to 8 passes; a nearly straight chain converges slowest, which the pass limit bounds.
+
+```js
+const miss = Kit.reach.chain(plan.parent, pose, world, tailBones, lure.x, lure.y, lure.z, { limits: plan.jointLimits });
+```
+
+### Types
+
+- **JointLimits** - How far each joint may turn from a base rotation, about its own x, then y, then z axis.
+  - `min` *ArrayLike\<number\>* - 3 per joint: lowest turn about x, y, z, radians
+  - `max` *ArrayLike\<number\>* - 3 per joint: highest turn about x, y, z, radians
+  - `base` *ArrayLike\<number\>* - 4 per joint: the rotation the limits are measured from (the rest pose's)
+
+## dynamics.js
+
+> Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a
+> target with weight: body bob, lean, a camera, a bar that overshoots) and a chain of points held together by
+> fixed lengths (a tail, a rope, hair, a cape's edge). Both advance on a fixed clock inside, so the result is
+> the same at 20 frames a second as at 60.
+>
+> Owns:  `Kit.dynamics.FIXED_STEP`, `stepsDue` (the fixed-step accumulator), `criticalDamping`, `spring` /
+>        `stepSpring`, `chain` / `placeChain` / `stepChain`.
+> Does not own: rigid bodies, collisions or constraints between bodies (kit/physics.js wraps cannon.js for
+>        those, with its own accumulator at 1/60 s), smoothing without momentum (`Kit.math.damp`), or what the
+>        numbers drive: nothing here knows about bodies or rendering. To turn a chain's points into joint
+>        rotations use `Kit.reach.follow`.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.dynamics.FIXED_STEP`
+
+Seconds per simulation step. 120 Hz keeps a stiff spring stable and divides evenly into 60 and 30 fps frames.
+
+### `Kit.dynamics.MOST_STEPS_PER_UPDATE`
+
+Most steps taken in one update (0.1 s of simulation). A longer frame slows the simulation instead of spiralling.
+
+### `Kit.dynamics.stepsDue(carrier, dt)`
+
+How many fixed steps are due after `dt` more seconds, for anything that must simulate on a fixed clock.
+The remainder is kept in `carrier.carry` for the next call, so no time is lost between frames.
+
+- `carrier` *{carry: number}* - any object with a numeric `carry` (seconds not yet simulated)
+- `dt` *number* - seconds since the last call
+
+**Returns** *number* whole steps to run now, 0 to 12; time beyond 12 steps is dropped
+
+**Complexity** O(1), no allocation
+
+```js
+for (let step = Kit.dynamics.stepsDue(world, dt); step > 0; step--) simulate(Kit.dynamics.FIXED_STEP);
+```
+
+### `Kit.dynamics.criticalDamping(stiffness, mass = 1)`
+
+The damping that settles a spring fastest without overshoot.
+
+- `stiffness` *number* - spring constant (force per unit of stretch)
+- `[mass=1]` *number*
+
+**Returns** *number* damping coefficient (force per unit of speed): 2 x sqrt(stiffness x mass)
+
+**Complexity** O(1)
+
+```js
+Kit.dynamics.spring({ stiffness: 200, damping: 0.4 * Kit.dynamics.criticalDamping(200) })   // bouncy
+```
+
+### `Kit.dynamics.spring({ value = 0, velocity = 0, target = value, stiffness = SPRING_DEFAULTS.stiffness, mass = SPRING_DEFAULTS.mass, damping = criticalDamping(stiffness, mass) } = {})`
+
+Makes a damped spring: one number with momentum. For a point in space use one spring per axis.
+
+- `[options]` *{value?: number, velocity?: number, target?: number, stiffness?: number, damping?: number, mass?: number}* - starts at rest at `value` (default 0) with `target` = value; stiffness defaults to 120, mass to 1 and damping to critical for those
+
+**Returns** *Spring*
+
+**Complexity** O(1)
+
+```js
+const bob = Kit.dynamics.spring({ stiffness: 180 });
+bob.target = footIsDown ? -0.04 : 0;
+hipHeight += Kit.dynamics.stepSpring(bob, dt);
+```
+
+### `Kit.dynamics.stepSpring(state, dt)`
+
+Advances a spring by `dt` seconds in fixed steps (semi-implicit Euler: velocity first, then position, which
+keeps energy bounded where the plain method gains it).
+
+- `state` *Spring*
+- `dt` *number* - seconds since the last call, any frame rate
+
+**Returns** *number* the spring's new value
+
+**Complexity** O(dt / FIXED_STEP) time, at most 12 steps; no allocation
+
+```js
+sprite.y = Kit.dynamics.stepSpring(bounce, dt);
+```
+
+### `Kit.dynamics.chain({ count, lengths, gravity = CHAIN_DEFAULTS.gravity, drag = CHAIN_DEFAULTS.drag, stiffness = CHAIN_DEFAULTS.stiffness, iterations = CHAIN_DEFAULTS.iterations })`
+
+Makes a chain of points joined by links of fixed length, hanging from an anchor: Verlet integration (each
+point's velocity is implied by where it was a step ago) with position-based length constraints.
+
+- `options` *{count: number, lengths: (number\|ArrayLike\<number\>), gravity?: ReadonlyArray\<number\>, drag?: number, stiffness?: number, iterations?: number}* - `count` points (2 or more); `lengths` one number for every link or a list of count - 1; gravity defaults to [0, -9.8, 0], drag to 3, stiffness to 0, iterations to 4
+
+**Returns** *PointChain* laid out straight down from the origin; call `placeChain` to put it where it belongs
+
+**Complexity** O(count) time and space
+
+```js
+const tail = Kit.dynamics.chain({ count: 4, lengths: 0.2, stiffness: 8 });
+Kit.dynamics.placeChain(tail, hip.x, hip.y, hip.z, 0, 0, -1);
+```
+
+### `Kit.dynamics.placeChain(state, anchorX, anchorY, anchorZ, directionX, directionY, directionZ)`
+
+Lays a chain out straight from an anchor along a direction and stops it dead: use it when the chain is
+made, and whenever its owner teleports.
+
+- `state` *PointChain*
+- `anchorX` *number* - where point 0 goes, world units
+- `anchorY` *number*
+- `anchorZ` *number*
+- `directionX` *number* - which way the chain runs from the anchor (any length but zero)
+- `directionY` *number*
+- `directionZ` *number*
+
+**Returns** *PointChain* `state`
+
+**Complexity** O(count) time, no allocation
+
+```js
+Kit.dynamics.placeChain(tail, hip.x, hip.y, hip.z, 0, 0, -1);
+```
+
+### `Kit.dynamics.stepChain(state, dt, anchorX, anchorY, anchorZ, directionX = 0, directionY = 0, directionZ = 0)`
+
+Advances a chain by `dt` seconds in fixed steps, dragging point 0 to a new anchor. The anchor is moved
+there in equal parts across the steps of this call, so a low frame rate does not turn into a yank.
+
+- `state` *PointChain*
+- `dt` *number* - seconds since the last call, any frame rate
+- `anchorX` *number* - where point 0 is now, world units
+- `anchorY` *number*
+- `anchorZ` *number*
+- `[directionX=0]` *number* - which way the first link should point when `stiffness` is above 0 (the direction of whatever the chain grows from); all zeros leaves the first link free
+- `[directionY=0]` *number*
+- `[directionZ=0]` *number*
+
+**Returns** *Float32Array* `state.positions`
+
+**Complexity** O(steps x iterations x count) time, at most 12 steps; no allocation
+
+```js
+Kit.dynamics.stepChain(tail, dt, hip.x, hip.y, hip.z, 0, 0, -1);
+Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // points -> bone rotations
+```
+
+### Types
+
+- **Spring** - Plain state; change `target` (and `stiffness`, `damping`) whenever you like.
+  - `value` *number* - where the spring is now
+  - `velocity` *number* - units per second
+  - `target` *number* - where it is pulled to
+  - `stiffness` *number* - force per unit of stretch
+  - `damping` *number* - force per unit of speed
+  - `mass` *number*
+  - `carry` *number* - seconds not yet simulated (owned by `stepSpring`)
+- **PointChain**
+  - `count` *number* - points in the chain; point 0 is pinned to the anchor
+  - `positions` *Float32Array* - 3 per point, world units: read these after `stepChain`
+  - `previous` *Float32Array* - 3 per point: where each point was one step ago (its velocity, in effect)
+  - `lengths` *Float32Array* - 1 per link: the fixed distance between point i and point i + 1
+  - `gravity` *number[]* - acceleration, world units per second squared
+  - `drag` *number* - how fast motion dies away, per second (0 = never)
+  - `stiffness` *number* - how strongly each link straightens towards the one before it, per second (0 = limp rope)
+  - `iterations` *number* - constraint passes per step: more keeps the lengths tighter under fast motion
+  - `carry` *number* - seconds not yet simulated (owned by `stepChain`)
+
+## body-plan.js
+
+> Kit body plan: the skeleton of any kind of thing (a biped, a fish, a sword) compiled from data into flat typed
+> arrays: a joint hierarchy, typed sockets on its bones, role tags, a capability mask that consumers match
+> against, the physical facts of each bone, a shape and a paint channel for renderers, and proportion dials
+> that reshape it. This is the lowest body-specific rung; it is a composition of generic pieces.
+>
+> Owns:  `Kit.body.plan` (compile a plan), the `ROLES` / `CAPABILITIES` / `JOINTS` / `SHAPES` / `CHANNELS`
+>        tables, `requirement` / `fits` / `missing` / `requireFit` (can this plan do what a consumer needs?),
+>        `bonesWithRoles` / `chains` / `groupOf` (find and group bones by role), `createPose` / `copyRest` /
+>        `worldTransforms` / `socketPosition` / `tailPosition` / `lowestY` (a plan's view of `Kit.rig`),
+>        `boneLength` / `boneMasses` / `centerOfMass` (physical quantities that follow the proportions),
+>        `dials` / `applyDials` (proportions) and `socketType` (type ids).
+> Does not own: the transform pass itself (kit/rig.js: `plan.parent` and a pose are all it needs), inverse
+>        kinematics (kit/reach.js, with `plan.jointLimits`), springs and chains (kit/dynamics.js), bitmask
+>        matching (kit/flags.js), attaching parts (kit/body-parts.js), recipes and species (kit/body-recipe.js),
+>        instances (kit/body-store.js), or anything that moves or draws a body.
+>
+> Conventions: units are metres and kilograms, +Y is up, +Z is the way the body faces, +X is the body's left.
+> A pose is a `JointTransforms` of kit/rig.js; see that file for the transform model (a per-bone three-axis
+> scale that is not inherited, plus an inherited one-number size).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### Types
+
+- **BoneSpec**
+  - `name` *string* - unique within the plan; may not contain '.' (and should not contain '/', which `Kit.body.assemble` uses to prefix the bones of attached parts)
+  - `[parent]` *string* - name of the parent bone; omitted for a root
+  - `[at]` *number[]* - [x, y, z] of the joint in the parent bone's space, metres (default [0, 0, 0])
+  - `[turn]` *number[]* - rest rotation as [x, y, z] degrees, applied X then Y then Z (default none)
+  - `[tail]` *number[]* - [x, y, z] where the bone ends, in its own space; gives a leaf bone (a head, a blade) an extent to draw and a long axis (default: no extent)
+  - `[roles]` *string[]* - role names from `Kit.body.ROLES`
+  - `[axis]` *('x'\|'y'\|'z')* - the bone's long axis, which the `length` dial stretches (default: the largest component of `tail`, else of its first child's `at`, else 'y')
+  - `[girth]` *number* - rest thickness in metres (default 0.06)
+  - `[mass]` *number* - rest mass in kilograms (default: plan density x the cylinder of its length and girth)
+  - `[joint]` *('ball'\|'hinge'\|'fixed'\|'free')* - how the bone may turn, a `JOINTS` name (default 'ball')
+  - `[limits]` *number[][]* - [[minX, maxX], [minY, maxY], [minZ, maxZ]] in degrees from the rest rotation, about the bone's own axes (default: the joint type's)
+  - `[stiffness]` *number* - spring hint: squared natural frequency, 1/s^2 (default 120)
+  - `[damping]` *number* - spring hint: damping ratio, 1 = critical (default 1)
+  - `[shape]` *Object* - what a renderer draws for the bone: { kind, ...fields } per `Kit.body.SHAPES` (default: a capsule of the bone's length and girth)
+  - `[paint]` *string* - the colour channel the bone is painted with ('skin', 'cloth'); a renderer looks the channel up in the individual's colours
+- **SocketSpec**
+  - `name` *string* - unique within the plan; may not contain '.' (nor '/', which separates the steps of a nested socket path such as 'handRight/gem')
+  - `bone` *string* - name of the bone the socket rides on
+  - `type` *string* - what fits here ('grip', 'headTop'); a part lists the types it fits
+  - `[at]` *number[]* - [x, y, z] offset in the bone's space, metres (default [0, 0, 0])
+  - `[label]` *string* - what an editor calls it (default: worked out from the name)
+  - `[required]` *boolean* - true when the socket may not be left empty
+- **BodyPlanSpec**
+  - `id` *string* - name of the plan, for error messages
+  - `bones` *BoneSpec[]* - in any order; `Kit.body.plan` puts parents before children
+  - `[sockets]` *SocketSpec[]*
+  - `[capabilities]` *string[]* - declared capabilities (rows of `CAPABILITIES` without a role, such as 'hover'); the role-derived ones are worked out and must not be listed
+  - `[density]` *number* - kilograms per cubic metre, for bones that state no `mass` (default 1000)
+  - `[filled]` *Object\<string, string\>* - socket name -> part id, written by `Kit.body.assemble`
+- **BodyPlan**
+  - `id` *string*
+  - `spec` *BodyPlanSpec* - the data it was compiled from, so a plan can be extended and recompiled
+  - `boneCount` *number*
+  - `boneNames` *string[]* - bone index -> name; parents always come before their children
+  - `parent` *Int16Array* - bone index -> parent bone index, -1 for a root
+  - `restTranslation` *Float32Array* - 3 per bone: joint position in the parent's space
+  - `restRotation` *Float32Array* - 4 per bone: x, y, z, w
+  - `restScale` *Float32Array* - 3 per bone: all ones (dials write a pose, never the plan)
+  - `restUniform` *Float32Array* - 1 per bone: all ones
+  - `tail` *Float32Array* - 3 per bone: the bone's end in its own space (zeros when it has no extent)
+  - `girth` *Float32Array* - 1 per bone: rest thickness, metres
+  - `axis` *Uint8Array* - 1 per bone: long axis, 0 = x, 1 = y, 2 = z
+  - `subtreeEnd` *Int16Array* - 1 per bone: one past the last bone of its subtree (a subtree is one run of indices)
+  - `length` *Float32Array* - 1 per bone: rest length in metres (its tail, else the offset of its first child, else 0)
+  - `mass` *Float32Array* - 1 per bone: rest mass in kilograms
+  - `joint` *Uint8Array* - 1 per bone: a `JOINTS` id
+  - `limitMin` *Float32Array* - 3 per bone: lowest turn about x, y, z from rest, radians
+  - `limitMax` *Float32Array* - 3 per bone: highest turn about x, y, z from rest, radians
+  - `stiffness` *Float32Array* - 1 per bone: spring hint, 1/s^2
+  - `damping` *Float32Array* - 1 per bone: spring hint, damping ratio
+  - `jointLimits` *{min: Float32Array, max: Float32Array, base: Float32Array}* - the limits in the shape `Kit.reach` takes: `limitMin`, `limitMax` and the rest rotations they are measured from
+  - `shapes` *Array\<?Object\>* - 1 per bone: the bone's `shape` row, or null for the default capsule
+  - `paintChannels` *string[]* - the colour channels the bones name, in first-use order
+  - `bonePaint` *Uint8Array* - 1 per bone: 1 + index into `paintChannels`, or 0 for unpainted
+  - `roles` *Uint32Array* - 1 per bone: role bitmask
+  - `capabilities` *number* - capability bitmask (derived from roles, plus the declared ones)
+  - `counts` *Uint8Array* - capability bit -> how many (legs, tail segments...), 0 when absent
+  - `socketCount` *number*
+  - `socketNames` *string[]* - socket index -> name
+  - `socketBone` *Int16Array* - socket index -> bone index
+  - `socketOffset` *Float32Array* - 3 per socket: offset in the bone's space
+  - `socketType` *Uint16Array* - socket index -> type id (`Kit.body.socketType`)
+  - `filled` *Object\<string, string\>* - socket name -> id of the part attached there (empty for a bare plan)
+  - `boneIndex` *function(string): number* - name -> index; throws naming the known bones
+  - `socketIndex` *function(string): number* - name -> index; throws naming the known sockets
+  - `countOf` *function(string): number* - capability name -> count (0 when the plan lacks it)
+- **DialEffect**
+  - `[roles]` *string[]* - affect every bone carrying ALL of these roles (['leg', 'hind'])
+  - `[bones]` *string[]* - affect these bones by name; names the plan lacks are skipped, so one dial table can serve several plans
+  - `channel` *('length'\|'girth'\|'size')* - `length` stretches the bone along its long axis (moving what hangs off it), `girth` thickens it across, `size` scales the bone and everything below it
+  - `[amount=1]` *number* - how strongly the dial acts: the bone is multiplied by 1 + (value - 1) x amount
+- **DialRow**
+  - `id` *string* - name of the dial ('height', 'legLength')
+  - `min` *number* - smallest value; a dial is a multiplier, so 1 means "as the plan was drawn"
+  - `max` *number* - largest value
+  - `[default=1]` *number* - the value when nothing chooses one
+  - `affects` *DialEffect[]* - what the dial does
+  - `[label]` *string* - what an editor calls it (default: worked out from the id)
+  - `[group]` *string* - the editor group it is listed under (default: from the roles it affects)
+- **DialSet**
+  - `ids` *string[]* - dial index -> id
+  - `count` *number*
+  - `min` *Float32Array* - per dial
+  - `max` *Float32Array* - per dial
+  - `defaults` *Float32Array* - per dial
+  - `opDial` *Int16Array* - per operation: which dial
+  - `opBone` *Int16Array* - per operation: which bone
+  - `opChannel` *Uint8Array* - per operation: a `CHANNELS` value
+  - `opAmount` *Float32Array* - per operation
+  - `unused` *string[]* - ids of dials that touch no bone of this plan (often a misspelt role)
+  - `indexOf` *function(string): number* - id -> dial index; throws naming the known dials
+
+## body-parts.js
+
+> Kit body parts: things that plug into sockets. A part is a small body plan of its own (a hat, a sword, a pair
+> of wings, a gem) that says which socket types it fits and may expose sockets for further parts, so a gem sits
+> on a sword that sits in a hand. Props are parts; there is no second mechanism for them.
+>
+> Owns:  `Kit.body.part` (compile a part), `Kit.body.assemble` (plan + fills -> a new plan with the parts' bones
+>        and sockets appended, type-checked), `Kit.body.canAttach` and `Kit.body.openSockets`.
+> Does not own: the plan format, kinematics or capabilities (kit/body-plan.js: an assembled body IS a plan, so
+>        all of that works on it unchanged), nor which parts an individual wears (kit/body-recipe.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### Types
+
+- **PartSpec**
+  - `id` *string* - name of the part ('sword')
+  - `fits` *string[]* - socket types this part plugs into (['grip'])
+  - `[anchor]` *string* - name of one of the part's own sockets: the point of the part that sits on the host socket (a sword's grip). It is used up by attaching, so it is not a socket of the assembled body. Default: the part's origin.
+  - `bones` *Object[]* - the part's bones, as `BoneSpec` rows of kit/body-plan.js
+  - `[sockets]` *Object[]* - the part's own sockets, as `SocketSpec` rows; other parts attach here
+  - `[capabilities]` *string[]* - declared capabilities the part grants its wearer (such as 'hover')
+- **Part**
+  - `id` *string*
+  - `spec` *PartSpec* - the data it was compiled from
+  - `fits` *ReadonlyArray\<string\>* - socket type names it plugs into
+  - `fitTypes` *Uint16Array* - the same as type ids (`Kit.body.socketType`)
+  - `anchorPosition` *ReadonlyArray\<number\>* - [x, y, z] of the anchor in the part's own space at rest
+  - `plan` *Object* - the part alone as a `BodyPlan` (a sword lying on the ground poses and draws like a body)
+
+## body-recipe.js
+
+> Kit body recipe: an individual as three small things, `{ species, seed, overrides }`, and everything needed to
+> turn that into a body and back: a catalogue of species (a `Kit.lineage` whose definitions name a plan, dials,
+> colour channels and weighted socket fills), seed derivation, validation, a compact binary form, a canonical
+> hash, species tables that roll recipes, and a bake cache.
+>
+> Owns:  `Kit.body.catalog(spec)` and what it returns: `resolve` (recipe -> individual), `describe`, `validate`,
+>        `normalize`, `encode` / `decode`, `hash`, `table` (weighted species -> recipes) and `bakery` (individual
+>        -> assembled plan + proportioned rest pose, cached by hash).
+> Does not own: the inheritance fold (kit/lineage.js), the seed derivation and content hash (kit/seeded.js),
+>        the byte format's primitives (kit/pack.js), plans, dials and kinematics (kit/body-plan.js), attaching
+>        (kit/body-parts.js), instances (kit/body-store.js) or anything that moves or draws a body. This file
+>        is the composition of those: it gives their generic pieces the shape of a body.
+>
+> Every field's value is `Kit.seeded` hash(seed, field name), not the next number of a stream, so a field never
+> depends on how many fields were read before it: add a dial to a species next month and every existing seed
+> keeps its old values for every old field.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### Types
+
+- **Recipe**
+  - `species` *string* - id of a species of the catalogue (a node with a `code`)
+  - `seed` *number* - unsigned 32-bit whole number; every field not overridden is derived from it
+  - `[overrides]` *Object\<string, (number\|string\|null)\>* - field key -> value. 'dial:<id>' takes a number in the dial's range (clamped and snapped to its steps); 'color:<channel>' the index of a ramp in the channel's palette; 'fill:<socket path>' a part id, or null / 'none' for empty.
+- **Individual** - A recipe with every field worked out: what renderers, bakes and editors read.
+  - `species` *string*
+  - `seed` *number*
+  - `dials` *Float32Array* - one value per dial of the species, in `kind.dialIds` order
+  - `colors` *Uint8Array* - one ramp index per colour channel, in `kind.colorIds` order: an index into the channel's palette, never a colour, because the shaders downstream are palette-indexed
+  - `fills` *Object\<string, string\>* - socket path -> part id, filled sockets only, parents before children
+- **SpeciesDefinition** - The shape a catalogue expects of a lineage node's folded values (every key optional except on a species).
+  - `[code]` *number* - stable whole number that names the species in the binary form. A node with a code is a species and can be instantiated; a node without one is abstract (an archetype). Never reuse a code.
+  - `[plan]` *string* - id of a body plan of the catalogue
+  - `[dials]` *Object\<string, {min: number, max: number, default?: number, shape?: string, affects: Object[]}\>* - dial id -> a `DialRow` of kit/body-plan.js without its id, plus `shape` (a `Kit.seeded.SHAPES` name, default 'bell')
+  - `[colors]` *Object\<string, string\>* - colour channel -> the name of a palette of the catalogue ({ skin: 'skinTones' }); an individual stores which ramp of that palette it uses
+  - `[fills]` *Object\<string, Object\<string, number\>\>* - socket path -> { part id or 'none': weight }
+- **SpeciesKind** - A species compiled for fast derivation.
+  - `id` *string*
+  - `code` *number*
+  - `definition` *Object* - the folded `SpeciesDefinition` (frozen)
+  - `plan` *Object* - the bare `BodyPlan`
+  - `dialIds` *string[]*
+  - `dialRows` *Object[]* - `DialRow`s, for compiling against an assembled plan
+  - `dialMin` *number[]*
+  - `dialMax` *number[]*
+  - `unusedDials` *string[]* - dials that touch no bone of the bare plan
+  - `colorIds` *string[]*
+  - `paletteNames` *string[]* - per colour channel: the catalogue palette it draws from
+  - `palettes` *Object[][]* - per colour channel: that palette's ramps (`Ramp` rows of kit/palette.js)
+  - `fillPaths` *string[]* - declared socket paths, parents before children
+  - `fillFields` *Array\<{path: string, hash: number, options: Array\<{part: ?string, weight: number}\>}\>* - the declared fills compiled: the socket path, its field id and its weighted options
+  - `dialDraws` *Array\<function(number): number\>* - per dial: seed -> a number in [0, 1) (`Kit.seeded.field`)
+  - `colorDraws` *Array\<function(number): number\>* - per colour channel: seed -> a number in [0, 1)
+  - `keyByHash` *Map\<number, string\>* - field id -> override key, for decoding
+- **RecipeProblem**
+  - `code` *string* - one of 'unknown-species', 'abstract-species', 'bad-seed', 'bad-overrides', 'unknown-field', 'bad-value', 'out-of-range', 'bad-color', 'unknown-part', 'no-such-socket', 'part-does-not-fit', 'socket-required'
+  - `[field]` *string* - the override key at fault
+  - `message` *string* - what is wrong and how to fix it
+- **Bake** - Everything a renderer needs for one distinct look, built once and shared by every instance that has it.
+  - `hash` *number* - the canonical hash of the individual (the cache key)
+  - `species` *string*
+  - `plan` *Object* - the assembled `BodyPlan`: bare plan plus the parts worn
+  - `rest` *Object* - the proportioned rest pose (a `JointTransforms`); copy it, never write it
+  - `colors` *Readonly\<Object\<string, Object\>\>* - channel -> the `Ramp` the individual uses for it
+  - `boneRamp` *Int16Array* - 1 per bone of `plan`: the index in `ramps` of the ramp the bone is painted with, or -1 when the bone names no paint channel or the species has no such channel
+  - `ramps` *ReadonlyArray\<Object\>* - the individual's ramps, one per colour channel of the species
+  - `individual` *Individual*
+- **CatalogSpec**
+  - `plans` *Object\<string, Object\>* - plan id -> `BodyPlanSpec` without its id
+  - `[parts]` *Object\<string, Object\>* - part id -> `PartSpec` without its id
+  - `nodes` *Object\<string, Object\>* - lineage nodes (kit/lineage.js) whose `set` follows `SpeciesDefinition`
+  - `[traits]` *Object\<string, Object\>* - lineage traits; two traits of one node may not fill the same socket
+  - `[palettes]` *Object\<string, Object[]\>* - palette name -> its ramps, each { id, shades: [dark ... light] } (`Kit.palette.ramp` builds one from a hue)
+
+## body-edit.js
+
+> Kit body edit: everything a character editor needs from a catalogue, with no editor in it. A schema that
+> lists every dial, colour channel and socket of a recipe as data (so the editor's controls are generated, not
+> written), edits as pure functions from a recipe to a new recipe, and a report of what changed between two
+> bakes (so a renderer updates only that).
+>
+> Owns:  `Kit.body.editor(catalog)` and what it returns: `schema`, `setDial`, `setSocket`, `setColor`,
+>        `randomize`, `mirror` and `changes`.
+> Does not own: any interface (a creator screen builds its sliders and lists from `schema` with kit/ui/),
+>        validation rules, derivation or baking (kit/body-recipe.js: every edit goes through `normalize`, so an
+>        edit can only produce a recipe the catalogue accepts), or undo (`Kit.history` in kit/space.js holds
+>        recipes as they are plain data).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### Types
+
+- **DialControl**
+  - `key` *string* - the override key, 'dial:<id>'
+  - `id` *string*
+  - `label` *string*
+  - `group` *string* - 'head', 'arms', 'legs', 'wings', 'tail', 'fins' or 'body' (or the dial's own `group`)
+  - `min` *number*
+  - `max` *number*
+  - `step` *number* - the smallest change that makes a difference
+  - `default` *number*
+  - `value` *number* - the individual's current value
+  - `affects` *Array\<{channel: string, bones: string[]}\>* - what it scales: per channel, the bones of the bare plan
+  - `mirror` *?string* - the key of the dial that does the same on the other side, when there is one
+- **ColorControl**
+  - `key` *string* - the override key, 'color:<channel>'
+  - `id` *string* - the channel
+  - `label` *string*
+  - `palette` *string* - the catalogue palette the channel draws from
+  - `ramps` *Object[]* - the choices: `Ramp` rows { id, shades: [dark ... light] }
+  - `value` *number* - the index of the ramp the individual uses
+- **SocketControl**
+  - `key` *string* - the override key, 'fill:<path>'
+  - `path` *string*
+  - `label` *string*
+  - `group` *string* - from the roles of the bone the socket (or its outermost parent socket) rides on
+  - `type` *string* - the socket type
+  - `part` *?string* - what is in it now
+  - `options` *string[]* - ids of every catalogue part that fits
+  - `allowsEmpty` *boolean* - false for a required socket
+  - `mirror` *?string* - the key of the same socket on the other side, when there is one
+
+## body-store.js
+
+> Kit body store: many body instances as columns - where each is, which way it faces, how far through its
+> movement cycle it is, how much detail it deserves and which recipe it wears.
+>
+> Owns:  `Kit.body.store(capacity)`: the body schema over `Kit.columns`, a `spawn` that places the instance, and
+>        `assignDetail` (level of detail by distance from an eye).
+> Does not own: slots, the free list and generations (kit/columns.js), what a recipe index points at (the caller
+>        keeps the list of recipes or bakes), moving instances (locomotion writes the columns), posing or
+>        drawing them, or finding neighbours (`Kit.spatialHash`).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+## body-samples.js
+
+> Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a
+> one-bone sword with grip and gem sockets, a ruby, a hat, a pair of wings) and a small family of species over
+> them, all as data. They are the proof that one abstraction covers different shapes, the fixtures of the unit
+> tests and the bench, and a starting point to copy when writing a real catalogue.
+>
+> Owns:  `Kit.body.samples.PLANS`, `PARTS`, `PALETTES`, `NODES`, `TRAITS` and `CATALOG` (the five together,
+>        ready for `Kit.body.catalog`).
+> Does not own: any behaviour. There is no code here beyond freezing the tables.
+>
+> Conventions (kit/body-plan.js): metres, +Y up, +Z forward, +X the body's left. Every plan starts with a
+> `ground` bone at the origin, so a `size` dial on the root scales the whole body about the point it stands on.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+## body-debug.js
+
+> Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked. It exists so a
+> person can see that a plan, a pose, an attachment or a dial does what the numbers say, and as the smallest
+> possible example of a renderer: project the world transforms, draw the bones.
+>
+> Owns:  `Kit.body.debug.project` (orthographic projection of a world point for a view angle) and
+>        `Kit.body.debug.draw` (bones as lines, bone ends, joints, socket markers).
+> Does not own: real rendering (shapes, shading, palettes: the pixel and 3D renderers read the same plan and
+>        world transforms), the canvas or its size, or posing.
+>
+> Runs in node too: `draw` only calls the 2D-context methods listed in CONTEXT_METHODS, so a test passes a
+> recorder object instead of a canvas.
+
+### Types
+
+- **DebugView**
+  - `centerX` *number* - canvas x of the world origin's vertical axis, pixels
+  - `groundY` *number* - canvas y of world height 0, pixels
+  - `scale` *number* - pixels per metre
+  - `[turn=0]` *number* - radians the camera is turned about +Y: 0 looks at the body's front, a quarter turn looks at its side
+
+## body-gallery.js
+
+> Kit body gallery: the `bodies` screen (`Kit.play('bodies')`). Six cells, each a different thing made by the
+> same code: a biped, a winged variant, a quadruped, a fish, a sword on its own, and a stream of individuals
+> rolled from a species table. The biped's right arm reaches for a moving target by inverse kinematics and the
+> quadruped's tail follows a simulated chain, so the kinematics and dynamics rungs can be seen working.
+>
+> Owns:  the screen: its layout, what each cell shows, and the two demonstrations.
+> Does not own: anything it shows. Plans, parts and species are kit/body-samples.js; posing is `Kit.rig`,
+>        `Kit.reach` and `Kit.dynamics`; drawing is `Kit.body.debug`. It is a debug view, not a renderer.
+>
+> It is registered like a game (near the end of the menu), so the shell gives it a HUD, a back button and
+> clean-up, and the smoke and play tools reach it like any other.
+
 ## ui/gallery.js
 
 > Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
@@ -5715,8 +7053,8 @@ Opens the overlay when it is closed and closes it when it is open.
 >        pane really moved under a finger (useful on a real phone, where the automated touch test cannot go).
 > Does not own: the components (the files beside this one). A new component is added here in the same change.
 >
-> It is registered as a hidden game, so the shell gives it a HUD, a back button and clean-up, and
-> `bun tools/smoke.js gallery` plays it like any other.
+> It is registered like a game (last on the menu), so the shell gives it a HUD, a back button and clean-up, and
+> `bun tools/smoke.js gallery` and the play tools reach it like any other.
 
 ## shell.js
 

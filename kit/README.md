@@ -49,6 +49,42 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `net-claude.js` | the hosted page's transport for `Kit.net` (room + shared database); owned by the multiplayer agent |
 | `scrub.js` | `Kit.scrub`: drive a CSS animation from the game clock |
 
+### Generic subsystems behind `Kit.body` (pure; none knows about bodies)
+
+| File | Owns |
+|---|---|
+| `lineage.js` | `Kit.lineage`: definitions that inherit (parent chain, traits merged in order, limits enforced on everything below) |
+| `flags.js` | `Kit.flags`: up to 32 named flags in one number; requirements with counts; a failure names what is missing |
+| `columns.js` | `Kit.columns`: records as typed-array columns with a free list and generations |
+| `seeded.js` | `Kit.seeded`: values from (seed, field name), not a stream, so adding a field never re-rolls old ones; a 53-bit content hash |
+| `pack.js` | `Kit.pack`: records as bytes (varint, uint32, text) and bytes as a URL-safe code |
+| `palette.js` | `Kit.palette`: colour ramps (shades dark to light with a hue drift) as data |
+| `rig.js` | `Kit.rig`: a joint hierarchy as flat arrays and the one forward pass that places it in the world |
+| `reach.js` | `Kit.reach`: inverse kinematics over a rig (exact two-bone, FABRIK chain, aim, joint limits) |
+| `dynamics.js` | `Kit.dynamics`: a damped spring and a point chain on a fixed clock (the same at 20 and 60 fps) |
+
+### `Kit.body` (pure): a thing is a graph of typed sockets filled by parts, described by a small recipe
+
+| File | Owns |
+|---|---|
+| `body-plan.js` | `Kit.body.plan`: bones, sockets, roles, capabilities, joint limits, mass, shapes, paint channels; `dials` / `applyDials`; `requireFit` |
+| `body-parts.js` | `Kit.body.part` / `assemble`: parts plug into typed sockets and may expose their own; the result is an ordinary plan |
+| `body-recipe.js` | `Kit.body.catalog`: species over `Kit.lineage`; `resolve`, `validate`, `normalize`, `encode` / `decode`, `hash`, `table`, `bakery` |
+| `body-edit.js` | `Kit.body.editor`: a schema of every dial, colour and socket; pure edits; what changed between two bakes |
+| `body-store.js` | `Kit.body.store`: instances as columns (position, heading, phase, detail, recipe index) |
+| `body-samples.js` | `Kit.body.samples`: a biped, a quadruped, a fish, four parts and a family of species, as data |
+| `body-debug.js` | `Kit.body.debug`: a stick figure with socket markers on any 2D context (runs in node with a recorder) |
+| `body-gallery.js` | needs a browser. The `bodies` screen (`Kit.play('bodies')`) |
+
+```js
+const catalog = Kit.body.catalog(Kit.body.samples.CATALOG);          // plans + parts + palettes + species
+const recipe = catalog.table([{ species: 'human' }]).roll(worldSeed, 12);   // { species, seed, overrides }
+const bake = catalog.bakery().bakeRecipe(recipe);                     // assembled plan + proportioned rest pose, cached by look
+const pose = Kit.rig.copy(bake.rest, Kit.body.createPose(bake.plan)), world = Kit.body.createPose(bake.plan);
+Kit.body.worldTransforms(bake.plan, pose, world, x, 0, z, heading);   // one pass, no allocation
+Kit.pack.toText(catalog.encode(recipe));                              // an 8-character share code
+```
+
 ### Compositions (pure)
 
 | File | Owns |
@@ -131,6 +167,8 @@ core  model  meta  flow  lanes  scrub  span  blend  space  hash  music  place  p
 loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
 input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
+lineage  flags  columns  seeded  pack  palette  rig  reach  dynamics
+body-plan  body-parts  body-recipe  body-edit  body-store  body-samples  body-debug  body-gallery
 games/*.js  ui/gallery
 shell
 ui/menu
