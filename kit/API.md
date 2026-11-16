@@ -109,6 +109,13 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [creator-panels.js](#creator-panelsjs) (0) - Kit creator panels: the parts of the creator that are not generated from the schema.
 - [creator-theme.js](#creator-themejs) (0) - Kit creator theme: the character creator's own look, as a theme for `Kit.register`.
 - [creator.js](#creatorjs) (0) - Kit creator: the `creator` screen (`Kit.play('creator')`, "Character Maker" in the menu).
+- [flight.js](#flightjs) (8) - Kit flight: the flight of a spinning ball.
+- [slingshot.js](#slingshotjs) (3) - Kit slingshot: the pull-back-and-release aim gesture as numbers.
+- [netting.js](#nettingjs) (4) - Kit netting: a sheet of knots joined by cords (a goal net, a hammock, a banner, a trampoline), simulated as points held together by distance
+- [seat.js](#seatjs) (5) - Kit seat: fixed camera seats as rules, and the promises a seat makes about its picture.
+- [pixel-grid.js](#pixel-gridjs) (5) - Kit pixel grid: how fine a pixel-look picture should be, as a rule.
+- [paint.js](#paintjs) (6) - Kit paint: flat scenery painted by hand in the tones of a palette, as data.
+- [stadium.js](#stadiumjs) (8) - Kit stadium: a sports ground dressed from data.
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -602,6 +609,7 @@ Kit.register({ id: 'orbit', name: 'Orbit', theme: { skin: 'neon' }, create: (ctx
   - `update` *function(number, number): void* - called every frame with (dt, t) in game seconds
   - `[dispose]` *function(): void* - called when the game is left or restarted
   - `[debugState]` *function(): Object* - plain data describing the run right now (score, phase, positions); surfaced as `Kit.debug.state().state` to the developer overlay and to `node tools/dev.js play` predicates
+  - `[tools]` *Object\<string, \*\>* - handles for scripted playtests and measurements (jump to a level, fire an action without a finger, time a frame), reached as `Kit.debug.tools()`; never used by the game itself
 - **GameDefinition**
   - `id` *string* - unique id; also the save namespace and the smoke-test name
   - `name` *string* - title on the menu
@@ -3628,6 +3636,7 @@ _Undocumented: add a JSDoc block in the source._
   - `id` *?number* - pointerId of the gesture (other fingers are ignored until it ends)
   - `swiped` *boolean* - has this gesture already fired its swipe?
   - `moved` *number* - farthest the gesture has strayed from its start, pixels
+  - `time` *number* - when the browser saw the pointer at this position, `performance.now()` milliseconds (the event's own time)
 - **PointerEventInfo** - Payload of tap and drag events.
   - `phase` *'start'\|'move'\|'end'\|'tap'*
   - `x` *number* - position, pixels
@@ -3638,6 +3647,7 @@ _Undocumented: add a JSDoc block in the source._
   - `dy` *number* - movement since the previous event, pixels
   - `tx` *number* - total offset from the gesture's start, pixels
   - `ty` *number* - total offset from the gesture's start, pixels
+  - `time` *number* - when the browser saw the finger there, milliseconds on the `performance.now()` clock: the event's own time, not the handler's, so speed and flicks are measured rightly on a frame that ran late
 
 ## fx.js
 
@@ -5748,7 +5758,7 @@ Opens the overlay when it is closed and closes it when it is open.
   - `time` *number* - game seconds since the game started
   - `paused` *boolean*
   - `timeScale` *number*
-  - `modal` *?string* - title of the open modal, or null
+  - `modal` *?string* - title of the open modal or `ui.dialog` sheet, or null
   - `hud` *Object\<string, (number\|string)\>* - the stats row as label -> value
   - `actions` *string[]* - labels of the enabled bottom-bar buttons
   - `state` *?Object* - what the game's own `debugState()` returned, or null when it has none
@@ -10642,6 +10652,780 @@ const { left, right, top } = Kit.body.proof.sweep(bake, 'dive', 0);
 > stage element's box, so it follows the layout.
 >
 > Registered like a game, so the shell gives it a HUD, a back button and clean-up. It draws its own frame (`render`).
+
+## flight.js
+
+> Kit flight: the flight of a spinning ball. Gravity, air drag, the sideways force of spin (the Magnus effect:
+> what bends a curled shot), wind, bounces off the ground and off round bars (posts, rims, rails), all on a
+> fixed step, as plain numbers.
+>
+> Owns:  `Kit.flight.ball` (a ball's state), `Kit.flight.step` (advance it, reporting what it struck),
+>        `Kit.flight.trace` (the path a ball will take, for an aim preview or a headless rule),
+>        `Kit.flight.crossing` (where a step crossed a plane, for goal lines and nets), `Kit.flight.bar`
+>        (a round obstacle between two points) and the default air and ground (`AIR`, `GROUND`).
+> Does not own: rigid bodies that push each other (Kit.physics, on cannon.js), simple unspun arcs
+>        (`Kit.ballistics.trace`), what a bounce means in a game, or drawing.
+>
+> Why not cannon.js: a body there has no drag or lift, tunnels through a thin post at shot speed unless the
+> whole world is sub-stepped, and cannot be copied to ask "where would this shot go". One ball against a few
+> fixed bars is a dozen lines of exact maths, runs in node, and is the same code for the preview and the shot.
+>
+> Conventions: metres, seconds; +Y up. Spin is an angular velocity vector in radians per second (right-hand
+> rule), and the bend is `lift x (spin x velocity)`: spin about +Y bends a ball flying along -Z towards -X.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.flight.AIR`
+
+Air for a football: a 25 m/s shot loses about a tenth of its speed over 11 metres, and a hard side spin bends it about a metre.
+
+### `Kit.flight.GROUND`
+
+Short grass.
+
+### `Kit.flight.ball({ position, velocity, spin, radius = 0.11 } = {})`
+
+Makes a ball.
+
+- `[given]` *{position?: Vector, velocity?: Vector, spin?: Vector, radius?: number}* - radius defaults to 0.11 (a football)
+
+**Returns** *FlightBall*
+
+```js
+const ball = Kit.flight.ball({ position: { x: 0, y: 0.11, z: 0 }, velocity: { x: 2, y: 6, z: -22 }, spin: { x: 0, y: 40, z: 0 } });
+```
+
+### `Kit.flight.bar(id, from, to, radius, bounce = 0.6)`
+
+Makes a round bar (a capsule) for `step` to bounce the ball off.
+
+- `id` *string* - what a hit on it reports
+- `from` *Vector* - one end of its axis
+- `to` *Vector* - the other end
+- `radius` *number* - metres
+- `[bounce=0.6]` *number* - share of the speed into the bar that comes back out
+
+**Returns** *FlightBar*
+
+```js
+const leftPost = Kit.flight.bar('post', { x: -3.66, y: 0, z: 0 }, { x: -3.66, y: 2.44, z: 0 }, 0.06);
+```
+
+### `Kit.flight.step(state, dt, { air = AIR, ground = GROUND, bars = [] } = {})`
+
+Advances a ball by `dt` seconds, in as many equal sub-steps as keep it from skipping over a bar.
+The ball is changed in place.
+
+- `state` *FlightBall*
+- `dt` *number* - seconds, more than 0
+- `[world]` *{air?: FlightAir, ground?: ?FlightGround, bars?: FlightBar[]}* - `ground: null` for none
+
+**Returns** *FlightHit[]* what it struck during the step, in order (empty for free flight)
+
+**Complexity** O(substeps x bars), substeps = speed x dt / (radius / 2); allocates only when something is hit
+
+```js
+const hits = Kit.flight.step(ball, 1 / 60, { bars: [leftPost, rightPost, crossbar] });
+if (hits.some((hit) => hit.id === 'post')) playClang();
+```
+
+### `Kit.flight.trace(state, options = {})`
+
+The path a ball will take: its position after each step, until it stops, `stopWhen` says so or `maxSteps` pass.
+The ball given is not changed.
+
+- `state` *FlightBall*
+- `[options]` *{air?: FlightAir, ground?: ?FlightGround, bars?: FlightBar[], step?: number, maxSteps?: number, stopWhen?: function(FlightBall, FlightHit[], FlightBall): boolean}* - `stopWhen(now, hits, before)` is asked after every step; defaults: 1/120 s steps, 360 of them (three seconds)
+
+**Returns** *{points: Vector[], hits: FlightHit[], end: FlightBall}* `end`: the ball as it was when the trace stopped
+
+**Complexity** O(steps x the cost of `step`) time, O(steps) space
+
+```js
+const path = Kit.flight.trace(ball, { bars, stopWhen: (now) => now.position.z < goalLineZ });
+drawDots(path.points);
+```
+
+### `Kit.flight.copy(state)`
+
+A copy of a ball that can be flown without changing the original.
+
+- `state` *FlightBall*
+
+**Returns** *FlightBall*
+
+### `Kit.flight.crossing(before, after, axis, value)`
+
+Where the straight move from one point to another crossed a plane of constant x, y or z.
+
+- `before` *Vector* - where the move began
+- `after` *Vector* - where it ended
+- `axis` *('x'\|'y'\|'z')*
+- `value` *number* - the plane's place on that axis
+
+**Returns** *?Vector* the crossing point, or null when both ends are on the same side (a point on the plane counts as the far side)
+
+**Complexity** O(1)
+
+```js
+const over = Kit.flight.crossing(previous, ball.position, 'z', goalLineZ);   // null until the step that crosses the line
+```
+
+### Types
+
+- **Vector**
+- **FlightBall**
+  - `position` *Vector* - centre of the ball
+  - `velocity` *Vector* - metres per second
+  - `spin` *Vector* - angular velocity, radians per second
+  - `radius` *number* - metres
+  - `seconds` *number* - flight time so far
+  - `isResting` *boolean* - true once it lies still on the ground
+- **FlightAir**
+  - `gravity` *number* - metres per second squared, downwards
+  - `drag` *number* - per metre: the ball loses `drag x speed` of its speed each second
+  - `lift` *number* - how strongly spin bends the path: acceleration = lift x (spin x velocity)
+  - `spinDecay` *number* - share of the spin lost per second
+  - `wind` *Vector* - velocity of the air, metres per second
+- **FlightGround**
+  - `height` *number* - y of the surface
+  - `bounce` *number* - share of the vertical speed kept by a bounce, 0..1
+  - `grip` *number* - share of the sideways speed lost at each bounce, 0..1
+  - `roll` *number* - deceleration of a rolling ball, metres per second squared
+  - `settleSpeed` *number* - a bounce slower than this (m/s, vertical) becomes a roll
+- **FlightBar**
+  - `id` *string* - what a hit reports
+  - `from` *Vector* - one end of the axis
+  - `to` *Vector* - the other end (equal to `from` for a ball-shaped obstacle)
+  - `radius` *number* - metres
+  - `bounce` *number* - share of the speed into the bar that comes back out, 0..1
+- **FlightHit** - `speed`: metres per second into the surface
+
+## slingshot.js
+
+> Kit slingshot: the pull-back-and-release aim gesture as numbers. A finger goes down, drags back and lets go:
+> how far it was pulled is the power, the way it was pulled (mirrored) is the aim, and a quick sideways flick
+> in the last moment before release is a curve.
+>
+> Owns:  `Kit.slingshot.read` (a drag offset -> pull and angle), `Kit.slingshot.gesture` (one gesture over
+>        time: begin, move, release -> pull, angle and curve) and `DEFAULTS`.
+> Does not own: pointer events (`ctx.input.onDrag` feeds it), what pull, angle and curve mean in a game (a
+>        launch speed, a loft, a spin), the flight (`Kit.flight`, `Kit.ballistics`) or drawing the aim.
+>
+> Conventions: screen pixels, x to the right, y DOWN (as pointer events give them); times in milliseconds.
+> Angle 0 aims straight up the screen and grows to the right; pulling down and to the left aims to the right.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.slingshot.DEFAULTS`
+
+Sized for a thumb on a phone: 170 px is a comfortable pull, a tenth of a second is a deliberate flick.
+
+### `Kit.slingshot.read(dx, dy, options)`
+
+Reads a drag offset as an aim. Only a pull back (down the screen) counts: a drag up the screen is no pull.
+
+- `dx` *number* - pixels the finger is right of where it went down
+- `dy` *number* - pixels the finger is below where it went down
+- `[options]` *Partial\<SlingshotOptions\>*
+
+**Returns** *SlingshotAim*
+
+**Complexity** O(1)
+
+```js
+Kit.slingshot.read(-40, 120) // { pull: 0.74, angle: 0.32, isArmed: true }: pulled down-left, aims right
+```
+
+### `Kit.slingshot.gesture(options)`
+
+Follows one slingshot gesture at a time.
+
+- `[options]` *Partial\<SlingshotOptions\>*
+
+**Returns** *SlingshotGesture*
+
+**Complexity** move: O(1); release: O(samples kept), at most 32
+
+```js
+const sling = Kit.slingshot.gesture();
+input.onDrag(({ phase, x, y }) => {
+  if (phase === 'start') sling.begin(x, y, performance.now());
+  if (phase === 'move') sling.move(x, y, performance.now());
+  if (phase === 'end') launch(sling.release(performance.now()));   // { pull, angle, curve, isArmed }
+});
+```
+
+#### `Kit.slingshot.gesture().begin(x, y, ms)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().move(x, y, ms)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().aim()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().release(ms = last() ? last().ms : 0)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.slingshot.gesture().isActive()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### Types
+
+- **SlingshotOptions**
+  - `maxDrag` *number* - pixels of pull that count as full power
+  - `minPull` *number* - a release below this pull (0..1) is not armed: a cancelled shot, not a dribble
+  - `maxAngle` *number* - the widest aim either side, radians
+  - `settleMs` *number* - the flick window: sideways travel in the last this-many milliseconds is a curve
+  - `flickDeadzone` *number* - sideways travel below this share of `flickFull` is not a flick
+  - `flickFull` *number* - sideways travel, as a share of `maxDrag`, that gives the full curve
+- **SlingshotAim**
+  - `pull` *number* - 0 (no pull) .. 1 (full)
+  - `angle` *number* - radians; 0 straight ahead, positive to the right
+  - `isArmed` *boolean* - is the pull enough to launch?
+- **SlingshotGesture**
+  - `begin` *function(number, number, number): void* - (x, y, ms): the finger went down
+  - `move` *function(number, number, number): void* - (x, y, ms): it moved
+  - `aim` *function(): SlingshotAim* - the aim right now, for a live preview
+  - `release` *function(number=): (SlingshotAim & {curve: number})* - (ms): it let go; `curve` is -1 (full left) .. 1 (full right), 0 without a flick. With a flick, pull and angle are those held before it began.
+  - `isActive` *function(): boolean* - between `begin` and `release`
+
+## netting.js
+
+> Kit netting: a sheet of knots joined by cords (a goal net, a hammock, a banner, a trampoline), simulated as
+> points held together by distance links. A ball pushed into it makes it bulge; it swings back and settles.
+>
+> Owns:  `Kit.netting.sheet` (a rectangular grid of knots between two edge vectors, with any knots pinned),
+>        `Kit.netting.step` (one fixed step: inertia, gravity, the pull home, then the links), `Kit.netting.push`
+>        (move every knot out of a ball) and `DEFAULTS`.
+> Does not own: what the ball does when it meets the net (the caller slows it; `push` reports the contact),
+>        chains of bones (`Kit.dynamics.chain`), the fixed clock (`Kit.dynamics.stepsDue`) or drawing: `links`
+>        is a list of knot pairs, which is exactly the index buffer of line segments.
+>
+> Why position-based (Verlet) and not springs: links are satisfied directly, so a hard shot cannot make the
+> net explode whatever the step, and there is no stiffness to tune against the frame rate.
+>
+> Conventions: metres, seconds, +Y up; positions are x, y, z per knot, row by row from the `origin` corner.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.netting.DEFAULTS`
+
+A taut goal net: it bulges about half a metre for a hard shot and is still again within a second.
+
+### `Kit.netting.sheet({ origin, across, down, columns, rows, isPinned = (column, row) => column === 0 || row === 0 || column === columns - 1 || row === rows - 1 })`
+
+Makes a rectangular net: `columns x rows` knots spread evenly from `origin` along `across` and `down`.
+
+- `spec` *{origin: Vector, across: Vector, down: Vector, columns: number, rows: number, isPinned?: function(number, number): boolean}* - `across` and `down` are the full edge vectors; `isPinned(column, row)` says which knots are tied to the frame (default: the whole rim)
+
+**Returns** *Netting*
+
+**Complexity** O(columns x rows) time and space
+
+```js
+const back = Kit.netting.sheet({ origin: { x: -3, y: 2.4, z: -1.5 }, across: { x: 6, y: 0, z: 0 }, down: { x: 0, y: -2.4, z: 0 }, columns: 13, rows: 7 });
+```
+
+### `Kit.netting.step(net, dt, options)`
+
+Advances a net by one step. Call it on a fixed clock (`Kit.dynamics.stepsDue`); the net is changed in place.
+
+- `net` *Netting*
+- `dt` *number* - seconds
+- `[options]` *Partial\<NettingOptions\>*
+
+**Returns** *number* the largest distance any knot is from its rest place, metres (0 for a net at rest: skip drawing it)
+
+**Complexity** O(knots + passes x cords) time, no allocation
+
+```js
+if (Kit.netting.step(net, 1 / 60) > 0.001) lines.geometry.attributes.position.needsUpdate = true;
+```
+
+### `Kit.netting.push(net, x, y, z, radius)`
+
+Moves every free knot inside a ball out to its surface: the ball pushing the net. Call it after `step`.
+
+- `net` *Netting*
+- `x` *number* - centre of the ball
+- `y` *number*
+- `z` *number*
+- `radius` *number* - metres
+
+**Returns** *number* how many knots the ball is touching (0: no contact)
+
+**Complexity** O(knots) time, no allocation
+
+```js
+if (Kit.netting.push(net, ball.x, ball.y, ball.z, 0.11) > 0) slowTheBall();
+```
+
+### Types
+
+- **Vector**
+- **NettingOptions**
+  - `gravity` *number* - metres per second squared; small, because a net hangs taut
+  - `keep` *number* - share of a knot's motion kept each step (the rest is lost to the air and the cords)
+  - `home` *number* - how strongly a knot is pulled back to where it hangs at rest, per second squared
+  - `passes` *number* - times the links are satisfied per step; more is stiffer
+- **Netting**
+  - `columns` *number* - knots across
+  - `rows` *number* - knots down
+  - `positions` *Float32Array* - 3 per knot: where each is now
+  - `previous` *Float32Array* - 3 per knot: where each was a step ago (its velocity, implicitly)
+  - `rest` *Float32Array* - 3 per knot: where each hangs at rest
+  - `pinned` *Uint8Array* - 1 per knot: 1 for a knot tied to the frame
+  - `links` *Uint16Array* - 2 per cord: the two knots it joins (the index buffer of the net's line segments)
+  - `lengths` *Float32Array* - 1 per cord: its rest length
+
+## seat.js
+
+> Kit seat: fixed camera seats as rules, and the promises a seat makes about its picture. A seat does not say
+> where the camera is; it says what must fit from edge to edge and what must sit just under the interface, and
+> `solve` finds the place and the lens for whatever screen it is given. A promise is a named check over screen
+> rectangles ("the goal is whole", "the hero never covers the ball"); a watch counts the frames that break one
+> and remembers the first, so a playtest can assert that none did on every screen shape.
+>
+> Owns:  `Kit.seat.solve` (rule + screen -> place, look-at point and field of view), `Kit.seat.span` (how
+>        tall a subject stands on screen from a solved seat), `Kit.seat.disc` and `Kit.seat.rect` (screen
+>        rectangles of things and what to ask of them), and `Kit.seat.watch` (promises counted per frame).
+> Does not own: the camera object (the caller copies `at`, `look` and `fov` onto its own), moving cameras
+>        (kit/camera-rigs.js), what is drawn, or the interface whose band a seat keeps clear (the caller states
+>        its height).
+>
+> Conventions: metres, +Y up; a seated camera looks along the z axis (`toward` -1 or 1) at x = 0, pitched
+> down or up. Screen rectangles are CSS pixels, y down: `{ left, top, right, bottom }`.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.seat.solve(seat, size, band = 0)`
+
+Solves a seat for a screen.
+
+- `seat` *SeatRule*
+- `size` *{w: number, h: number, aspect: number, portrait: boolean}* - the screen, CSS pixels (a game's `ctx.size`)
+- `[band=0]` *number* - CSS pixels at the top of the screen that the interface covers
+
+**Returns** *SolvedSeat*
+
+**Complexity** O(1)
+
+```js
+const seat = Kit.seat.solve({ toward: -1, fit: { z: -11, halfWidth: 3 }, anchor: { y: 2.6, z: -11 }, least: 15,
+  portrait: { fov: 50, height: 4 }, landscape: { fov: 42, height: 4 } }, ctx.size, 200);
+camera.position.set(...seat.at); camera.fov = seat.fov; camera.updateProjectionMatrix(); camera.lookAt(...seat.look);
+```
+
+### `Kit.seat.span(solved, { z, from = 0, to }, screenHeight)`
+
+How tall something upright stands on screen from a solved seat: the pixels between two heights above a
+point of the centre line. This is what a pixel grid is fitted to (`Kit.pixelGrid.fit`).
+
+- `solved` *SolvedSeat*
+- `subject` *{z: number, from?: number, to: number}* - where it stands, and the heights of its foot (0) and its top
+- `screenHeight` *number* - pixels (CSS, or device pixels for a drawing buffer)
+
+**Returns** *number* pixels; negative when the subject is behind the camera
+
+**Complexity** O(1)
+
+```js
+Kit.seat.span(seat, { z: 1.4, to: 1.75 }, renderer.domElement.height)
+```
+
+### `Kit.seat.disc(viewPoint, radius, camera, size)`
+
+The screen rectangle of a ball of a radius round a point given in the camera's space.
+
+- `viewPoint` *{x: number, y: number, z: number}* - the point in the camera's space (-z is ahead)
+- `radius` *number* - world units
+- `camera` *{fov: number, near: number}* - vertical field of view in degrees, and the near plane
+- `size` *{w: number, h: number}* - the screen, CSS pixels
+
+**Returns** *?{left: number, top: number, right: number, bottom: number}* null when the point is behind the near plane
+
+**Complexity** O(1)
+
+### `Kit.seat.rect`
+
+Questions asked of screen rectangles; every one takes null (a thing that is not on screen) and answers false or null.
+
+### `Kit.seat.watch(promises)`
+
+Watches a table of promises.
+
+- `promises` *Object\<string, function(\*): boolean\>* - name -> a check that returns false when the promise is broken
+
+**Returns** *SeatWatch*
+
+**Complexity** check: O(promises)
+
+```js
+const watch = Kit.seat.watch({ 'the door is whole': (seen) => Kit.seat.rect.isWhole(seen.door, ctx.size) });
+watch.start(); // then each frame: watch.check({ door: doorRect }, () => ({ room: room.id }));
+```
+
+#### `Kit.seat.watch().start(isWanted = true)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seat.watch().isWatching()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seat.watch().check(seen, note)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.seat.watch().report()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### Types
+
+- **SeatLens**
+  - `[fov]` *number* - vertical field of view, degrees (a seat that fits by distance)
+  - `[height]` *number* - the camera's height, metres (a seat that fits by distance)
+  - `[fovRange]` *number[]* - [least, most] vertical field of view, degrees (a seat with a fixed place)
+- **SeatRule**
+  - `toward` *number* - -1 when the camera looks towards -z, 1 towards +z
+  - `fit` *{z: number, halfWidth: number}* - the plane across the view that must be seen this wide
+  - `anchor` *{y: number, z: number, at?: number}* - the point the tilt is set by: it sits just below the band the interface covers (the highest thing that matters), or, with `at`, that share of the screen's height down from the top
+  - `[least]` *number* - least distance from the fit plane, metres (fit by distance)
+  - `[at]` *number[]* - the camera's fixed place [x, y, z] (fit by opening the lens)
+  - `portrait` *SeatLens* - the lens on a screen taller than wide
+  - `landscape` *SeatLens* - the lens on a screen wider than tall
+- **SolvedSeat**
+  - `at` *number[]* - the camera's place [x, y, z]
+  - `look` *number[]* - the point it looks at [x, y, z]
+  - `fov` *number* - vertical field of view, degrees
+- **SeatWatch**
+  - `start` *function(boolean=): void* - begin (or, with false, stop) checking, from a clean count
+  - `isWatching` *function(): boolean*
+  - `check` *function(\*, function(): Object=): void* - run every promise against what is seen now; the second argument is called only for a promise's first break, and what it returns is kept as the note
+  - `report` *function(): {frames: number, broken: Object\<string, number\>, first: Object\<string, Object\>}* - frames checked, frames each promise was broken in, and the note of each first break
+
+## pixel-grid.js
+
+> Kit pixel grid: how fine a pixel-look picture should be, as a rule. A game names a grain (chunky, standard,
+> fine) and says how big its subject is on screen; the rule answers with whole device pixels per texel, so
+> every texel is the same size on any screen and the subject carries the same detail on a tall phone, a small
+> one or a phone on its side. With it: the look settings that go with a grain, and the texel grid under a
+> moving thing in a perspective picture (which has no one texel size: it grows with depth).
+>
+> Owns:  `Kit.pixelGrid.GRAINS` (the named steps), `Kit.pixelGrid.fit` (subject size -> texel size and rows),
+>        `Kit.pixelGrid.settings` (a fitted grid -> overrides for `LookView.use('pixel', ...)`),
+>        `Kit.pixelGrid.texelAt` and `Kit.pixelGrid.snapShift` (stand a moving thing on the grid).
+> Does not own: drawing at that size (kit/look-view.js and look-ink.js, through `pixelRows`), the whole-pixel
+>        upscale (`Kit.look.texelScale`), snapping under an orthographic camera (look-view.js does that itself),
+>        or how big a subject is on screen (the caller measures: `Kit.seat.span` for a seated camera).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.pixelGrid.GRAINS`
+
+The named steps. `chunky` is a sprite of the 16-bit consoles, `standard` a detailed one, `fine` close to an
+illustration that still shows its texels.
+
+### `Kit.pixelGrid.fit(grain, { subjectPixels, subjectHeight, bufferHeight })`
+
+Fits the grid to a subject.
+
+- `grain` *string* - a key of `GRAINS`
+- `screen` *{subjectPixels: number, subjectHeight: number, bufferHeight: number}* - `subjectPixels`: the subject's height on screen, device pixels; `subjectHeight`: its height in world units; `bufferHeight`: the drawing buffer's height, device pixels
+
+**Returns** *PixelGrid*
+
+**Complexity** O(1)
+
+```js
+Kit.pixelGrid.fit('standard', { subjectPixels: 480, subjectHeight: 1.75, bufferHeight: 1688 }).texelPixels // 4
+```
+
+### `Kit.pixelGrid.settings(grid)`
+
+The look overrides that draw a fitted grid: its rows, the grain's tones, and as much of the pixel preset's
+dither as texels of that size can carry (`Kit.look.ditherAt`).
+
+- `grid` *PixelGrid* - from `fit`
+
+**Returns** *{pixelRows: number, toneCount: number, dither: number}*
+
+```js
+view.use('pixel', Kit.pixelGrid.settings(Kit.pixelGrid.fit('fine', screen)));
+```
+
+### `Kit.pixelGrid.texelAt(fov, depth, rows)`
+
+World units one texel covers at a depth in front of a perspective camera.
+
+- `fov` *number* - the camera's vertical field of view, degrees
+- `depth` *number* - distance along the view, world units
+- `rows` *number* - texel rows of the picture
+
+**Returns** *number*
+
+### `Kit.pixelGrid.snapShift(viewPoint, fov, rows)`
+
+How far to move a point, along the camera's right and up, to stand it on the texel grid at its own depth.
+A body moved this way crosses the screen in whole texels, so it keeps one outline while it walks.
+
+- `viewPoint` *{x: number, y: number, z: number}* - the point in the camera's space (-z is ahead)
+- `fov` *number* - degrees
+- `rows` *number* - texel rows of the picture
+
+**Returns** *number[]* [right, up] world units; [0, 0] for a point behind the camera
+
+```js
+const [right, up] = Kit.pixelGrid.snapShift(point.copy(root.position).applyMatrix4(camera.matrixWorldInverse), camera.fov, grid.rows);
+```
+
+### Types
+
+- **Grain**
+  - `subjectRows` *number* - texel rows the subject (a standing character, usually) should get
+  - `toneCount` *number* - tones per ramp: more rows can carry more tones
+  - `level` *string* - the level of detail for figures at this size (kit/figure-shapes.js `LEVELS`)
+- **PixelGrid**
+  - `grain` *string* - the grain it was fitted for
+  - `texelPixels` *number* - device pixels a texel is across: whole, 1 or more
+  - `rows` *number* - texel rows of the whole picture (`bufferHeight / texelPixels`)
+  - `subjectRows` *number* - the rows the subject really gets (as near the grain's as whole pixels allow)
+  - `texelWorld` *number* - world units a texel covers on the subject
+
+## paint.js
+
+> Kit paint: flat scenery painted by hand in the tones of a palette, as data. A book collects quads, each with
+> its own ramp and tone, and becomes one mesh of the look's stamp path (kit/look-toon.js `LookPart.stamps`):
+> a backdrop, a stand, a shop front or a pitch is then one draw call however many colours it uses, and a
+> recolour is a palette write. With it comes a small pixel face for lettering signs.
+>
+> Owns:  `Kit.paint.TONE` (the tones a painter picks from), `Kit.paint.book` (quads, floors, walls, discs,
+>        lettering -> flat arrays), `Kit.paint.GLYPHS` and `Kit.paint.runs` (a word as runs of lit dots),
+>        and `Kit.paint.geometry` (the arrays as a THREE.BufferGeometry ready to dress with `{ stamps: true }`).
+> Does not own: colour (kit/palette.js: a ramp is a row of an atlas, named here only by its slot), the look
+>        (kit/look-*.js), lit or outlined forms (dress an ordinary mesh for those), or what is painted
+>        (kit/stadium.js lays out a sports ground with it; a game lays out its own scenery).
+>
+> Conventions: metres, +Y up. A quad is seen from both sides when its mesh's material is double sided.
+>
+> Pure but for `geometry`, which needs THREE when called: the rest runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.paint.TONE`
+
+Where a painted surface sits along its ramp, 0 (its darkest tone) .. 1 (lightest). Paint is never lit: these
+are the tones a pixel artist picks by hand. `base` is the ramp's own colour at every tone count.
+
+### `Kit.paint.GLYPHS`
+
+A 3 x 5 pixel face, capitals and digits: five rows of three, row by row from the top, '1' is paint.
+Enough for a sign, a scoreboard or a shirt number; not for prose.
+
+### `Kit.paint.FACE`
+
+The face's cell: dots across and down a glyph, and the dots from one glyph's left edge to the next.
+
+### `Kit.paint.runs(word)`
+
+The lit runs of a word in the pixel face: each run is a row and the first and last column of a stretch of
+paint, so a word costs a quad per run, not per dot.
+
+- `word` *string* - characters of `GLYPHS`
+
+**Returns** *{runs: Array\<{row: number, from: number, to: number}\>, columns: number, rows: number}* `columns`: the word's width in dots
+
+**Complexity** O(characters)
+
+```js
+Kit.paint.runs('TEA').columns // 11
+```
+
+### `Kit.paint.book(slotOf)`
+
+Opens a book of painted quads.
+
+- `slotOf` *function(string): number* - a ramp's name -> its row past the block's first row (`LookPart.blockRow`)
+
+**Returns** *PaintBook*
+
+**Complexity** O(1) per quad; a word is O(runs), a disc O(rings x sides)
+
+```js
+const book = Kit.paint.book((ramp) => rows[ramp] - rows.grass);
+book.floor(-5, 5, -5, 5, 0, 'grass', Kit.paint.TONE.base).word({ text: 'TEA', x: 0, y: 1, z: -5, dot: 0.1, ramp: 'sign', tone: Kit.paint.TONE.light });
+const mesh = new THREE.Mesh(Kit.paint.geometry(book));
+view.shading.dress(mesh, { ramp: rows.grass, stamps: true, blockRow: rows.grass, inkGroup: 0 });
+```
+
+#### `Kit.paint.book().quad(corners, ramp, tone)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().floor(fromX, toX, fromZ, toZ, y, ramp, tone)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().wall(fromX, toX, fromY, toY, z, ramp, tone)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().disc({ x = 0, y = 0, z = 0, rings, sides, squash = 1 })`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().word({ text, x, y, z, dot, ramp, tone, reads = 1 })`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().quads()`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.paint.book().arrays()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.paint.geometry(painted)`
+
+A book as a geometry for the look's stamp path: positions, a normal (paint is never lit, but the look wants
+one), `stampPaint` and `stampCentre`.
+
+- `painted` *PaintBook*
+
+**Returns** *THREE.BufferGeometry* dress its mesh with `{ stamps: true, blockRow, inkGroup: 0 }`
+
+**Complexity** O(vertices)
+
+### Types
+
+- **PaintBook**
+  - `quad` *function(number[][], string, number): PaintBook* - four corners [x, y, z] in order round it, a ramp, a tone
+  - `floor` *function(number, number, number, number, number, string, number): PaintBook* - a level rectangle: fromX, toX, fromZ, toZ, y, ramp, tone
+  - `wall` *function(number, number, number, number, number, string, number): PaintBook* - an upright rectangle across x: fromX, toX, fromY, toY, z, ramp, tone
+  - `disc` *function(Object): PaintBook* - a level disc of rings: `{ x, y, z, rings: [[radius, ramp, tone]...], sides, squash? }`
+  - `word` *function(Object): PaintBook* - lettering on a wall: `{ text, x, y, z, dot, ramp, tone, reads? }`, centred on (x, y); `reads` is 1 when a viewer looking along -z reads it (the default) and -1 when the viewer looks along +z
+  - `quads` *function(): number* - how many quads the book holds
+  - `arrays` *function(): {positions: number[], paints: number[]}* - 3 numbers per vertex, and 4 (slot, tone, 0, 0)
+
+## stadium.js
+
+> Kit stadium: a sports ground dressed from data. One row of numbers describes an end (terraces with aisles
+> and rails, a back wall, a roof on pillars, advertising boards with lettering, floodlights, a banded sky with
+> clouds) and another the playing surface (mown stripes, texture, worn patches, painted lines); each is
+> painted into a `Kit.paint` book, so an end is one draw call and a ground is a palette. Who sits where, and
+> the flat cards each spectator is made of, come as plain data for an instanced mesh.
+>
+> Owns:  `Kit.stadium.RAMPS` (the ramp names a ground's palette must have), `Kit.stadium.END`,
+>        `Kit.stadium.SURFACE` and `Kit.stadium.CROWD` (the default rows), `Kit.stadium.end` (paint an end,
+>        return its seats), `Kit.stadium.surface` (paint a pitch, court or track), `Kit.stadium.cards` (a
+>        spectator as cards) and `Kit.stadium.lift` (how a spectator bobs and jumps).
+> Does not own: paint itself (kit/paint.js), colour (a game's palette, under the names of `RAMPS`), the meshes
+>        (the caller makes one from each book with `Kit.paint.geometry`, and an instanced quad for the crowd),
+>        lit things that stand on the ground (goals, balls, people), or the rules of any sport.
+>
+> Conventions: metres, +Y up. An end stands behind an edge of the playing surface that runs along x; `place`
+> says where that edge is (`edge`, a z) and which way the surface lies from it (`toward`, 1 for +z or -1).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.stadium.RAMPS`
+
+The ramps a ground's palette must name. `skin0..`, `hair0..`, `crowd0..` and `scarf0..` are runs (their
+counts are in `CROWD.colors`) and each run's rows must be consecutive, because a spectator's card reaches
+its ramp by an index from the run's first.
+
+### `Kit.stadium.END`
+
+An end of a ground. Distances `behind` are from the edge of the playing surface, away from it.
+`glow` is the halo round a floodlight: give it the sky's own colour where the lamps are off and the halo
+is not there (the lamps stand in the sky band painted in the sky ramp's own colour for exactly that).
+
+### `Kit.stadium.SURFACE`
+
+A playing surface: stripes mown across it, short dashes of texture, patches worn to earth, and lines. Heights are layers above the turf.
+
+### `Kit.stadium.CROWD`
+
+A spectator is a few flat cards: `[width, height, lift above the seat, how far towards the pitch]`. People
+differ in size (`vary`), a share wear a scarf, a share have no hair card, and a share are `lively`: they
+bob in two-frame steps of `bob` metres (about a texel at a stand's distance), the way a sprite crowd moves.
+
+### `Kit.stadium.end(book, place, spec = END)`
+
+Paints an end into a book, farthest things first, and says who could sit in it.
+
+- `book` *Object* - a `Kit.paint.book`
+- `place` *{edge: number, toward: number, turn?: number}* - `edge`: z of the surface's edge; `toward`: 1 when the surface lies towards +z from it, -1 for -z; `turn`: which end this is (0, 1, ...), so two ends differ
+- `[spec=END]` *Object* - a row shaped like `END`
+
+**Returns** *Spectator[]* every seat of the terrace
+
+**Complexity** O(tiers x seats + boards x letters + sky blocks) time; about 500 quads for `END`
+
+```js
+const book = Kit.paint.book(slotOf);
+const seats = Kit.stadium.end(book, { edge: -11, toward: 1 });
+const stand = new THREE.Mesh(Kit.paint.geometry(book)); // dress with { stamps: true, blockRow, inkGroup: 0 }
+```
+
+### `Kit.stadium.surface(book, spec = SURFACE)`
+
+Paints a playing surface into a book.
+
+- `book` *Object* - a `Kit.paint.book`
+- `[spec=SURFACE]` *Object* - a row shaped like `SURFACE` (spread `SURFACE` and state what differs)
+
+**Returns** *Object* the book
+
+**Complexity** O(stripes + dashes + worn patches + line steps); about 350 quads for `SURFACE`
+
+```js
+Kit.stadium.surface(book, { ...Kit.stadium.SURFACE, worn: [{ x: 0, z: 0.2, across: 0.5, deep: 0.3 }], lines: [{ rect: [-26, 26, -11.05, -10.95] }] });
+```
+
+### `Kit.stadium.cards(member)`
+
+The cards a spectator is made of.
+
+- `member` *Spectator*
+
+**Returns** *Array\<{card: number[], run: string, index: number}\>* each card's `[width, height, lift, proud]`, and its ramp as a run of `RAMPS.crowd` and an index into it (the ramp is `run + index`, e.g. 'crowd3')
+
+**Complexity** O(1)
+
+### `Kit.stadium.lift(member, time, cheer = 0)`
+
+How far above their seat a spectator is now: the lively ones bob in steps, and when the ground erupts
+everyone jumps in a wave.
+
+- `member` *Spectator*
+- `time` *number* - seconds
+- `[cheer=0]` *number* - 0..1 how loud the ground is
+
+**Returns** *number* metres
+
+### Types
+
+- **Spectator**
+  - `x` *number*
+  - `y` *number*
+  - `z` *number* - the seat, metres
+  - `chance` *number* - 0..1, fixed: seats with a chance under a ground's attendance are taken
+  - `size` *number* - how big this person is against the cards' sizes
+  - `shirt` *number*
+  - `skin` *number*
+  - `hair` *number*
+  - `scarf` *number* - index into each run of ramps
+  - `hasHair` *boolean*
+  - `hasScarf` *boolean*
+  - `isLively` *boolean*
 
 ## ui/gallery.js
 

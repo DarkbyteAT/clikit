@@ -856,6 +856,84 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Revisit if** a body needs a fin channel (the carp plays only what its head, spine and tail can do); the
   far hand of a short-armed body should also arrive (today the near hand leads and the far one follows as
   far as its arm goes); skinned cloth lands (the bone-level solids then need a surface).
+
+## Spot Kick Showdown (games/penalty*.js) and Kit.flight, Kit.slingshot, Kit.netting (football branch)
+
+- **Ball flight is its own pure module (`Kit.flight`), not cannon.js.** A penalty needs drag, spin lift (curl), wind
+  and a bounce off thin bars, stepped identically in the page, in unit tests and in the stand-in players of
+  `make sim`. Rejected: cannon bodies (no spin lift, tunnelling through a 6 cm post at 19 m/s without CCD, and
+  not available to the headless bots without the vendor file). Cost: no general collisions; bars and a ground only.
+- **A keeper is two shapes in a plane, not a ragdoll.** The rules know the hands (a sphere of `reach`) and a
+  capsule from hips to hands, moved by an eased dive with a wind-up. Held or parried is decided by how central
+  the ball is to the palms and how fast it is. The drawn body follows the rules' dive (target and arrival time),
+  never the other way round, so what is fair is testable.
+- **One pull is side, power and height together.** Power is coupled to loft, so the top corners are a narrow
+  band under "over the bar" and the power lamps mark it. Rejected: a separate height gesture (two thumbs, or a
+  second phase, on a phone) and a free cursor aim (no skill in the release).
+- **Perspective camera on fixed seats, not the look's orthographic framing.** Behind the ball and behind the
+  net are the two pictures a penalty is remembered by, and a hero character close to the lens sells the pixel
+  look. Cost: `Kit.look.view` snaps texels only for orthographic cameras, so slow sub-texel motion can shimmer;
+  the cameras never move during a kick, which hides most of it. Revisit if the view grows perspective snapping.
+- **The whole ground is dressed into the look view** (one world palette block of the atlas, rewritten per
+  ground: a new stadium is a palette, not new meshes). The view is built with 128 atlas rows: 64 could not
+  hold the ground plus four characters of 16 rows each.
+- **The net is position-based (`Kit.netting`, Verlet with distance links)**, drawn as one line-segment mesh
+  whose index buffer is the links. Rejected: springs (stiffness tuned against frame rate; a 19 m/s ball
+  explodes them) and a canned bulge animation (the net must react where the ball actually is).
+- **Performances go through one adapter (games/penalty-perform.js) onto `Kit.act`** (merged from branch `act`).
+  The adapter owns only timing: a kick or dive is played at the `rate` that puts its contact frame
+  (`Kit.act.CONTACT`) on the moment the rules strike or arrive. Cost: the one rate also speeds the landing and
+  the getting-up of a fast dive. Wanted from Kit.act: a contact time per play (rate before contact, authored
+  rate after).
+- **Both sides kick the ball the player equipped; one perk per role.** Purchases are trade-offs, so the shop
+  cannot buy the ladder; rivals sharpen faster than perks cover. Medals (lifetime goals, saves, matches) pay in
+  between rungs so a player stuck on one rival still earns something new (`make sim` dead stretches fell from
+  eleven warnings to seven; the rest are 10 to 15 minutes on the hardest rivals and are reported, not hidden).
+
+### Round 2: framing, the keeper's picture and the cost of the scene
+
+- **The taker's view is a raised seat that cuts to a seat past the taker at the strike, then cuts back.** While
+  aiming, the camera sits high enough that the taker stands whole (head to boots) low and to one side, under the
+  goal; the moment the ball is struck it cuts to a `flight` seat beside and in front of the taker, where nothing
+  can stand between the lens and the goal. Rejected: a raised seat alone (to clear a run-up and follow-through it
+  has to be so high that the goal is a flat strip and the top corners cannot be read), a side step without a cut
+  (the camera moves during the kick, which shimmers in a perspective pixel view and moves the aim line under the
+  thumb), and fading the taker (a dithered body over the goal is still over the goal, and hides the kick itself).
+  Cost: one hard cut per kick; the ball enters the new picture from under the lens, at most `CUT_GRACE` (0.12 s) late.
+- **A seat is a rule solved per screen (`solveSeat`), not a camera position.** Each seat names a plane that must
+  fit from edge to edge (by backing off at a fixed lens, or by opening the lens from a fixed place) and an anchor
+  that sits just under the HUD band (`HUD_BAND`, CSS pixels per orientation) or at a share of the screen's height.
+  A new screen shape is then a solve, not a new table row; rotating mid-kick re-solves the seat in use.
+- **What the camera promises is a table checked from projected rectangles (`PROMISES` in games/penalty.js).** The
+  goal whole on screen; the taker never over the goal, their keeper or the ball (the ball excepted while the boot
+  swings at it); the taker whole while aiming; the ball on screen until it crosses the keeper's plane; your keeper
+  never over the ball, and whole before the dive. `Kit.debug.tools().watchFraming()` counts broken frames and
+  records where each promise first broke; scripted playtests assert the count is empty at 390x844, 360x640 and 844x390.
+- **In goal, the back and roof of the net are drawn only while the ball is in them.** The camera sits above and
+  behind the keeper, so a full net is a grid across the hero. The sides always show (they frame the goal); the
+  back and roof appear when the net is moving and go when it has come to rest. Rejected: a camera inside the goal
+  (the keeper fills the screen and the dive leaves it) and a faded net (pixel lines do not fade, they dither).
+- **The incoming ball is read by four cues, each a row of the seat or the stage**: drawn 1.5 times its size from the
+  keeper's seat (`ballScale`), a ground shadow, a short trail of dots, and a thin ring where the tap landed.
+- **Dive timing stays in the adapter (`contactIn` in games/penalty-perform.js), the one place that knows about
+  rate.** It plays a dive at the rate that puts `Kit.act.CONTACT` on the rules' arrival, then scales time after
+  contact back to the authored speed until the landing and faster through the getting-up. When Kit.act takes a
+  contact time per play this is a one-line swap. Open, for the act owner: there is no jumping or crouching catch,
+  so a ball at the high centre is met 0.71 m short by the drawn hands and at the low centre 0.26 m short; corners
+  and mid sides are within 0.03 m.
+- **Characters are built at the kit's `low` level and the crowd is two-quad cards.** At 300 rows of picture a
+  character is about 90 texels tall; `high` spent 19 to 20 thousand triangles on each. The crowd was boxes (7.9
+  thousand triangles); it is now one instanced mesh of crossed cards per stand colour block. Posts, poles and
+  shadows are merged or instanced. Not reached: draw calls. A kit figure is 32 to 38 meshes whatever its level,
+  so two characters are 70 of the scene's 87 calls; the rest of the ground is 17. For the figure owner.
+- **A flick is measured from event time stamps (`PointerEventInfo.time`), not frame time.** A curl is a sideways
+  flick in the last 150 ms of the pull; at 12 frames a second (software GL, or a slow phone) frame time cannot see
+  it. Kit.input now carries `event.timeStamp`; the play tool's `flick` step stamps its touch events the same way.
+- **Play tool**: `press` and `choose` reach buttons of an open `ui.dialog`, `modal` reports it, `wait` runs (and
+  says so) while the game is paused, `down` / `move` / `up` hold a drag across a screenshot, `flick` and `resize`
+  exist, and a game hands its test handles to scripts through `tools` on its instance (`Kit.debug.tools()`),
+  which replaces the game-private `ctx.debug` field.
+
 ## Looks and rolls: lighting, ink, pixel and roll rules that hold for any roll (looks branch)
 
 - **Light is a key, a capped fill and a back light, in view space** (`Kit.look.LIGHTING`, mirrored in script by
@@ -884,3 +962,55 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Revisit if** one skinned mesh carries head and body (then `response` must be per vertex or per region, not
   per mesh); a catalogue passes 511 palette rows; a contrast rule proves unsatisfiable for a palette (the roll
   falls back a tier and `clashes` reports it: 48 of 5000 wardrobe rolls miss harmony, none miss contrast).
+
+## Spot Kick Showdown round 3: a finer picture, and the layers under it moved into the kit (football branch)
+
+- **The pixel grid is sized by the subject, not by the screen (`Kit.pixelGrid`).** A grain (chunky, standard,
+  fine) states how many texel rows a standing character should get; `fit` turns the character's height on screen
+  into whole device pixels per texel. Rejected: rows per screen by orientation (the old 300 / 200 gave a
+  character 80 rows on a tall phone, 52 on its side and 110 on a small phone, three different pictures) and a
+  texel size in CSS pixels (the same texel is coarse on a far subject and fine on a near one). At a pixel ratio
+  of 2 the default grain gives 422 rows at 390x844 (was 281), 390 at 844x390 (was 195) and 427 at 360x640
+  (was 320): a character stands 111, 124 and 115 rows tall (was 80, 52 and 110). Cost: a texel is a whole
+  number of pixels, so the steps are coarse where the subject is small: on a phone on its side standard and
+  fine are the same 2 pixels, and at a pixel ratio of 1 standard is the screen's own pixels there. The shell
+  caps the ratio at 2, so a 3x phone shows these texels scaled by its browser.
+- **A grain carries its tones and its level of detail.** Standard and fine draw 5 and 6 tones per ramp (chunky
+  keeps 4) and as much dither as their texels can hold (`Kit.look.ditherAt`). Characters stay at the kit's `low`
+  level at standard: at 110 rows `medium` could not be told from it in a side-by-side and cost 4.9 thousand
+  triangles each against 1.7.
+- **Scenery is painted, not lit (`Kit.paint`).** A book of flat quads, each naming its own ramp and tone, is
+  one mesh on the look's stamp path. A whole end (terraces, aisles, rails, back wall, roof and pillars, boards
+  with lettering, floodlights, a banded sky with clouds) is one draw call, as is the pitch (mown stripes,
+  mottling, worn patches, lines); the ground's 9 scenery meshes became 3 while its detail went up. Rejected:
+  textures (the look has no textured path for scenery, and a texture is a second place for colour to live),
+  and more dressed meshes (a draw call per colour). Cost: paint has no outline and no light; the goal frame and
+  the ball stay lit meshes for that reason (a post has a shaded side, the ball its round shading).
+- **A ground is data (`Kit.stadium`).** `END`, `SURFACE` and `CROWD` are rows of numbers; `end` and `surface`
+  paint them into a book and return who sits where. A spectator is two to four cards of one instanced quad
+  (body, head, hair, scarf), so a full end of 400 people is one call and people differ in size, hair and scarf.
+  The lively ones bob in two-frame steps of about a texel; nobody moves by part of a texel.
+- **Boards carry invented shop signs in a 3 x 5 pixel face** (PIES, TAXI, TEA, BIKES): no trader, club or
+  maker is named. A word is a quad per run of lit dots.
+- **Floodlights are on or off by palette.** Their halo is painted in a `glow` ramp that a ground gives the
+  sky's own colour when its lamps are off; the lamps stand in the sky band painted in the sky ramp's own colour
+  so that this is exact.
+- **The strip is parts of the wardrobe catalogue's own kind, added by the game** (games/penalty-data.js
+  `STRIP_PARTS`): a shirt with collar, cuffs, a front stripe and a block on the back, a keeper's hooped shirt,
+  shorts with a side stripe, socks with a band. Trim is the `hat` colour channel, which draws from the same
+  dyes and which nobody on a pitch uses. Wardrobe recipes are unchanged (the same seed rolls the same person).
+  Open, for the figure owner: the boots hardly show under the sock on these short legs, and a number cannot be
+  painted (regions are bands, stripes and checkers).
+- **Seats and their promises are a kit module (`Kit.seat`)**: `solve` (rule + screen + interface band),
+  `span` (how tall a subject stands, which is what the grid is fitted to), screen rectangles and `watch`.
+  The game keeps only its three rules and its table of promises.
+- **What is snapped and what cannot be.** Cameras never move within a seat, so the ground is the same texels
+  every frame. Each character's root and the ball are stood on the texel grid of their own depth for the frame
+  (`Kit.pixelGrid.snapShift`), so a body that walks keeps one outline; the crowd moves in whole-texel steps.
+  Not snapped: limbs turning (a rotating edge changes texels by nature), a body whose depth changes (the
+  taker's run-up, the ball coming at the keeper: its size on screen changes), the net while it swings (lines),
+  and the face layers, whose least-size rule needs one texel size (the look view passes none for a
+  perspective camera; for the look owner). A cut replaces the whole picture, so nothing can shimmer across it;
+  every seat of a screen shares one texel size.
+- **Play tool**: `--dpr 1|2|3` draws at a phone's pixel ratio (the grid rule cannot be judged at 1), and `log`
+  waits for a promise, so `log Kit.debug.probe(3)` prints frame times.

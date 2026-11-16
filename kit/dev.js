@@ -78,9 +78,9 @@
     return [label, plain !== '' && Number.isFinite(Number(plain)) ? Number(plain) : text];
   };
 
-  /** The title of the open modal, 'open' when it has none, or null when no modal is open. */
+  /** The title of the open modal or component dialog (`ui.dialog`), 'open' when it has none, or null when neither is open. */
   const readModalTitle = () => {
-    const modal = document.querySelector('#modal:not([hidden])');
+    const modal = document.querySelector('#modal:not([hidden])') || document.querySelector('dialog.ui-dialog[open]');
     if (!modal) return null;
     const title = modal.querySelector('h2');
     return title ? title.textContent : 'open';
@@ -103,7 +103,7 @@
    * @property {number} time game seconds since the game started
    * @property {boolean} paused
    * @property {number} timeScale
-   * @property {?string} modal title of the open modal, or null
+   * @property {?string} modal title of the open modal or `ui.dialog` sheet, or null
    * @property {Object<string, (number|string)>} hud the stats row as label -> value
    * @property {string[]} actions labels of the enabled bottom-bar buttons
    * @property {?Object} state what the game's own `debugState()` returned, or null when it has none
@@ -194,7 +194,15 @@
       requestAnimationFrame(measure);
     });
 
-  Kit.debug = { state: readDebugState, probe: probeFrames };
+  /**
+   * The running game's playtest handles: the `tools` object it returned from create(), or an empty object.
+   * State belongs in `debugState()`; this is for actions and measurements a script needs to call.
+   * @returns {Object<string, *>}
+   * @example node tools/dev.js play penalty "log Kit.debug.tools().measure(300)"
+   */
+  const readTools = () => (Kit.currentGame && Kit.currentGame.tools) || {};
+
+  Kit.debug = { state: readDebugState, probe: probeFrames, tools: readTools };
 
   // ---- development checks ----------------------------------------------------------------------------------------------
 
