@@ -58,9 +58,10 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `columns.js` | `Kit.columns`: records as typed-array columns with a free list and generations |
 | `seeded.js` | `Kit.seeded`: values from (seed, field name), not a stream, so adding a field never re-rolls old ones; a 53-bit content hash |
 | `pack.js` | `Kit.pack`: records as bytes (varint, uint32, text) and bytes as a URL-safe code |
-| `palette.js` | `Kit.palette`: colour ramps (shades dark to light with a hue drift) as data |
+| `palette.js` | `Kit.palette`: colour ramps (shades dark to light with a hue drift) as data; `tones` (2-6 perceptually even tones plus ink, OKLCH), named `SETS`, and `atlas`, the packed tone x ramp table the look shaders read |
 | `surface.js` | `Kit.surface`: signed distance to a primitive (capsule, sphere, box, lathe, extrude); azimuth / elevation -> surface point, normal and up; along / around coordinates |
 | `region.js` | `Kit.region`: areas of a surface as predicate trees (band, stripe, checker, edge, facing; union, intersect, mask, not) and the topmost layer at a point |
+| `look-settings.js` | `Kit.look`: tone bands, ordered-dither table, texel-grid helpers, welded outline normals, and the look presets and knobs as data |
 | `rig.js` | `Kit.rig`: a joint hierarchy as flat arrays and the one forward pass that places it in the world |
 | `reach.js` | `Kit.reach`: inverse kinematics over a rig (exact two-bone, FABRIK chain, aim, joint limits) |
 | `dynamics.js` | `Kit.dynamics`: a damped spring and a point chain on a fixed clock (the same at 20 and 60 fps) |
@@ -119,6 +120,15 @@ Kit.pack.toText(catalog.encode(recipe));                              // an 8-ch
 | `physics.js` | `Kit.physics(options)`: cannon.js world, fixed timestep, mesh syncing, hits, blasts |
 | `bodies.js` | compound bodies, per-step rules, collision layers, sensors and surfaces for `Kit.physics` |
 | `pixel.js` | `Kit.pixel`: pixel art as data, baked to paper cut-out sprites |
+| `look-toon.js` | `Kit.look.shading`: palette texture, toon material (bands, dither, rim, glint, emissive) and inverted-hull outline for any mesh, skinned or instanced |
+| `look-ink.js` | `Kit.look.inkPass`: low-resolution index target, one-texel screen-space ink, whole-number upscale |
+| `look-view.js` | `Kit.look.view`: composes the above per preset (toon, pixel, soft toon); texel snapping, dither anchoring, slow-device fallback |
+| `look-panel.js` | `Kit.look.panel`: the look's controls as shared components (preset, knobs, palette rows, the panel sheet) and `lookControls(view)` |
+| `look-show.js` | the `look` screen (`Kit.play('look')`): two stand-in figures, every knob, and on-request measurements |
+| `figure-shapes.js` | pure. `Kit.figure` shape builders (capsule, sphere, box, lathe, extrude) to plain arrays per level of detail, `shapeKey`, `writeBoneMatrix` |
+| `figure-layout.js` | pure. `Kit.figure.layout` (bake -> pieces with ramps and ink groups), `planUpdate` (what an edit changes), `measureRest` / `fitView` (grounding, framing) |
+| `figure.js` | `Kit.figure.build` (a bake drawn through `Kit.look`, posed in one pass, updated incrementally), `geometryCache`, `crowd` (instanced, one bake) |
+| `figure-show.js` | the `figures` screen (`Kit.play('figures')`): the body samples in 3D, live edits, a debug pose and the binding probe |
 
 ### Component library (`kit/ui/`, needs a browser)
 
@@ -174,6 +184,7 @@ input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/lay
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
 lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
 body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery  body-sheet
+look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show
 games/*.js  ui/gallery
 shell
 ui/menu
@@ -184,7 +195,8 @@ ui/menu
 ## What a game gets
 
 `Kit.register({ id, name, tagline, hook, color, order, theme, create(ctx) })`, where `create`
-returns `{ update(dt, t), dispose?() }`. `ctx` carries `scene`, `camera`, `size`, `input`, `fx`,
+returns `{ update(dt, t), dispose?(), render?(renderer, ctx) }` (a game that returns `render` draws its own
+frame and bypasses the post chain; `Kit.look.view` needs that to put exact palette colours on screen). `ctx` carries `scene`, `camera`, `size`, `input`, `fx`,
 `sfx`, `ui`, `make`, `post`, `save`, `theme`, `math`, `fmt`, game-time `after` / `every` / `tween`,
 `ortho()`, `distanceForWidth()`, `restart()` and `exit()`. `tools/example-game.js` uses all of it.
 

@@ -61,7 +61,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [columns.js](#columnsjs) (1) - Kit columns: many small records as typed-array columns (a struct of arrays) with slots that are reused through a free list, so a population 
 - [seeded.js](#seededjs) (7) - Kit seeded: values that depend only on (seed, field name), not on how many values were read before them.
 - [pack.js](#packjs) (4) - Kit pack: small records as bytes, and bytes as text.
-- [palette.js](#palettejs) (4) - Kit palette: colour ramps as data.
+- [palette.js](#palettejs) (14) - Kit palette: colour ramps as data.
 - [rig.js](#rigjs) (9) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
 - [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
 - [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
@@ -73,6 +73,16 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [body-samples.js](#body-samplesjs) (0) - Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a one-bone sword with grip and gem soc
 - [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
 - [body-gallery.js](#body-galleryjs) (0) - Kit body gallery: the `bodies` screen (`Kit.play('bodies')`).
+- [look-settings.js](#look-settingsjs) (12) - Kit look settings: the look as data and small pure functions.
+- [look-toon.js](#look-toonjs) (0) - Kit look toon: the materials of the stylised look.
+- [look-ink.js](#look-inkjs) (0) - Kit look ink: the indexed pipeline.
+- [look-view.js](#look-viewjs) (0) - Kit look view: the thin composition that draws a scene of dressed meshes in a chosen look.
+- [look-panel.js](#look-paneljs) (8) - Kit look panel: the controls of the stylised look as reusable pieces, so every screen that draws through a `Kit.look.view` offers the same p
+- [look-show.js](#look-showjs) (0) - Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from primitives, each with its own 
+- [figure-shapes.js](#figure-shapesjs) (0) - Kit figure shapes: the surface of one bone, as plain arrays.
+- [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
+- [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
+- [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -6158,7 +6168,11 @@ Kit.pack.fromText('AQID') // Uint8Array [1, 2, 3]
 > lit a surface is; a character stores only which ramp it uses.
 >
 > Owns:  `Kit.palette.ramp` (build a ramp from a hue), `Kit.palette.shade` (the shade of a ramp for a light
->        level) and `Kit.palette.toCss`.
+>        level) and `Kit.palette.toCss`; OKLCH conversion and `Kit.palette.tones` (2-6 perceptually even tones
+>        plus an ink colour, from one base colour or from an existing ramp); named sets of ramps
+>        (`Kit.palette.set`, `Kit.palette.SETS`); and `Kit.palette.atlas`, the packed tone x ramp table that
+>        becomes the palette texture of the look shaders (kit/look-toon.js). Shading never invents RGB: a pixel
+>        is (ramp row, tone column) and colour appears only when that pair is looked up in the table.
 > Does not own: blending two colours or rows (`Kit.blend`, whose `hsl` this is built on), a game's interface
 >        colours (`Kit.theme`), or which ramps exist (a catalogue's `palettes` table, kit/body-recipe.js).
 >
@@ -6213,11 +6227,162 @@ The shade of a ramp for a light level: the banding step of a toon or pixel shade
 Kit.palette.shade(skinRamp, 0.5) // the middle shade
 ```
 
+### `Kit.palette.TONE_SLOTS`
+
+Width of the packed table in texels: six tone columns, one spare, and the ink column last. A power of two.
+
+### `Kit.palette.INK_COLUMN`
+
+Column that holds a ramp's outline colour.
+
+### `Kit.palette.TONE_SHAPE`
+
+Defaults chosen by eye against the linear formula this replaces (shadow = base * 0.66 + violet * 0.16):
+equal lightness steps in OKLCH read as equal steps, where equal RGB steps crush the darks.
+
+### `Kit.palette.SETS`
+
+Named palettes for a humanoid: the same nine ramps in the same order, so any of them recolours any character.
+`eye` is authored (a dark pupil tone and a light glint); `ground` is the contact shadow under a figure, one
+flat colour whatever the tone.
+
+### `Kit.palette.rgbOf(color)`
+
+Reads a colour as three sRGB bytes.
+
+- `color` *string\|number\|number[]* - '#rrggbb', 0xRRGGBB, or [red, green, blue] bytes
+
+**Returns** *number[]* [red, green, blue], 0..255
+
+```js
+Kit.palette.rgbOf('#ff8000') // [255, 128, 0]
+```
+
+### `Kit.palette.hexOf(rgb)`
+
+Writes three sRGB bytes as '#rrggbb'.
+
+- `rgb` *number[]* - [red, green, blue], 0..255
+
+**Returns** *string*
+
+### `Kit.palette.toOklch(rgb)`
+
+Converts sRGB bytes to OKLCH: perceptual lightness, chroma and hue.
+
+- `rgb` *number[]* - [red, green, blue], 0..255
+
+**Returns** *{lightness: number, chroma: number, hue: number}* lightness 0..1, chroma 0..about 0.4, hue in degrees 0..360
+
+### `Kit.palette.fromOklch(color)`
+
+Converts OKLCH to sRGB bytes. A colour the screen cannot show keeps its lightness and hue and gives up
+chroma until it fits (bisection), so a ramp's lightness steps survive the conversion.
+
+- `color` *{lightness: number, chroma: number, hue: number}*
+
+**Returns** *number[]* [red, green, blue], 0..255
+
+**Complexity** O(1): at most 14 bisection steps
+
+### `Kit.palette.set(name, ramps)`
+
+Makes a palette from named ramps.
+
+- `name` *string*
+- `ramps` *Record\<string, RampSpec\|string\|number\>* - ramp name -> spec or base colour; the key order is the row order
+
+**Returns** *PaletteSet*
+
+```js
+const ember = Kit.palette.set('ember', { skin: '#e9b48c', cloth: '#c8453a', eye: { tones: ['#1b1626', '#f4f0ff'] } });
+```
+
+### `Kit.palette.atlas(options = {})`
+
+Creates the packed palette table. Each loaded palette gets a block of rows; a character's materials point
+at rows, so recolouring a character is rewriting its rows (no material is touched), and two characters
+with different palettes are two blocks of one table.
+
+- `[options]` *{rows?: number, toneCount?: number}* - `rows` is the capacity in ramps (default 64); `toneCount` 2..6 (default 4)
+
+**Returns** *PaletteAtlas*
+
+**Complexity** load / write: O(ramps in the palette); writeRamp: O(1); retone: O(rows in use); space O(rows)
+
+```js
+const atlas = Kit.palette.atlas();
+const hero = atlas.load(Kit.palette.SETS.ember);   // hero.rows.skin is the row a skin material stores
+atlas.write(hero, Kit.palette.SETS.tide);          // the hero is recoloured; nothing else changes
+const worn = atlas.load(bake.ramps);                // a body bake: bone i is drawn with row worn.rows[bake.boneRamp[i]]
+```
+
+#### `Kit.palette.atlas().load(given)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().write(block, given)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().writeRamp(block, rampId, spec)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().retone(toneCount)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.palette.atlas().colorAt(row, column)`
+
+_Undocumented: add a JSDoc block in the source._
+
 ### Types
 
 - **Ramp**
   - `id` *string* - name of the ramp ('umber', 'teal')
   - `shades` *string[]* - CSS colours, darkest first
+- **RampShape** - How a ramp departs from its base colour.
+  - `shadowDepth` *number* - share of the base lightness the darkest tone loses, 0..1
+  - `shadowCurve` *number* - exponent of the darkening: below 1 spends the darkness early, above 1 late
+  - `highlightLift` *number* - share of the distance to white the lightest tone climbs, 0..1
+  - `highlightMaxStep` *number* - most lightness the highlight gains, so a dark base does not get a chalk-white glint
+  - `shadowHue` *number* - hue the shadows lean toward
+  - `shadowHueShift` *number* - most degrees the darkest tone turns toward `shadowHue`
+  - `highlightHue` *number* - hue the highlight leans toward
+  - `highlightHueShift` *number* - most degrees the highlight turns toward `highlightHue`
+  - `shadowChroma` *number* - chroma multiplier of the darkest tone (above 1: richer shadows)
+  - `highlightChroma` *number* - chroma multiplier of the highlight (below 1: paler highlights)
+  - `neutralChroma` *number* - chroma given to the ends of a ramp whose base is a grey, so greys still lean cool and warm
+  - `inkDepth` *number* - lightness of the ink colour as a share of the darkest tone
+  - `inkFloor` *number* - lowest ink lightness, so ink on a black ramp is still a colour and not a hole
+- **RampSpec** - One ramp: either generated from a base colour, or authored tone by tone.
+  - `[base]` *string\|number* - the colour of an ordinarily lit surface; the ramp is built around it
+  - `[tones]` *Array\<string\|number\>* - authored tones, darkest first (2 or more); resampled to the tone count asked for
+  - `[ink]` *string\|number* - outline colour; derived from the darkest tone when left out
+  - `[shape]` *Partial\<RampShape\>* - overrides of TONE_SHAPE for this ramp
+- **ToneRamp**
+  - `tones` *number[][]* - [red, green, blue] bytes, darkest first
+  - `ink` *number[]* - [red, green, blue] bytes of the outline colour
+- **PaletteSet** - A named set of ramps.
+  - `name` *string*
+  - `rampIds` *string[]* - ramp names, in row order
+  - `ramps` *Record\<string, RampSpec\|string\|number\>* - ramp name -> spec or base colour
+- **PaletteBlock** - The rows one palette occupies in an atlas.
+  - `offset` *number* - first row
+  - `rampIds` *string[]* - ramp names in row order
+  - `rows` *Record\<string, number\>* - ramp name -> absolute row in the atlas
+- **PaletteAtlas** - The packed table: `width` tone columns by `height` ramp rows of RGBA bytes, ready to be a texture.
+  - `width` *number* - texels per row (8: tones 0..5, a spare, ink)
+  - `height` *number* - rows
+  - `data` *Uint8Array* - RGBA bytes, row by row
+  - `toneCount` *number* - tones currently written per ramp
+  - `version` *number* - rises with every write, so a texture knows when to upload again
+  - `load` *function(PaletteSet\|Ramp[]): PaletteBlock* - reserve rows for a palette and write them
+  - `write` *function(PaletteBlock, PaletteSet\|Ramp[]): void* - replace a block's colours with another palette of the same ramps
+  - `writeRamp` *function(PaletteBlock, string, RampSpec\|string\|number): void* - replace one ramp of a block
+  - `retone` *function(number): void* - rebuild every loaded block at a new tone count
+  - `colorAt` *function(number, number): number[]* - (row, column) -> [red, green, blue]
 
 ## rig.js
 
@@ -7043,6 +7208,562 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > It is registered like a game (near the end of the menu), so the shell gives it a HUD, a back button and
 > clean-up, and the smoke and play tools reach it like any other.
+
+## look-settings.js
+
+> Kit look settings: the look as data and small pure functions. What a tone band is, how dither thresholds are
+> laid out, how a figure sits on a texel grid, and the three presets with the knobs each exposes.
+>
+> Owns:  the band lookup and ordered-dither tables the shaders mirror (`bandOf`, `edgesFor`, `bayerAt`); the grid
+>        helpers of pixel mode (`snapToTexel`, `stepYaw`, `texelScale`); smooth outline normals (`weldNormals`);
+>        and the presets and knobs (`PRESETS`, `KNOBS`, `settings`).
+> Does not own: colour (kit/palette.js: ramps, tones and the packed atlas), textures, materials or passes
+>        (look-toon.js, look-ink.js), or the frame (look-view.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+### `Kit.look.BAND_EDGES`
+
+Band edges on the light value n.L (-1 facing away .. 1 facing the light), by tone count. A pixel's tone is
+the number of edges at or below its light. The top edge is high so the highlight stays a small accent, and
+the shadow edges sit below zero so a face turned a little from the light is not half dark.
+
+### `Kit.look.BAYER_4`
+
+The 4 x 4 ordered-dither matrix (thresholds 0..15), row by row.
+
+### `Kit.look.PRESETS`
+
+The three looks, as data. `label` and `about` are for an editor; the rest are LookSettings.
+
+### `Kit.look.KNOBS`
+
+The settings an editor can offer, in display order. Adding a knob is adding a row.
+
+### `Kit.look.bandOf(light, edges)`
+
+The tone of a light value: how many band edges lie at or below it.
+
+- `light` *number* - n.L, -1..1 (plus any dither offset)
+- `edges` *number[]* - ascending band edges
+
+**Returns** *number* tone index, 0 (darkest) .. edges.length
+
+**Complexity** O(edges)
+
+```js
+Kit.look.bandOf(-0.05, [-0.05, 0.62]) // 1: a value on an edge belongs to the lighter band
+```
+
+### `Kit.look.edgesFor(toneCount)`
+
+The default band edges for a tone count, padded to the shader's fixed length with an unreachable edge.
+
+- `toneCount` *number* - 2..6
+
+**Returns** *number[]* five numbers: `toneCount - 1` real edges, then padding
+
+### `Kit.look.bayerAt(column, row)`
+
+The ordered-dither threshold of a pixel, 0..1, repeating every 4 pixels both ways.
+
+- `column` *number* - pixel x (any integer)
+- `row` *number* - pixel y (any integer)
+
+**Returns** *number* one of 0, 1/16 .. 15/16
+
+```js
+const adjusted = light + (Kit.look.bayerAt(x, y) - 0.5) * 0.12;
+```
+
+### `Kit.look.snapToTexel(value, texelSize)`
+
+Rounds a coordinate to the texel grid, so a sprite moves by whole texels and keeps one shape while it moves.
+
+- `value` *number* - a coordinate along a screen axis, world units
+- `texelSize` *number* - world units one texel covers
+
+**Returns** *number* the nearest multiple of texelSize
+
+### `Kit.look.stepYaw(angle, steps)`
+
+Rounds a turn to one of `steps` facings, like the 8 or 16 drawn directions of a sprite sheet.
+
+- `angle` *number* - radians
+- `steps` *number* - facings per full turn; 0 leaves the angle alone
+
+**Returns** *number* radians
+
+### `Kit.look.texelScale(bufferHeight, rows)`
+
+How many screen pixels one texel covers when a view is drawn at about `rows` texels tall: always a whole
+number, because a fractional upscale makes texels of uneven size.
+
+- `bufferHeight` *number* - height of the screen buffer, device pixels
+- `rows` *number* - wanted internal height in texels; 0 means native resolution
+
+**Returns** *number* whole pixels per texel, 1 or more
+
+### `Kit.look.weldNormals(positions, normals, tolerance = 1e-4)`
+
+Averages the normals of vertices that share a position. An inverted-hull outline pushes vertices along
+their normals; where a mesh has hard edges (a box, a cylinder's cap) the copies of a corner would part
+and open a gap in the line, so the hull uses these welded normals instead.
+
+- `positions` *ArrayLike\<number\>* - x, y, z per vertex
+- `normals` *ArrayLike\<number\>* - x, y, z per vertex
+- `[tolerance=1e-4]` *number* - positions closer than this (per axis) count as the same point
+
+**Returns** *Float32Array* x, y, z per vertex, unit length
+
+**Complexity** O(vertices) time and space (one hash lookup per vertex)
+
+### `Kit.look.settings(presetId, overrides = {})`
+
+Resolves a preset plus overrides into complete settings.
+
+- `presetId` *string* - a key of PRESETS
+- `[overrides]` *Partial\<LookSettings\>* - knob values that differ from the preset
+
+**Returns** *LookSettings & {preset: string, isIndexed: boolean}* `isIndexed`: the view draws tone indices into a target and resolves colour afterwards (needed for screen-space ink and for any resolution below native)
+
+```js
+Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
+```
+
+### Types
+
+- **LookSettings** - Everything that decides how a view draws.
+  - `toneCount` *number* - tones per ramp, 2..6 (the band count)
+  - `dither` *number* - strength of the ordered dither on the light value, 0 (off) .. 0.3
+  - `ditherSpace` *'screen'\|'anchored'\|'object'* - what the dither pattern is fixed to: the screen, the figure's snapped screen position, or the surface itself
+  - `softness` *number* - half-width of the blend across a band edge, in light units; 0 is a hard edge. Only drawn at native resolution without screen-space ink (tone indices cannot be blended)
+  - `outline` *'none'\|'hull'\|'ink'* - no lines, an inverted hull per mesh, or screen-space ink over an index target
+  - `inkWidth` *number* - hull line width, CSS pixels (screen-space ink is always one texel)
+  - `pixelRows` *number* - internal height in texels; 0 is native resolution
+  - `snap` *boolean* - move figures by whole texels when drawn below native resolution
+  - `yawSteps` *number* - facings per turn a caller should round a figure's turn to (see stepYaw); 0 is continuous
+  - `rim` *boolean* - lift grazing, lit edges one tone
+- **LookKnob**
+  - `id` *string* - the LookSettings field it edits
+  - `label` *string*
+  - `type` *'choice'\|'range'\|'toggle'*
+  - `[options]` *Array\<{value: \*, label: string}\>* - for a choice
+  - `[min]` *number* - for a range
+  - `[max]` *number* - for a range
+  - `[step]` *number* - for a range
+
+## look-toon.js
+
+> Kit look toon: the materials of the stylised look. A toon material turns n.L into a tone band and looks the
+> colour up in the palette texture; a hull material draws the mesh's outline in its ramp's ink colour.
+>
+> Owns:  the palette texture over a `Kit.palette.atlas`; the GLSL chunks (bands, ordered dither, accents, palette
+>        lookup, hull extrusion) as named strings; `Kit.look.shading`: the uniforms every material of one look
+>        shares, `dress(mesh, part)` to put a mesh in the look, and `apply(settings, frame)` to change the look
+>        of every dressed mesh at once.
+> Does not own: colours (kit/palette.js), screen-space ink and low-resolution targets (look-ink.js), or
+>        when anything is drawn (look-view.js).
+>
+> Why a ShaderMaterial and not a patched MeshToonMaterial: the palette contract needs the fragment's last
+> word (a tone index or a table colour, never lit RGB, never tone mapped), and the standard material's
+> lighting, fog and tone-mapping chunks would all have to be cut back out through string patches that break
+> with the next three.js release. The cost: no scene lights, shadows or fog; the look has one key light of its own.
+>
+> GLSL here is WebGL1-safe (constant loop bounds, no integer bit operations, no MRT); three.js converts it for
+> WebGL2. Skinned and instanced meshes are supported through three.js's own vertex chunks; morph targets are not.
+> Needs THREE, so it is exercised in the browser (Kit.play('look')) rather than by unit tests.
+
+### Types
+
+- **LookPart** - What a mesh is, to the look.
+  - `ramp` *number* - row of the palette atlas (`block.rows.skin`)
+  - `[inkGroup=1]` *number* - 1..255. Screen-space ink draws a line where two groups meet; 0 means the part is never outlined and never drawn over by ink (eyes, glows)
+  - `[shiny]` *boolean* - takes the lightest tone where it mirrors the light (hair, metal, gems)
+  - `[emissive]` *boolean* - always the lightest tone; its ink group defaults to 0
+  - `[tone]` *number* - a fixed tone, 0 (darkest) .. 1 (lightest) of the ramp, instead of shading
+  - `[anchor]` *{value: THREE.Vector2}* - from `shading.follow(root)`: the figure this part's dither moves with
+  - `[instanceRamp]` *boolean* - an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
+- **DressedMesh**
+  - `mesh` *THREE.Mesh*
+  - `toon` *THREE.Material*
+  - `hull` *THREE.Material*
+  - `setRamp` *function(number): void* - point both materials at another atlas row (O(1))
+- **LookFrame** - What `apply` must know about the target being drawn into.
+  - `width` *number* - target width, device pixels (or texels)
+  - `height` *number* - target height
+  - `lineWidth` *number* - hull line width in pixels of that target
+  - `[depthRange]` *number[]* - [near, far] view depths packed into the index target's alpha
+
+## look-ink.js
+
+> Kit look ink: the indexed pipeline. A scene of dressed meshes is drawn as (ramp, tone, ink group, depth)
+> into a small target, a second pass turns that into colour and adds one-texel ink lines, and a last pass
+> copies the result to the screen with whole-number scaling.
+>
+> Owns:  `Kit.look.inkPass`: the two render targets and their sizes, the resolve shader (palette lookup plus
+>        silhouette and inner ink) and the upscale shader.
+> Does not own: what writes the index target (the materials in look-toon.js, with LOOK_INDEX_OUTPUT), the
+>        settings (look-settings.js), or the frame around it: clearing, cameras, snapping (look-view.js).
+>
+> Why one RGBA8 target and no depth texture or MRT: ramp, tone and ink group are a byte each, and the view
+> depth fits the fourth byte because its range is fitted round the figures. So the pipeline needs nothing
+> beyond WebGL1, one colour attachment and five texture reads per texel. What it gives up: normal-based
+> crease lines (there is no normal target), and anti-aliasing (indices cannot be averaged).
+> Needs THREE and WebGL, so it is exercised in the browser (Kit.play('look')) rather than by unit tests.
+
+### Types
+
+- **InkPass**
+  - `resize` *function(number, number, number): void* - (bufferWidth, bufferHeight, scale): size the targets for a screen buffer in device pixels drawn at `scale` pixels per texel
+  - `draw` *function(THREE.WebGLRenderer, THREE.Scene, THREE.Camera, Object): void* - index pass, resolve pass, then the upscale onto whatever target is current. Leaves the renderer's clear colour at transparent black
+  - `size` *function(): {width: number, height: number, scale: number}* - the targets' size in texels and the scale
+  - `readTexels` *function(THREE.WebGLRenderer): Uint8Array* - the resolved colour target as RGBA bytes, bottom row first
+  - `dispose` *function(): void*
+
+## look-view.js
+
+> Kit look view: the thin composition that draws a scene of dressed meshes in a chosen look. It joins the
+> palette atlas, the shading and the indexed pipeline, and decides per frame which path a look needs.
+>
+> Owns:  `Kit.look.view`: a scene for the figures, the current settings (preset plus knob overrides), the
+>        choice between the direct path (colour straight to the screen, hull outlines, anti-aliased) and the
+>        indexed path (look-ink.js), texel snapping and dither anchoring of figures, the depth range fitted
+>        round them, and the cheaper fallback for slow devices (`degrade`).
+> Does not own: the pieces it composes (kit/palette.js, look-settings.js, look-toon.js, look-ink.js), the camera, animation
+>        (a caller rounds a turn with Kit.look.stepYaw), or the background behind the figures.
+>
+> Colour: the view writes palette bytes straight to the screen, so it must be drawn outside the kit's HDR
+> post chain (a game does that by returning `render` from create(); see kit/shell.js).
+> Needs THREE and WebGL, so it is exercised in the browser (Kit.play('look')) rather than by unit tests.
+
+### Types
+
+- **LookView**
+  - `scene` *THREE.Scene* - add figures here (through `add`); only dressed meshes belong in it
+  - `atlas` *ReturnType\<typeof Kit.palette.atlas\>* - the palette table; `atlas.load(palette)` gives a figure its rows
+  - `shading` *Object* - from Kit.look.shading: `shading.dress(mesh, part)`
+  - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
+  - `remove` *function(THREE.Object3D): void* - take a figure's root out of the scene and drop its dither anchor
+  - `use` *function(string, Object=): Object* - switch to a preset, with optional knob overrides; returns the settings
+  - `set` *function(string, \*): Object* - change one knob; returns the settings
+  - `settings` *function(): Object* - the settings in force (after any degrade)
+  - `render` *function(THREE.Camera, {clearColor?: number}=): void* - draw one frame onto the current target
+  - `degrade` *function(): boolean* - drop to the cheaper variant of the current look; false when there is none
+  - `stats` *function(): Object* - `{ path, scale, targets }` of the last frame
+  - `readTexels` *function(): {width: number, height: number, data: Uint8Array}\|null* - the indexed path's resolved texels (bottom row first), or null on the direct path
+  - `dispose` *function(): void*
+
+## look-panel.js
+
+> Kit look panel: the controls of the stylised look as reusable pieces, so every screen that draws through a
+> `Kit.look.view` offers the same preset, knob and palette controls in the same panel: the `look` showcase,
+> the `figures` screen and the character creator.
+>
+> Owns:  `Kit.look.panel`: `lookControls(view)` (signals for the preset and every knob, bound to the view),
+>        the components `Choice` (a labelled row of exclusive buttons), `KnobControl` (one knob of
+>        `Kit.look.KNOBS`), `LookControls` (preset, its note and every knob) and `Panel` (the scrollable sheet
+>        at the bottom in portrait and the side in landscape, with hide and show buttons), its stylesheet, and
+>        `freeArea` (the part of the screen the panel leaves for the scene).
+> Does not own: the look (kit/look-*.js), what a screen draws, or its extra rows (palettes, edits), which a
+>        screen passes in as children.
+>
+> Needs the DOM and kit/ui, so it is exercised in the browser (`Kit.play('look')`, `Kit.play('figures')`).
+
+### `Kit.look.panel.PANEL_SHARE`
+
+Share of the screen the panel takes: the bottom in portrait, the right side in landscape.
+
+### `Kit.look.panel.TOP_BAR_PIXELS`
+
+Height of the shell's top bar the scene must stay clear of, CSS pixels.
+
+### `Kit.look.panel.Choice({ label, options, value, onPick, idPrefix })`
+
+A labelled row of exclusive buttons. `idPrefix` makes each button addressable by tools ('<prefix>-<value>').
+
+- `props` *{label: string, options: Array\<{value: \*, label: string}\>, value: Object, onPick: function(\*): void, idPrefix: string}* - `value` is a signal
+
+**Returns** *Object* a vnode
+
+### `Kit.look.panel.KnobControl({ knob, value, onChange })`
+
+One editor control for a knob row of `Kit.look.KNOBS`, bound to that knob's signal.
+
+- `props` *{knob: Object, value: Object, onChange: function(\*): void}*
+
+**Returns** *Object* a vnode
+
+### `Kit.look.panel.LookControls({ controls, readout, children })`
+
+The preset choice, its description (plus an optional readout signal) and every knob.
+
+- `props` *{controls: LookControlState, readout?: Object, children?: \*}* - `children` go between the preset and the knobs (palettes)
+
+**Returns** *Object* a vnode
+
+**Complexity** O(presets + knobs)
+
+### `Kit.look.panel.Panel({ isShown, label, children })`
+
+The panel: a scrollable sheet (bottom in portrait, right in landscape) with a hide button, and a show
+button while it is hidden.
+
+- `props` *{isShown: Object, label: string, children: \*}* - `isShown` is a boolean signal
+
+**Returns** *Object* a vnode
+
+### `Kit.look.panel.lookControls(view, presetId = 'toon')`
+
+Signals for the preset and every knob, bound to a view: any change is applied to the view at once.
+
+- `view` *Object* - from `Kit.look.view`
+- `[presetId='toon']` *string*
+
+**Returns** *LookControlState*
+
+**Complexity** O(knobs) to make, and per preset change or knob read
+
+```js
+const controls = Kit.look.panel.lookControls(view); // later: controls.stop()
+```
+
+#### `Kit.look.panel.lookControls().choosePreset(id)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.look.panel.lookControls().knobValues()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.look.panel.freeArea(size, isPanelShown)`
+
+The part of the screen the panel and the top bar leave for the scene, CSS pixels.
+
+- `size` *{w: number, h: number, portrait: boolean}* - the shell's `ctx.size`
+- `isPanelShown` *boolean*
+
+**Returns** *{width: number, height: number, centerX: number, centerY: number}* its size, and its centre measured from the top left of the screen
+
+**Complexity** O(1)
+
+```js
+const free = Kit.look.panel.freeArea(ctx.size, true);
+```
+
+### Types
+
+- **LookControlState**
+  - `preset` *Object* - signal of the preset id
+  - `knobs` *Object\<string, Object\>* - knob id -> signal of its value
+  - `choosePreset` *function(string): void* - switch preset and reset every knob to its value
+  - `knobValues` *function(): Object* - knob id -> current value
+  - `stop` *function(): void* - unbinds the view (call from the screen's dispose)
+
+## look-show.js
+
+> Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from
+> primitives, each with its own palette, slowly turning, with controls for the preset, the palettes and every knob.
+>
+> Owns:  the `look` screen; the stand-in figures as data (`PARTS`, `FIGURES`); the control panel generated from
+>        `Kit.look.KNOBS`; and the measurements a tool can ask for (`Kit.currentGame.measure()`): exact-colour
+>        readback, cost per look, shimmer under rotation and motion, skinned and instanced meshes.
+> Does not own: the look itself (kit/palette.js, look-settings.js, look-toon.js, look-ink.js, look-view.js) or real characters
+>        (the body system builds those; this screen only needs something with a head, limbs and a held prop).
+>
+> It is registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and
+> play tools reach it like any other. It draws its own frame (see `render` in kit/shell.js).
+
+### Types
+
+- **PartRow** - One primitive of a figure.
+  - `shape` *string* - a key of SHAPES
+  - `size` *number[]* - what that shape reads
+  - `at` *number[]* - centre, [x, y, z]
+  - `[turn]` *number[]* - rotation, [x, y, z] radians
+  - `[stretch]` *number[]* - scale along the part's own axes
+  - `ramp` *string* - ramp name in the figure's palette
+  - `[group]` *number* - ink group (default 1; 0 is never outlined)
+  - `[shiny]` *boolean*
+  - `[emissive]` *boolean*
+  - `[tone]` *number* - fixed tone 0..1
+
+## figure-shapes.js
+
+> Kit figure shapes: the surface of one bone, as plain arrays. Each body shape primitive (capsule, sphere, box,
+> lathe, extrude; kit/body-plan.js `SHAPES`) has one builder from the shape's data to positions, normals and
+> triangle indices in the bone's own space, at a chosen level of detail, plus a key that is equal exactly when
+> two shapes would build the same surface (so identical shapes share one geometry).
+>
+> Owns:  `Kit.figure.LEVELS` (segment counts per level of detail), `Kit.figure.ACROSS_AXIS` (the extrude
+>        convention), `describeShapes` (a bone of a plan -> its canonical shape descriptors), `shapeKey`,
+>        `buildShape` and the builders behind it (`BUILDERS`), `triangulate` (ear clipping for extrude
+>        outlines) and `writeBoneMatrix` (a bone's world transform as a column-major 4 x 4 matrix).
+> Does not own: the shape data (kit/body-plan.js and a catalogue's plans and parts), which bones get drawn and
+>        in what colour (kit/figure-layout.js), or anything THREE (kit/figure.js wraps these arrays in
+>        BufferGeometry).
+>
+> Conventions: the bone's own space of kit/body-plan.js (metres, +Y up, +Z forward, +X left). A shape lives
+> in that space, so the bone's three-axis scale (the dials) stretches it with no rebuild. Triangles wind
+> counter-clockwise seen from outside; normals are unit length and point out.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-figure.js.
+
+### Types
+
+- **ShapeDescriptor** - Everything that decides a bone's surface, in canonical form (no defaults left to fill in).
+  - `kind` *('capsule'\|'sphere'\|'box'\|'lathe'\|'extrude')*
+  - `[end]` *number[]* - capsule: [x, y, z] of its far end in bone space (its start is the joint)
+  - `[radius]` *number* - capsule: radius at the joint; sphere: radius
+  - `[endRadius]` *number* - capsule: radius at the far end (a limb tapers into the next segment)
+  - `[size]` *number[]* - box: [x, y, z]
+  - `[profile]` *number[][]* - lathe: [[radius, along], ...]
+  - `[outline]` *number[][]* - extrude: [[across, along], ...]
+  - `[depth]` *number* - extrude: thickness
+  - `[axis]` *number* - lathe and extrude: the long axis, 0 = x, 1 = y, 2 = z
+  - `[across]` *number* - extrude: the axis the outline's first coordinate lies along
+  - `at` *number[]* - [x, y, z] offset in bone space
+- **ShapeArrays** - A surface as plain arrays, ready for a BufferGeometry.
+  - `positions` *Float32Array* - 3 per vertex, bone space, metres
+  - `normals` *Float32Array* - 3 per vertex, unit length, outward
+  - `indices` *Uint16Array\|Uint32Array* - 3 per triangle, counter-clockwise from outside
+- **BoneSurface**
+  - `shape` *ShapeDescriptor*
+  - `child` *number* - -1 for the bone's own (first) surface; else the child bone an extra link reaches
+
+## figure-layout.js
+
+> Kit figure layout: what a renderer draws for one body bake, decided as plain data. A layout lists the
+> pieces (one per bone that has a surface, plus any extension pieces), which ramp of the individual paints each
+> one, which ink group it belongs to, and what has to change when the bake changes. It also measures the body
+> at rest, so a figure can stand on the ground and a camera can be fitted to it.
+>
+> Owns:  `Kit.figure.layout` (bake -> pieces), `resolveRamps` (bones that name no paint), `inkKeyOf` /
+>        `inkGroupOf` / `INK_GROUPS` (which pieces share an outline), `planUpdate` (old layout + new layout ->
+>        what to keep, add, remove and recolour), `measureRest` (lowest point and extent of the body at rest,
+>        props left out) and `fitView` (a camera window that holds a measured body).
+> Does not own: surfaces (kit/figure-shapes.js), THREE objects (kit/figure.js), bakes and what changed in the
+>        individual (kit/body-recipe.js, `editor.changes` in kit/body-edit.js), or colours (kit/palette.js).
+>
+> Two extension points are left open on purpose (see `layout`): surface features (eyes, a mouth) arrive as
+> extra pieces per bone, and surface regions (clothing, hair) as a lookup that splits a piece's triangles by
+> ramp. Neither is implemented here; each says exactly what it expects.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-figure.js.
+
+### Types
+
+- **FigurePiece** - One drawn surface: a mesh in the meshes binding, a run of triangles in a merged one.
+  - `id` *string* - stable across rebuilds: the bone's name; '<bone>><child>' for an extra link of a hub bone (a chest to a shoulder); '<bone>#<n>' for an extension piece
+  - `bone` *number* - bone index in the layout's plan (changes when the outfit changes; `id` does not)
+  - `shape` *Object* - a `ShapeDescriptor` of kit/figure-shapes.js, in the bone's space
+  - `key` *string* - `shapeKey(shape, level)`: equal keys share one geometry
+  - `ramp` *number* - index into the bake's `ramps` (never -1: see `resolveRamps`)
+  - `inkGroup` *number* - 0..255
+  - `isProp` *boolean* - the bone belongs to an attached part (left out of grounding and framing)
+  - `[shiny]` *boolean* - passed to the look (`LookPart.shiny`)
+  - `[emissive]` *boolean* - passed to the look
+  - `[tone]` *number* - passed to the look: a fixed tone 0..1
+- **FeaturePiece** - EXTENSION POINT (surface features: eyes, a mouth, a nose, horns).
+  - `shape` *Object* - a `ShapeDescriptor` in the bone's space (already placed on the surface: its `at`)
+  - `[ramp]` *number* - index into the bake's `ramps`; default the bone's own
+  - `[glow]` *boolean* - true for eyes and glows: ink group 0, never outlined
+  - `[shiny]` *boolean*
+  - `[emissive]` *boolean*
+  - `[tone]` *number*
+- **RegionLookup** - EXTENSION POINT (surface regions: clothing, hair as predicates over bone-local coordinates).
+- **FigureLayout**
+  - `plan` *Object* - the bake's assembled `BodyPlan`
+  - `level` *string* - the level of detail of every key
+  - `boneRamp` *Int16Array* - per bone: the resolved ramp index (see `resolveRamps`)
+  - `boneChannel` *Array\<?string\>* - per bone: the paint channel it is drawn with, inherited like its ramp
+  - `pieces` *FigurePiece[]* - in bone order
+  - `rampCount` *number* - how many ramps the bake has
+- **FigureUpdate**
+  - `keep` *Array\<{from: FigurePiece, to: FigurePiece}\>* - pieces drawn as they are; only their bone index may move
+  - `add` *FigurePiece[]* - pieces to build (a geometry from the cache or new, two new materials)
+  - `remove` *FigurePiece[]* - pieces to take down
+  - `recolor` *boolean* - the palette rows must be rewritten (a colour changed)
+  - `remeasure` *boolean* - the rest pose changed, so grounding and framing must be measured again
+- **RestMeasure**
+  - `lowestY` *number* - the lowest point of any body surface, metres (props left out: a sword held low does not lift the body)
+  - `highestY` *number* - the highest point of any body surface
+  - `centerX` *number* - the middle of the body's footprint across X, so a long body (a hound) can turn about its middle
+  - `centerZ` *number* - the middle of the footprint along Z
+  - `reach` *number* - how far the body's footprint reaches from that middle (half its diagonal), metres: a figure turning about the middle stays inside it
+  - `lowestPropY` *number* - the lowest point of a prop, or Infinity when none is worn
+- **ViewWindow** - An orthographic camera's window onto a figure: the world point at its centre and its half extents.
+  - `centerX` *number* - world units across the camera (0: the figure's vertical axis)
+  - `centerY` *number* - world height of the centre
+  - `halfWidth` *number*
+  - `halfHeight` *number*
+
+## figure.js
+
+> Kit figure: a body bake plus a pose, drawn in 3D through Kit.look. It is the renderer between the body
+> system (data) and the look pipeline (shading): one mesh per piece of kit/figure-layout.js, its geometry from
+> kit/figure-shapes.js shared through a cache, its material from `view.shading.dress`, its colour from the
+> figure's rows of the view's palette atlas, and its matrix written each frame from the pose's world transforms.
+>
+> Owns:  `Kit.figure.geometryCache` (BufferGeometry per shape key, counted and shared), `Kit.figure.build`
+>        (bake -> a figure in a view) and what it returns: `local` (the pose buffer a caller writes), `pose()`
+>        (one forward pass and the matrix writes, no allocation), `setBake` (incremental update from
+>        `editor.changes`), `measured` / `frame` (grounding and camera fitting) and `dispose`.
+> Does not own: what pieces exist (kit/figure-layout.js), surfaces (kit/figure-shapes.js), shading, outlines
+>        and colour (kit/look-*.js, kit/palette.js), kinematics (kit/rig.js, kit/reach.js) or motion over time.
+>
+> Why one mesh per piece (DECISIONS.md, "Kit.figure: one mesh per piece"): measured against one skinned mesh
+> per paint region and against instancing across figures that share a bake; the per-piece mesh is exact
+> (normals under a dial's non-uniform scale, bounds, culling), makes every incremental update a keyed diff,
+> and costs draw calls that matter only past a few dozen figures, where `Kit.figure.crowd` is the answer.
+>
+> Needs THREE, so it is exercised in the browser (`Kit.play('figures')`); its decisions are pure and tested.
+
+### Types
+
+- **GeometryCache**
+  - `acquire` *function(Object): THREE.BufferGeometry* - the geometry of a piece (`{ shape, key }`), built on the first request
+  - `release` *function(string): void* - one user fewer; the geometry is disposed when none is left
+  - `positions` *function(Object): Float32Array* - a piece's bone-space positions (builds and caches them without a geometry)
+  - `stats` *function(): {created: number, alive: number}* - geometries ever created, and alive now
+  - `dispose` *function(): void* - free every geometry
+- **Figure**
+  - `root` *THREE.Group* - a direct child of `view.scene`; move and turn it to place the figure
+  - `bake` *Object* - the bake drawn now
+  - `layout` *Object* - the `FigureLayout` drawn now
+  - `local` *Object* - the pose buffer (a `JointTransforms` of kit/rig.js, in `bake.plan` bone order): write it, then call `pose()`. Reset to the rest pose with `rest()`. Replaced by `setBake` when the plan changes.
+  - `world` *Object* - the world transforms of the last `pose()`, in figure space
+  - `measured` *Object* - the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
+  - `rest` *function(): void* - copies the bake's rest pose into `local`
+  - `pose` *function(): void* - forward kinematics over `local` and a matrix write per mesh; no allocation
+  - `setBake` *function(Object, Object=): Object* - draws another bake with the fewest changes; returns the plan carried out
+  - `frame` *function(number): Object* - a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
+  - `counters` *function(): {meshes: number, materialsCreated: number, geometriesCreated: number}*
+  - `dispose` *function(): void*
+- **Crowd**
+  - `root` *THREE.Group* - a direct child of `view.scene`
+  - `count` *number*
+  - `locals` *Object[]* - one pose buffer per member (write it, then `pose`)
+  - `places` *Float32Array* - 4 per member: x, y, z, heading (radians); written by the caller
+  - `pose` *function(): void* - forward kinematics and an instance matrix per member per piece; no allocation
+  - `dispose` *function(): void*
+
+## figure-show.js
+
+> Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a
+> human, a winged variant, a hound, a carp and a sword on its own) drawn in 3D by Kit.figure through Kit.look,
+> slowly turning, with the shared look controls, the human's colour choices, a row of live edits that show
+> incremental updates (a dial, a colour, a hat, a sword), and a debug pose that raises an arm by Kit.reach.
+>
+> Owns:  the screen: the samples as rows (`SAMPLES`), the edits as rows (`EDITS`), the stage layout and the
+>        cost probe a tool can run (`Kit.currentGame.measure()`): draw calls and milliseconds per frame for
+>        1, 20 and 200 figures under three bindings (a mesh per piece, a skinned mesh per paint region, and
+>        instancing across figures that share a bake).
+> Does not own: anything it shows (kit/body-*.js, kit/figure*.js, kit/look-*.js) or the look's controls
+>        (kit/look-panel.js).
+>
+> Registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and play
+> tools reach it like any other. It draws its own frame (see `render` in kit/shell.js).
 
 ## ui/gallery.js
 
