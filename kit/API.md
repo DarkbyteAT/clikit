@@ -92,6 +92,16 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
+- [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
+- [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
+- [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
+- [creator-camera.js](#creator-camerajs) (0) - Kit creator camera: where the stage camera looks and how it gets there, as plain numbers.
+- [creator-icons.js](#creator-iconsjs) (0) - Kit creator icons: a small set of line icons as data, and the component that draws one.
+- [creator-controls.js](#creator-controlsjs) (0) - Kit creator controls: the interface generated from the rows of a schema.
+- [creator-stage.js](#creator-stagejs) (0) - Kit creator stage: the part of the screen the character stands in, as components.
+- [creator-panels.js](#creator-panelsjs) (0) - Kit creator panels: the parts of the creator that are not generated from the schema.
+- [creator-theme.js](#creator-themejs) (0) - Kit creator theme: the character creator's own look, as a theme for `Kit.register`.
+- [creator.js](#creatorjs) (0) - Kit creator: the `creator` screen (`Kit.play('creator')`, "Character Maker" in the menu).
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -9029,6 +9039,272 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 >
 > Registered like a game (after the bodies and figures screens), so the shell gives it a HUD, a back button and
 > clean-up, and the smoke and play tools reach it like any other. It draws its own frame (`render`).
+
+## creator-rows.js
+
+> Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character
+> creator shows, so no control is ever written per body part: a dial, a colour channel or a socket that the
+> catalogue gains next month appears in its group with no change here.
+>
+> Owns:  `Kit.creator.rows`: `groupsOf` (schema -> tab groups, each with its ordered rows), `valuesOf` (the
+>        current value of every field by key), `structureKey` (a string that changes only when the set of rows
+>        or their shape changes, so a view re-renders on that and merely updates values otherwise), and the small
+>        pure helpers a row's view needs (`dialReadout`, `isAtDefault`, `swatchGradient`).
+> Does not own: the schema (kit/body-edit.js), any element (kit/creator-controls.js draws these rows) or what an
+>        edit does (kit/creator-session.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-creator.js.
+
+### Types
+
+- **ControlRow** - One thing a person can change, ready to draw.
+  - `kind` *('dial'\|'color'\|'socket')*
+  - `id` *string* - stable and unique within the schema: a field key, or `dial:<base>` for a sided pair
+  - `lockKeys` *string[]* - the field keys a lock on this row protects from a randomise
+  - `valueKeys` *string[]* - the field keys whose current values the row shows
+  - `label` *string*
+  - `hint` *?string* - a sentence for a tooltip
+  - `icon` *?string* - an icon name from the catalogue
+  - `group` *string*
+  - `order` *number*
+  - `depth` *number* - how deeply a socket is nested under another (0 for everything else)
+  - `[sliders]` *Array\<DialSlider\>* - dial rows: one slider while linked or unsided, two while unlinked
+  - `[isSided]` *boolean* - dial rows: is this a left / right pair?
+  - `[isLinked]` *boolean* - dial rows: do both sides move together?
+  - `[base]` *string* - dial rows of a sided pair: the shared id (what `editor.link` takes)
+  - `[ramps]` *Object[]* - colour rows: the ramps of the channel
+  - `[channel]` *string* - colour rows: the channel id
+  - `[choices]` *Array\<{id: ?string, label: string, icon: ?string, hint: ?string}\>* - socket rows: what fits, None first when allowed
+  - `[path]` *string* - socket rows: the socket path
+- **DialSlider**
+  - `setId` *string* - what `editor.setDial` takes: the dial id, or the base id for a linked pair
+  - `valueKey` *string* - the field key whose value this slider shows
+  - `caption` *string* - 'Left' / 'Right' while a pair is unlinked, else ''
+  - `min` *number*
+  - `max` *number*
+  - `step` *number*
+  - `default` *number*
+- **RowGroup**
+  - `id` *string*
+  - `label` *string*
+  - `icon` *?string*
+  - `hint` *?string*
+  - `rows` *ControlRow[]*
+
+## creator-session.js
+
+> Kit creator session: the state and every editing action of a character creator, with no interface in it.
+> One session holds the recipe being edited, its undo history, the controls the person has locked, the sided
+> dials they moved one side at a time, the character's name and the recipe the session started from (what a
+> "compare" shows).
+>
+> Owns:  `Kit.creator.session(options)` and what it returns; `Kit.creator.parseShareCode` / `shareCode` (a
+>        recipe as a short code and back, with every failure explained in plain words); `Kit.creator.switchSpecies`
+>        (change body type keeping what still fits); `Kit.creator.suggestName`.
+> Does not own: what an edit means (kit/body-edit.js: every change goes through the editor, so a recipe is always
+>        one the catalogue accepts), how a recipe is stored or shared on the wire (kit/body-recipe.js,
+>        kit/pack.js), history itself (`Kit.history` in kit/space.js) or any element (kit/creator-controls.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-creator.js. Time and randomness are
+> passed in, so a test controls both.
+
+### Types
+
+- **CreatorSession**
+  - `recipe` *function(): Object* - the recipe being edited
+  - `baseline` *function(): Object* - the recipe the session started from, or the last one loaded
+  - `schema` *function(): Object* - `editor.schema` of the recipe (kept until the recipe changes)
+  - `groups` *function(): Object[]* - `Kit.creator.rows.groupsOf` of the schema, honouring unlinked pairs
+  - `setDial` *function(string, number): void* - set a dial by its set id (a sided pair's base moves both sides)
+  - `setColor` *function(string, number): void* - set a colour channel to a ramp index
+  - `setSocket` *function(string, ?string): void* - put a part in a socket, or null to empty it
+  - `resetDial` *function(Object): void* - put one slider (`DialSlider`) back to its default
+  - `toggleLock` *function(string[]): void* - lock the keys if any is open, else open them all
+  - `isLocked` *function(string): boolean*
+  - `areLocked` *function(string[]): boolean*
+  - `toggleLink` *function(string): boolean* - link a sided pair, or let its sides move apart; returns whether it is linked now
+  - `randomizeAll` *function(): void*
+  - `randomizeGroup` *function(string): void*
+  - `mirror` *function(string=): void*
+  - `setSpecies` *function(string): {kept: number, dropped: string[]}*
+  - `undo` *function(): boolean*
+  - `redo` *function(): boolean*
+  - `canUndo` *function(): boolean*
+  - `canRedo` *function(): boolean*
+  - `endGesture` *function(): void* - the next edit to the same control starts a new undo step
+  - `name` *function(): string*
+  - `setName` *function(string): string*
+  - `code` *function(): string* - the share code of the recipe
+  - `importCode` *function(string): {ok: boolean, message?: string}* - load a pasted code (one undo step)
+  - `load` *function(Object, string=): void* - replace the recipe (one undo step) and make it the new baseline
+  - `summary` *function(): Object* - `{ revision, canUndo, canRedo, isChanged }`
+
+## creator-slots.js
+
+> Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
+> A slot holds the character's share code (not the recipe), so a saved character survives changes to the
+> catalogue the way a shared one does: it either decodes or says in words why it cannot.
+>
+> Owns:  `Kit.creator.slots(store, options)` (list, save, update, rename, remove, open a slot) and
+>        `Kit.creator.chipColors` (the few colours that stand in for a character in a list).
+> Does not own: the store (`ctx.save` or `Kit.store(name)`), the share code (kit/creator-session.js), or the
+>        list's interface (kit/creator-sheets.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-creator.js.
+
+### Types
+
+- **Slot**
+  - `id` *string* - unique within the list
+  - `name` *string*
+  - `code` *string* - the character's share code
+  - `savedAt` *number* - milliseconds since 1970
+- **SlotList**
+  - `list` *function(): Slot[]* - every saved character, newest first
+  - `find` *function(string): ?Slot*
+  - `save` *function(string, string): {ok: boolean, slot?: Slot, message?: string}* - a new slot from a name and a share code; refused when full
+  - `update` *function(string, string): ?Slot* - replace a slot's code; null when there is no such slot
+  - `rename` *function(string, string): ?Slot*
+  - `remove` *function(string): boolean* - false when there was nothing to remove
+  - `isFull` *function(): boolean*
+  - `most` *number*
+
+## creator-camera.js
+
+> Kit creator camera: where the stage camera looks and how it gets there, as plain numbers. The character is
+> framed by two numbers, the share of the body's height in view (`span`, 1 is the whole body) and the height
+> at the middle of the view (`anchor`, as a share of the body's height); a turn is a `yaw`. Choosing a group of
+> controls moves the target to the body area that group edits, and the real camera eases toward it.
+>
+> Owns:  `Kit.creator.camera.director(options)` (the state, `focus`, `zoomBy`, `zoomTo`, `turnBy`, `step`,
+>        `windowFor`), the table `GROUP_FOCUS` (group id -> the body area it edits) and the gesture maths
+>        (`pinchFactor`, `yawFromDrag`).
+> Does not own: the camera object (the screen sets an orthographic camera from the window this returns), the
+>        measuring of the body (`figure.measured`), or pointer events (kit/creator.js reads those).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-creator.js.
+
+### Types
+
+- **CameraDirector**
+  - `focus` *function(string): void* - aim at the body area of an editor group (an unknown group aims at the whole body)
+  - `zoomBy` *function(number): void* - multiply the span (below 1 zooms in); the anchor follows unless a group fixed it
+  - `zoomTo` *function(('full'\|'close')): void* - jump the target to the whole body or to head and shoulders
+  - `turnBy` *function(number): void* - turn the character by radians, instantly (a drag)
+  - `turnTo` *function(number): void* - ease the character to a yaw (a button or key)
+  - `step` *function(number, boolean=): void* - move toward the target by `dt` seconds; `instant` jumps there
+  - `windowFor` *function(Object, number): {centerX: number, centerY: number, halfWidth: number, halfHeight: number}* - the camera window for a measured body and a screen area of an aspect
+  - `state` *function(): {yaw: number, anchor: number, span: number}* - the values in view now
+  - `target` *function(): {yaw: number, anchor: number, span: number}* - the values being eased to
+
+## creator-icons.js
+
+> Kit creator icons: a small set of line icons as data, and the component that draws one. Group, action and
+> part icons in the catalogue are names; this table is what turns a name into a drawing, so a name the table
+> does not know still shows something (a dot) instead of nothing.
+>
+> Owns:  `Kit.creator.ICONS` (name -> SVG path data in a 24 x 24 box) and `Kit.creator.Icon`.
+> Does not own: the names (the catalogue's `icon` fields and the creator's own buttons) or any layout.
+>
+> Every icon is an original, simple stroke drawing. Needs the DOM (kit/ui/), so it is exercised in the browser.
+
+## creator-controls.js
+
+> Kit creator controls: the interface generated from the rows of a schema. A row of kind `dial` becomes sliders,
+> `color` a grid of swatches that show the real ramp tones, `socket` a scrolling strip of option cards (None
+> first); a tab per group holds its rows. Nothing here names a body part: a new control in the catalogue is a new
+> row and gets a view from the table `ROW_VIEWS`.
+>
+> Owns:  `Kit.creator.controlHost` (the bridge between a session and the views: one signal per field, one per
+>        lock, the row structure as a signal, and the actions the views call), the row views (`DialControl`,
+>        `ColorControl`, `SocketControl`), `GroupPane` and `ControlTabs`, and their stylesheet.
+> Does not own: what an edit does (kit/creator-session.js), the rows (kit/creator-rows.js), the stage around the
+>        character (kit/creator-stage.js) or the screen (kit/creator.js).
+>
+> Why signals per field: a slider drag changes one value, so exactly one slider and one readout update; the page
+> is not rebuilt. The row structure is a signal too, but it changes only when `structureKey` does (a part with
+> sockets, a pair unlinked, a body type), and then only the open pane redraws.
+>
+> Needs the DOM and kit/ui/, so it is exercised in the browser (tools/test-creator-ui.js).
+
+### Types
+
+- **ControlHost**
+  - `groups` *Object* - signal of the `RowGroup[]`; replaced only when the row structure changes
+  - `value` *function(string): Object* - signal of a field's current value, by field key
+  - `lock` *function(string): Object* - signal (boolean) of a field's lock
+  - `queueDial` *function(string, number): void* - remember a slider's newest value; `flush` applies it on the next frame
+  - `flush` *function(): boolean* - apply queued slider values as one edit each; true when something was applied
+  - `endGesture` *function(): void* - apply what is queued and let the next drag start a new undo step
+  - `setColor` *function(string, number): void*
+  - `setSocket` *function(string, ?string): void*
+  - `resetRow` *function(Object): void* - put every slider of a dial row at its default
+  - `resetSlider` *function(Object, Object): void* - put one slider at its default
+  - `toggleLock` *function(Object): void*
+  - `toggleLink` *function(Object): void*
+  - `sync` *function(): void* - re-read the session into the signals (call after anything done to the session directly)
+  - `act` *function(function(): void): void* - run a session change, then sync and notify
+
+## creator-stage.js
+
+> Kit creator stage: the part of the screen the character stands in, as components. A gesture layer (drag to
+> turn, pinch or wheel to zoom, arrow keys and + / - for the keyboard), a left rail (undo, redo), a right rail
+> (zoom, hold-to-compare, walk), the character's name, and the quick look presets.
+>
+> Owns:  `Kit.creator.StageGestures`, `StageRails`, `StageTitle`, `LookChips`, `HoldButton` and the stage
+>        stylesheet. Each is a component over plain props, so a screen composes them and a test can mount one.
+> Does not own: the camera maths (kit/creator-camera.js), the 3D view (kit/creator.js) or the controls panel
+>        (kit/creator-controls.js).
+>
+> Needs the DOM and kit/ui/, so it is exercised in the browser (tools/test-creator-ui.js).
+
+## creator-panels.js
+
+> Kit creator panels: the parts of the creator that are not generated from the schema. The Setup tab (body
+> type, name, whole-character actions, the way into saves and sharing, the full look controls) and the two
+> dialogs: saved characters (a sheet) and the share code (a dialog with copy and paste).
+>
+> Owns:  `Kit.creator.SetupView`, `SavesBody`, `ShareBody`, `SPECIES_NOTES` (a sentence per body type, shown as
+>        a tooltip) and the panels' stylesheet.
+> Does not own: saving (kit/creator-slots.js), codes (kit/creator-session.js), the dialog component
+>        (`Kit.ui.openDialog`) or the screen that opens them (kit/creator.js).
+>
+> Every piece of text a person might paste or type (a name, a code) is shown as text, never as markup. Needs the
+> DOM and kit/ui/, so it is exercised in the browser (tools/test-creator-ui.js).
+
+## creator-theme.js
+
+> Kit creator theme: the character creator's own look, as a theme for `Kit.register`. Calm and tool-like, so the
+> character is the loudest thing on the screen: a graphite panel, one soft mint accent, flat buttons with no
+> lip, sentence-case labels and a geometric display face over a friendly text face.
+>
+> Owns:  `Kit.creator.THEME` (tokens, fonts and scoped CSS in the shape kit/theme.js takes).
+> Does not own: the layout of the creator (the components' own styles), or the 3D backdrop colour (kit/creator.js).
+>
+> Fonts come from Google Fonts only (the one font host the published page allows); every stack falls back to a
+> system face, so the screen is complete without them.
+
+## creator.js
+
+> Kit creator: the `creator` screen (`Kit.play('creator')`, "Character Maker" in the menu). A character editor for
+> the wardrobe catalogue, generated from data: the 3D character on a stage (drag to turn, pinch or buttons to
+> zoom, the camera moves to the body area being edited), and a panel of tabs whose controls are built from
+> `editor.schema` (sliders for dials, swatches for colours, option cards for parts).
+>
+> Owns:  the screen: which pieces are composed and how (session, control host, camera director, figure, look,
+>        saves), the per-frame loop (apply queued slider values, update the figure with the fewest changes, fit the
+>        camera, draw), the layout stylesheet, the draft that survives leaving the screen, and the measurements a
+>        tool can read (`debugState`).
+> Does not own: any piece it composes: edits and history (kit/creator-session.js), the rows and controls
+>        (kit/creator-rows.js, creator-controls.js), the stage (kit/creator-stage.js), dialogs and the Setup tab
+>        (kit/creator-panels.js), saves (kit/creator-slots.js), the camera maths (kit/creator-camera.js), the
+>        look (kit/look-*.js), the figure (kit/figure*.js) and what a character is (kit/body-*.js).
+>
+> Layout: portrait puts the stage above the panel; landscape puts the stage left and the panel right. Both are
+> one CSS grid, so the screen has no layout code. The 3D canvas fills the page and the camera is fitted to the
+> stage element's box, so it follows the layout.
+>
+> Registered like a game, so the shell gives it a HUD, a back button and clean-up. It draws its own frame (`render`).
 
 ## ui/gallery.js
 
