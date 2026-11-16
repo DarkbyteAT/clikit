@@ -1439,12 +1439,10 @@
     tail: { wear: 'solid' },
     bottom: { wear: 'drape', hangs: ['leg'], rank: 1, clings: 0.25 },
     outerwear: { wear: 'drape', hangs: ['spine', 'neck', 'leg'], rank: 2, clings: 0.05 },
-    // Carried things are sculpted like the body: rounded, smooth and skinned to their own bones. What is thinner
-    // than the grid can hold (a pole, a handle, a blade) stays the piece it was built as.
-    // What is slung on the back is worn over everything draped there (rank 4: above a cloak's 3).
+    // What is slung on the back is sculpted like the body (rounded, smooth, skinned to its own bone) and worn over
+    // everything draped there (rank 4: above a cloak's 3). What is held stays the piece it was built as: a pole or
+    // a blade is thinner than the grid holds, and thickened to fit it comes out lumpy.
     back: { wear: 'solid', rank: 4 },
-    grip: { wear: 'solid' },
-    flame: { wear: 'solid' },
   });
   Object.keys(PARTS).forEach((id) => {
     const worn = PARTS[id].fits.map((type) => WEAR_BY_FIT[type]).find(Boolean);

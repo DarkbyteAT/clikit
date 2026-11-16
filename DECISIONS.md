@@ -946,11 +946,14 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **What a garment covers is not drawn.** Each layer of a paint group gives up the triangles under a raised
   garment that stands further off the skin, but for one ring under the garment's edge (`uncovered`). This
   is the layering rule read downward, and it pays for the paint's cut: over 48 rolled figures mean
-  triangles fall 17% at every level (low 13 556 to 11 336; high 72 182 to 59 911, 12 rolls), though a bare
-  figure with a stippled scalp and two sculpted staffs rises 42% at low (roll 3).
-- **Carried things by fit.** `back`, `grip` and `flame` parts are `wear: 'solid'` by default: sculpted,
-  smooth, skinned to their bones. What is thinner than the grid holds stays the piece it was built as
-  (poles, handles, blades, glasses, earrings: those were looked at and left).
+  triangles fall 17 to 19% at every level (low 13 556 to 11 211; medium, 24 rolls, 34 584 to 28 183; high,
+  12 rolls, 72 182 to 58 542), though a nearly bare figure with a stippled scalp rises 41% at low and 19%
+  at medium (roll 3): three of the 48 rise more than 10% at low.
+- **Carried things by fit.** `back` parts are `wear: 'solid'` with rank 4 by default: sculpted, smooth,
+  skinned to their bones and set on the cloth under them. Held things (`grip`, `flame`) were tried as
+  solids and put back: a 1.5 cm pole thickened to fit the grid came out lumpy where the built capsule is
+  clean, and an umbrella's canopy cost 11 000 triangles at high detail. They, glasses and earrings stay the
+  pieces they are built as (looked at and left).
 - **Size reaches a worn part once.** A role selector that names `root` matches the body's own root, not the
   roots of attached parts (names with a `/`), which inherit size through the bone they hang from. Visible
   across the catalogue: on the default person worn parts are about 4.5% smaller than before, on a stout
