@@ -186,6 +186,10 @@ started later; the dispatcher forwards each new amendment to every agent as it a
     test sheet) registers with `kind: 'workbench'`: tools open it by id, the menu never lists it
     (`Kit.listed`, or `?workbench` on the address to see them).
 
+26. The lead does not disappear into one long inline task. Independent pieces of work go to parallel
+    agents on the lead's own model tier, each in its own worktree with a full brief; the lead keeps
+    design decisions, integration and the visual review of every landing, and stays reachable.
+
 ## Measures we have gamed before
 
 Each of these was once treated as the goal. None of them is.
