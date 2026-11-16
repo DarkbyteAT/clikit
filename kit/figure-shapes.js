@@ -40,6 +40,21 @@
   const PAINT = 3;
   const CENTRE = 4;
   const DEFAULT_LEVEL = 'high';
+  /**
+   * The level of detail a figure needs by how tall it is drawn, in target pixels: the coarsest level whose
+   * sculpting cell (kit/sculpt.js `DETAIL`: 28, 17 and 11 mm on a body about 1.1 m tall) still covers under
+   * about four pixels, so a silhouette never shows the grid. A close-up (a character maker, a portrait) is
+   * high; a figure in a game scene is medium or low. Rows in rising order; the last has no limit.
+   */
+  const LEVEL_BY_PIXELS = Object.freeze([Object.freeze({ upTo: 150, level: 'low' }), Object.freeze({ upTo: 330, level: 'medium' }), Object.freeze({ upTo: Infinity, level: 'high' })]);
+  /**
+   * The level of detail for a figure drawn `pixels` tall.
+   * @param {number} pixels the figure's height on the target, in target pixels (a pixel look's texels)
+   * @returns {string} a key of `LEVELS`
+   * @complexity O(1)
+   * @example Kit.figure.levelFor(96) // 'low': a footballer on a phone pitch
+   */
+  const levelFor = (pixels) => LEVEL_BY_PIXELS.find((row) => pixels <= row.upTo).level;
   /** Rings of a sphere per segment around (a quarter turn of rings per quarter turn around). */
   const RINGS_PER_AROUND = 0.25;
 
@@ -715,5 +730,5 @@
     return out;
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, ACROSS_AXIS, BUILDERS, segmentsFor, smoothProfile, triangulate, describeShapes, shapeKey, buildShape, writeBoneMatrix });
+  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, LEVEL_BY_PIXELS, levelFor, ACROSS_AXIS, BUILDERS, segmentsFor, smoothProfile, triangulate, describeShapes, shapeKey, buildShape, writeBoneMatrix });
 })();

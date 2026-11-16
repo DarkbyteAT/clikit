@@ -289,6 +289,11 @@
         return clamp(stampPaint.z / max(texels, 1e-5), 1.0, ${STAMP_MOST_GROWTH.toFixed(1)});
       }
     #endif
+    #ifdef LOOK_RESPONSE_SHARE
+      // One surface that is part face and part body (a sculpted skin): how much of the part's response each vertex takes.
+      attribute float responseShare;
+      varying float vResponseShare;
+    #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
     varying float vViewDepth;
@@ -296,6 +301,9 @@
     void main() {
       ${GLSL_TRANSFORM}
       vViewNormal = normalize(transformedNormal);
+      #ifdef LOOK_RESPONSE_SHARE
+        vResponseShare = responseShare;
+      #endif
       vLocalPosition = position;
       vViewDepth = -mvPosition.z;
       vRampOffset = 0.0;
@@ -333,6 +341,9 @@
     #ifdef LOOK_STAMP
       varying vec3 vStampPaint;
     #endif
+    #ifdef LOOK_RESPONSE_SHARE
+      varying float vResponseShare;
+    #endif
     varying vec3 vViewNormal;
     varying vec3 vLocalPosition;
     varying float vViewDepth;
@@ -356,6 +367,10 @@
       float inkClass = uInkClass;
       float lineRow = -1.0;
       vec3 response = uResponse;
+      #ifdef LOOK_RESPONSE_SHARE
+        // Light values are mixed, not gains: halfway down a neck is halfway between a face's light and a form's.
+        response = mix(vec3(${RESPONSES.form.fillGain.toFixed(1)}, ${RESPONSES.form.fillBias.toFixed(1)}, ${RESPONSES.form.dither.toFixed(1)}), uResponse, clamp(vResponseShare, 0.0, 1.0));
+      #endif
       #ifdef LOOK_REGIONS
         vec2 regionPoint = regionUv(vLocalPosition);
         vec4 region = regionAt(regionPoint);
@@ -514,6 +529,8 @@
    *   for skin that carries features (a head): the fill light keeps what is turned to the viewer at the ramp's
    *   own colour, and it is never dithered. Where a region map paints over the mesh (hair on a scalp) and on
    *   its raised shells, the part answers as a form again
+   * @property {boolean} [responseShare] the geometry has a float `responseShare` attribute, 0..1 per vertex: how
+   *   much of `response` the surface takes there, the rest being a form's (one skin that is a head and a body)
    * @property {{value: THREE.Vector2}} [anchor] from `shading.follow(root)`: the figure this part's dither moves with
    * @property {boolean} [instanceRamp] an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
    * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below
@@ -632,7 +649,7 @@
         uShell: { value: shell },
       };
     };
-    const partDefines = (part) => ({ ...(part.regions ? { LOOK_REGIONS: '' } : {}), ...(part.stamps ? { LOOK_STAMP: '' } : {}) });
+    const partDefines = (part) => ({ ...(part.regions ? { LOOK_REGIONS: '' } : {}), ...(part.stamps ? { LOOK_STAMP: '' } : {}), ...(part.responseShare ? { LOOK_RESPONSE_SHARE: '' } : {}) });
 
     /** Makes the geometry draw twice, once per material slot (toon, hull), and gives it welded normals for the hull. */
     const prepareGeometry = (mesh) => {

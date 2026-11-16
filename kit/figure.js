@@ -304,7 +304,9 @@
         mesh.frustumCulled = false;
         root.add(mesh);
         mesh.bind(skeleton, new THREE.Matrix4());
-        const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, anchor });
+        // A body surface is a head and a body in one mesh: each vertex says how much of a face's light it takes.
+        const faceLight = layer.faceShare ? { response: 'face', responseShare: true } : {};
+        const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, anchor, ...faceLight });
         materialsCreated += MATERIALS_PER_DRESS;
         return { mesh, dressed, layer };
       });
@@ -470,6 +472,7 @@
     geometry.setAttribute('normal', new THREE.BufferAttribute(layer.normals, VECTOR));
     geometry.setAttribute('skinIndex', new THREE.BufferAttribute(layer.owners, SKIN_OWNERS));
     geometry.setAttribute('skinWeight', new THREE.BufferAttribute(layer.weights, SKIN_OWNERS));
+    if (layer.faceShare) geometry.setAttribute('responseShare', new THREE.BufferAttribute(layer.faceShare, 1));
     geometry.setIndex(new THREE.BufferAttribute(layer.indices, 1));
     skinGeometries.set(layer, { geometry, users: 1 });
     return geometry;

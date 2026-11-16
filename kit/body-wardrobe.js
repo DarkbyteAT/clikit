@@ -1422,6 +1422,24 @@
    * look. Hats: they sit over the hair's thickness (`RAISE.hair`), not on the scalp. Glasses: they frame those eyes.
    */
   const EMPHASIS = Object.freeze({ eyes: 1.15, hat: 1.13, glasses: 1.15 });
+  /**
+   * How a worn part's bones are drawn by default, by what the part fits (kit/figure-sculpt.js `WEARS`): cloth
+   * that hangs is draped on the body bones whose roles are listed, things that grow from or sit on the body are
+   * sculpted solids, and what is made of metal, glass or wood stays a rigid piece. A bone row may state its own.
+   */
+  const WEAR_BY_FIT = Object.freeze({
+    hair: { wear: 'solid' },
+    facialHair: { wear: 'solid' },
+    hat: { wear: 'solid' },
+    horns: { wear: 'solid' },
+    tail: { wear: 'solid' },
+    bottom: { wear: 'drape', hangs: ['leg'] },
+    outerwear: { wear: 'drape', hangs: ['spine', 'neck'] },
+  });
+  Object.keys(PARTS).forEach((id) => {
+    const worn = PARTS[id].fits.map((type) => WEAR_BY_FIT[type]).find(Boolean);
+    if (worn && PARTS[id].bones && PARTS[id].bones.length) PARTS[id] = { ...PARTS[id], bones: PARTS[id].bones.map((bone) => ({ ...worn, ...bone })) };
+  });
   Object.keys(PARTS).forEach((id) => {
     const isHeadWorn = PARTS[id].fits.some((type) => HEAD_TYPES.includes(type));
     const emphasis = PARTS[id].fits.reduce((most, type) => Math.max(most, EMPHASIS[type] || 1), 1);

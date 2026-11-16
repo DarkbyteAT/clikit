@@ -233,7 +233,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
             }
             if (Math.abs(sum - 1) > 1e-4) assert.fail(`${where} ${layer.id}: weights of vertex ${vertex} sum to ${sum}`);
           }
-          if (layer.id.startsWith('skin:')) {
+          if (layer.id.startsWith('skin:') || layer.id.startsWith('worn:')) {
             assert.strictEqual(edgesOf(layer).open, 0, `${where} ${layer.id}: closed`);
             assert.ok(sixVolumes(layer) > 0, `${where} ${layer.id}: wound outward`);
           }
@@ -245,7 +245,9 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         assert.ok(sculpted.replaced.size > 0, where);
         sculpted.replaced.forEach((id) => {
           assert.ok(pieces.has(id), `${where}: ${id} is a piece of the layout`);
-          if (!pieces.get(id).shell) assert.ok(owning.has(pieces.get(id).bone), `${where}: the bone of ${id} moves part of a layer`);
+          // A draped object (a skirt) is moved by the body bones it hangs beside, not by its own bone.
+          const isDraped = bake.plan.spec.bones.some((row) => row.name === bake.plan.boneNames[pieces.get(id).bone] && row.wear === 'drape');
+          if (!pieces.get(id).shell && !isDraped) assert.ok(owning.has(pieces.get(id).bone), `${where}: the bone of ${id} moves part of a layer`);
         });
         assert.strictEqual(sculpted.matrices.length, boneCount * 16);
       });

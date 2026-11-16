@@ -42,12 +42,13 @@ async function stack(session, strips, file) {
 
 /**
  * Photographs suites.
- * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number, count?: number}} options `count`: how many
- *   individuals the rolls and faces suites roll (their default when left out)
+ * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number, count?: number, rigid?: boolean, level?: string}} options `count`: how many
+ *   individuals the rolls and faces suites roll (their default when left out); `rigid`: the rigid path (files are
+ *   named `-rigid`), for a before / after pair; `level`: a level of detail instead of the one the cell size asks for
  * @returns {Promise<{files: string[], problems: string[]}>}
  * @example await makeProof({ suites: ['turn', 'rolls'], catalog: 'wardrobe', preset: 'pixel' });
  */
-async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages, count }) {
+async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages, count, rigid = false, level }) {
   const session = await openArcade({ size: { width: PAGE.cellWidth * 8, height: 1200 } });
   const files = [];
   const problems = [];
@@ -65,14 +66,17 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         files.push(file);
         strips = [];
       };
+      /** What every page of the suite is drawn with; `rigid` and `level` are the screen's own switches. */
+      const job = { suite, catalog, preset, species, count, rigid, level, cellPixels: PAGE.cellWidth };
+      // One row is drawn once to learn the suite's framing; every page after that is drawn exactly once.
+      const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { ...job, page: 0, rows: 1 });
+      const rows = probe.framing === 'head' ? 1 : PAGE.rows;
       for (let page = 0, pageCount = 1, filed = 0; page < Math.min(pageCount, mostPages); page++) {
-        const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, count, page: 0, rows: 1 });
-        const rows = probe.framing === 'head' ? 1 : PAGE.rows;
-        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, count, page, rows });
+        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { ...job, page, rows });
         pageCount = first.pages;
         await session.page.setViewportSize({ width: first.columns * PAGE.cellWidth, height: Math.round((first.columns * PAGE.cellWidth) / first.aspect) });
         await session.page.waitForTimeout(PAGE.settleMs);
-        const numbered = (count) => `${catalog}-${suite}-${preset}${count > 1 ? `-${String(filed + 1).padStart(2, '0')}` : ''}.png`;
+        const numbered = (count) => `${catalog}-${suite}-${preset}${rigid ? '-rigid' : ''}${count > 1 ? `-${String(filed + 1).padStart(2, '0')}` : ''}.png`;
         if (rows === 1) {
           strips.push(await session.page.screenshot({ timeout: SHOT_MS }));
           if (strips.length === PAGE.rows || page === Math.min(pageCount, mostPages) - 1) {

@@ -1266,13 +1266,15 @@
    * solid (within `spread` of being as close) it is shared, so the surface bends smoothly across a joint.
    * @param {Float32Array} positions 3 per vertex, in the field's space
    * @param {Solid[]} solids
-   * @param {{spread?: number, reach?: number}} [options] `spread`: metres over which ownership fades from one
-   *   solid to the next (default 0.03); `reach`: how far off the solids the vertices lie (a layer's offset), metres
+   * @param {{spread?: number, reach?: number, sharpness?: number}} [options] `spread`: metres over which ownership fades from one
+   *   solid to the next (default 0.03); `reach`: how far off the solids the vertices lie (a layer's offset), metres;
+   *   `sharpness`: the power a solid's nearness is raised to (default 2): higher keeps a vertex with its nearest
+   *   solid for longer across a wide `spread` (cloth right over a knee follows that knee, cloth between two is shared)
    * @returns {SkinArrays}
    * @complexity O(vertices x solids whose bounds are near)
    * @example const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
    */
-  const weights = (positions, solids, { spread = 0.03, reach = 0 } = {}) => {
+  const weights = (positions, solids, { spread = 0.03, reach = 0, sharpness = 2 } = {}) => {
     const count = positions.length / VECTOR;
     const owners = new Uint16Array(count * OWNERS);
     const shares = new Float32Array(count * OWNERS);
@@ -1301,7 +1303,7 @@
         if (!(nearness > 0)) continue;
         const { owner } = solids[index];
         if (shareOf[owner] === 0) touched.push(owner);
-        shareOf[owner] += nearness * nearness;
+        shareOf[owner] += sharpness === 2 ? nearness * nearness : nearness ** sharpness;
       }
       // Strongest four owners, then made to sum to one.
       touched.sort((first, second) => shareOf[second] - shareOf[first]);

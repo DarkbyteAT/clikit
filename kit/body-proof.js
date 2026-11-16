@@ -204,7 +204,8 @@
   const ATLAS_ROWS = 512;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
   /** Room round a figure in its cell, as shares of the largest figure's size; `head` shows this share of the height, from the top. */
-  const CELL = Object.freeze({ sideMargin: 1.15, topMargin: 1.22, headShare: 0.42, headTop: 0.12, leastWidth: 0.5 });
+  /** `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail). */
+  const CELL = Object.freeze({ sideMargin: 1.15, topMargin: 1.22, headShare: 0.42, headTop: 0.12, leastWidth: 0.5, figureShare: 1.3 });
 
   Kit.register({
     id: 'proof',
@@ -236,7 +237,9 @@
 
       /**
        * Draws one page of a sheet.
-       * @param {{catalog?: string, suite?: string, cells?: ProofCell[], species?: string[], columns?: number, framing?: string, preset?: string, page?: number, rows?: number}} job
+       * @param {{catalog?: string, suite?: string, cells?: ProofCell[], species?: string[], columns?: number, framing?: string, preset?: string, page?: number, rows?: number, rigid?: boolean, level?: string, cellPixels?: number}} job
+       *   `rigid`: draw one rigid piece per bone shape instead of sculpted surfaces (the before of a before / after pair);
+       *   `level`: a level of detail, else chosen from `cellPixels` (a cell's width in target pixels) by `Kit.figure.levelFor`
        *   `suite` (with `catalog`) or explicit `cells`; `rows` per page (default 4)
        * @returns {{pages: number, cells: number, columns: number, rows: number, framing: string, aspect: number, refusals: string[]}} `aspect`:
        *   width / height the window should have for square pixels to fill the grid exactly
@@ -247,6 +250,8 @@
         const columns = job.columns || sheet.columns;
         const framing = job.framing || sheet.framing;
         const rowsPerPage = job.rows || 4;
+        // A head close-up is drawn at full detail; a body in a cell by how many pixels tall the cell makes it.
+        const level = job.level || (framing === 'head' || !job.cellPixels ? undefined : Kit.figure.levelFor(job.cellPixels * CELL.figureShare));
         const perPage = columns * rowsPerPage;
         const pages = Math.max(1, Math.ceil(sheet.cells.length / perPage));
         const cells = sheet.cells.slice((job.page || 0) * perPage, ((job.page || 0) + 1) * perPage);
@@ -254,7 +259,7 @@
         shown.forEach((entry) => entry.figure.dispose());
         const refusals = [];
         shown = cells.map((cell) => {
-          const figure = Kit.figure.build(view, bakery.bakeRecipe(cell.recipe), { cache });
+          const figure = Kit.figure.build(view, bakery.bakeRecipe(cell.recipe), { cache, level, sculpt: !job.rigid });
           const refusal = perform(figure, cell.act || 'rest', cell.phase || 0);
           if (refusal) refusals.push(`${cell.label}: ${refusal}`);
           figure.root.rotation.y = cell.yaw * TURN;

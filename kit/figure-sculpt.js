@@ -44,10 +44,27 @@
     clearShare: 0.9,
     mostOpen: 0.7,
     clearSteps: 14,
+    /**
+     * A worn object (a hat, a horn, a skirt: a bone row with `wear`) is meshed on the body's own cell, so it costs
+     * what its area costs and no more. A solid of it thinner than the grid can hold (a cloak's panel, a visor) is
+     * thickened to `thickenedCells` cells: cloth and brims then have a rounded edge at any size instead of
+     * falling between samples, and a coarser level draws them chunkier, as it does everything. One thinner
+     * than `leastThinShare` of that (a wire) stays a rigid piece.
+     */
+    thickenedCells: 1.9,
+    leastThinShare: 0.22,
+    /** A draped object's vertex is shared between the body solids within this many metres of being its nearest. */
+    drapeSpread: 0.16,
+    /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
+    drapeSharpness: 5,
     /** Sculpted bakes kept for reuse (`sculptCache`): about 2 MB each at high detail. */
     kept: 24,
   });
+  /** Owners per vertex of a layer. */
+  const OWNERS = 4;
   const MATRIX = 16;
+  /** Numbers of an affine map kept as three rows of four. */
+  const ROW_AFFINE = 12;
   const VECTOR = 3;
   const QUATERNION = 4;
 
@@ -193,12 +210,116 @@
     return { leads: Int16Array.from(free.map((limb) => limb.lead)), turns, angles };
   };
 
-  /** Is this piece a solid of the body itself, shaded normally: one the sculpt may replace? */
-  const isSculpted = (piece) => !piece.isProp && !piece.stamps && !piece.shell && !piece.emissive && piece.tone === undefined && piece.inkGroup !== Kit.figure.INK_GROUPS.glow && Boolean(Kit.sculpt.KINDS[piece.shape.kind]);
+  /**
+   * How a worn part's bone is drawn, from its bone row's `wear` (catalogue data; kit/body-wardrobe.js gives every
+   * part a default by what it fits):
+   *  - 'solid': sculpted on its own grid and moved by its own bone (a hat, a horn, a bun);
+   *  - 'drape': sculpted, and moved by the body's bones it hangs beside, so a knee pushes a skirt (`hangs`: the
+   *    roles of the body bones that may carry it, default any);
+   *  - anything else: the rigid piece it always was (a sword, glasses).
+   * @type {Readonly<string[]>}
+   */
+  const WEARS = Object.freeze(['solid', 'drape']);
+
+  /** Per bone: its `wear` when it is one the sculpt takes, else ''. Per bone too: the role mask of `hangs` (0: any). */
+  const wearOf = (plan) => {
+    const rows = (plan.spec && plan.spec.bones) || [];
+    const byName = new Map(rows.map((row) => [row.name, row]));
+    const wears = plan.boneNames.map((name) => {
+      const row = byName.get(name);
+      return row && WEARS.includes(row.wear) ? row.wear : '';
+    });
+    const hangs = plan.boneNames.map((name) => {
+      const row = byName.get(name);
+      return row && row.hangs ? Kit.body.roleMask(row.hangs) : 0;
+    });
+    return { wears, hangs };
+  };
+
+  /** Can this piece be a solid at all: shaded normally, of a kind that has a distance? */
+  const isSolidPiece = (piece) => !piece.stamps && !piece.shell && !piece.emissive && piece.tone === undefined && piece.inkGroup !== Kit.figure.INK_GROUPS.glow && Boolean(Kit.sculpt.KINDS[piece.shape.kind]);
+  /** Is this piece a solid of the body itself: one the body's skin may replace? */
+  const isSculpted = (piece) => !piece.isProp && isSolidPiece(piece);
+  /** The pieces of worn objects the sculpt takes, by the wear of their bones. */
+  const wornPieces = (figureLayout, wears) => figureLayout.pieces.filter((piece) => piece.isProp && wears[piece.bone] && isSolidPiece(piece));
+
+  /** Steps of correction when points are carried between poses (`carry`): the error shrinks about fivefold a step. */
+  const CARRY_STEPS = 4;
+
+  /** Per bone, `to` x inverse(`from`) as 12 numbers row by row (the move a bone makes between two poses). */
+  const movesBetween = (from, to) => {
+    const boneCount = from.length / MATRIX;
+    const moves = new Float64Array(boneCount * ROW_AFFINE);
+    for (let bone = 0; bone < boneCount; bone++) {
+      const back = Kit.sculpt.invertAffine(from.subarray(bone * MATRIX, bone * MATRIX + MATRIX));
+      const onward = to.subarray(bone * MATRIX, bone * MATRIX + MATRIX);
+      for (let row = 0; row < VECTOR; row++) {
+        for (let column = 0; column <= VECTOR; column++) {
+          let sum = column === VECTOR ? onward[12 + row] : 0;
+          for (let inner = 0; inner < VECTOR; inner++) sum += onward[inner * 4 + row] * back[inner * 4 + column];
+          moves[bone * ROW_AFFINE + row * 4 + column] = sum;
+        }
+      }
+    }
+    return moves;
+  };
+
+  /** A point (or, with `isDirection`, a direction) moved by the blend of a vertex's owners' moves; written to `out`. */
+  const blended = (moves, skin, vertex, x, y, z, isDirection, out) => {
+    let [px, py, pz] = [0, 0, 0];
+    const shift = isDirection ? 0 : 1;
+    for (let slot = 0; slot < OWNERS; slot++) {
+      const share = skin.weights[vertex * OWNERS + slot];
+      if (share === 0) continue;
+      const move = skin.owners[vertex * OWNERS + slot] * ROW_AFFINE;
+      px += share * (moves[move] * x + moves[move + 1] * y + moves[move + 2] * z + moves[move + 3] * shift);
+      py += share * (moves[move + 4] * x + moves[move + 5] * y + moves[move + 6] * z + moves[move + 7] * shift);
+      pz += share * (moves[move + 8] * x + moves[move + 9] * y + moves[move + 10] * z + moves[move + 11] * shift);
+    }
+    out[0] = px;
+    out[1] = py;
+    out[2] = pz;
+    return out;
+  };
+
+  /**
+   * Moves a mesh made in one pose into another through its skin, so that skinning it back by the same weights
+   * returns it where it was made. A vertex with one owner is moved by that bone; one shared between bones that
+   * moved differently (a hem between two spread legs) would come back short if it were only blended, so it is
+   * corrected until it does return.
+   */
+  const carry = (mesh, skin, from, to) => {
+    const onward = movesBetween(from, to);
+    const back = movesBetween(to, from);
+    const { positions, normals } = mesh;
+    const [there, home, fix] = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let vertex = 0; vertex < positions.length / VECTOR; vertex++) {
+      const at = vertex * VECTOR;
+      const [x, y, z] = [positions[at], positions[at + 1], positions[at + 2]];
+      blended(onward, skin, vertex, x, y, z, false, there);
+      if (skin.weights[vertex * OWNERS] < 1) {
+        for (let step = 0; step < CARRY_STEPS; step++) {
+          blended(back, skin, vertex, there[0], there[1], there[2], false, home);
+          blended(onward, skin, vertex, x - home[0], y - home[1], z - home[2], true, fix);
+          there[0] += fix[0];
+          there[1] += fix[1];
+          there[2] += fix[2];
+        }
+      }
+      positions[at] = there[0];
+      positions[at + 1] = there[1];
+      positions[at + 2] = there[2];
+      blended(onward, skin, vertex, normals[at], normals[at + 1], normals[at + 2], true, fix);
+      const length = Math.sqrt(fix[0] * fix[0] + fix[1] * fix[1] + fix[2] * fix[2]) || 1;
+      normals[at] = fix[0] / length;
+      normals[at + 1] = fix[1] / length;
+      normals[at + 2] = fix[2] / length;
+    }
+  };
 
   /**
    * @typedef {Object} SculptLayer
-   * @property {string} id 'skin:<ramp>' for a body surface, 'region:<part>|<ramp>|<raise>' for a painted layer
+   * @property {string} id 'skin:<ramp>' for a body surface, 'region:<part>|<ramp>|<raise>' for a painted layer, 'worn:<socket>|<ramp>|<wear>' for a worn object
    * @property {number} ramp index into the bake's ramps
    * @property {number} inkGroup
    * @property {number} inkClass which line class it draws as (its ramp)
@@ -207,6 +328,7 @@
    * @property {Uint16Array|Uint32Array} indices
    * @property {Uint16Array} owners 4 bone indices per vertex
    * @property {Float32Array} weights 4 shares per vertex
+   * @property {Float32Array} [faceShare] on a body surface: per vertex, how much of it the head's bones move (0..1); a look lights a face and a form differently
    */
 
   /**
@@ -333,7 +455,8 @@
    * @example Kit.figure.sculptSignature(bake, layout) === Kit.figure.sculptSignature(recoloured, Kit.figure.layout(recoloured)) // true
    */
   const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
-    const pieces = figureLayout.pieces.filter(isSculpted).map((piece) => [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : ''].join('~'));
+    const { wears, hangs } = wearOf(bake.plan);
+    const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) => [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone]].join('~'));
     const rest = bake.rest || Kit.body.createPose(bake.plan);
     const pose = [rest.translation, rest.rotation, rest.scale].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
     return [detail, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
@@ -372,6 +495,13 @@
     return sculpted;
   };
 
+  /** Per vertex of a layer: the share of it moved by the bones flagged in `isFlagged` (0..1). */
+  const shareOf = (layer, isFlagged) => {
+    const shares = new Float32Array(layer.positions.length / VECTOR);
+    for (let slot = 0; slot < layer.owners.length; slot++) if (isFlagged[layer.owners[slot]]) shares[Math.floor(slot / OWNERS)] += layer.weights[slot];
+    return shares;
+  };
+
   /** Sculpts a bake afresh (see `sculptLayers`). */
   const sculpt = (bake, figureLayout, detail) => {
     const { plan } = bake;
@@ -407,13 +537,17 @@
     };
     const clearance = trunk.length ? limbClearance(bake, limbsOf(bake), trunkDistance) : { leads: new Int16Array(0), turns: new Float32Array(0), angles: [] };
 
+    const headGroup = Kit.figure.INK_GROUPS.head;
+    const isHeadBone = Uint8Array.from({ length: plan.boneCount }, (_unused, bone) => (Kit.figure.inkGroupOf(Kit.figure.inkKeyOf(plan, bone)) === headGroup ? 1 : 0));
     const layers = [];
     groups.forEach((group) => {
       const bones = [...new Set(group.solids.map((part) => part.owner))];
       const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
       const field = Kit.sculpt.sample(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
       const layerOf = (id, ramp, mesh, offset) => ({ id, ramp, inkGroup: group.inkGroup, inkClass: ramp, ...mesh, ...Kit.sculpt.weights(mesh.positions, group.solids, { spread: SCULPT.weightSpread, reach: offset + cell }) });
-      layers.push(layerOf(`skin:${group.ramp}`, group.ramp, Kit.sculpt.surface(field), 0));
+      const skin = layerOf(`skin:${group.ramp}`, group.ramp, Kit.sculpt.surface(field), 0);
+      skin.faceShare = shareOf(skin, isHeadBone);
+      layers.push(skin);
       specs.forEach(({ garment, offset, host, isPaint }) => {
         const own = cutOf(garment, field, frames);
         const within = host ? cutOf(host, field, frames) : null;
@@ -424,7 +558,74 @@
         if (cloth.indices.length) layers.push(layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
       });
     });
+    wornLayers(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead }).forEach(({ layer, pieces }) => {
+      layers.push(layer);
+      pieces.forEach((piece) => replaced.add(piece.id));
+    });
     return { layers, replaced, matrices, clearance };
+  };
+
+  /**
+   * The layers of the worn objects of a bake (bone rows with `wear`): one per object and paint, each on a grid of
+   * its own. A solid is made in the sculpting pose and moved by its own bones. A drape is made at rest, where
+   * it hangs as authored, given to the body solids beside it, and then carried into the sculpting pose by them.
+   * @returns {Array<{layer: SculptLayer, pieces: Object[]}>}
+   */
+  const wornLayers = (bake, figureLayout, { cell, matrices, bodyPieces, limbLead }) => {
+    const { plan } = bake;
+    const { wears, hangs } = wearOf(plan);
+    const worn = wornPieces(figureLayout, wears);
+    if (!worn.length) return [];
+    const rest = restMatrices(bake);
+    /** Objects by socket (the bone name's first step), paint and wear. */
+    const objects = new Map();
+    worn.forEach((piece) => {
+      const key = `${plan.boneNames[piece.bone].split('/')[0]}|${piece.ramp}|${wears[piece.bone]}`;
+      objects.set(key, [...(objects.get(key) || []), piece]);
+    });
+    /** The body's solids at rest, made once and only when something is draped. */
+    let hosts = null;
+    const hostsFor = (mask) => {
+      hosts = hosts || bodyPieces.map((piece) => ({ piece, part: solidOf(piece, rest, limbLead) }));
+      const chosen = hosts.filter(({ piece }) => mask === 0 || (plan.roles[piece.bone] & mask) !== 0);
+      return (chosen.length ? chosen : hosts).map(({ part }) => part);
+    };
+    const made = [];
+    objects.forEach((pieces, key) => {
+      const isDrape = wears[pieces[0].bone] === 'drape';
+      const pose = isDrape ? rest : matrices;
+      const ownCell = cell || Kit.sculpt.cellFor(pieces.map((piece) => solidOf(piece, pose, limbLead)), figureLayout.level);
+      /** The least half-thickness the grid holds. */
+      const least = (ownCell * SCULPT.thickenedCells) / 2;
+      const kept = [];
+      pieces.forEach((piece) => {
+        let part = solidOf(piece, pose, limbLead);
+        if (part.thinness < least * SCULPT.leastThinShare) return;
+        if (part.thinness < least) {
+          const grow = least - part.thinness;
+          part = solidOf({ ...piece, shape: { ...piece.shape, inflate: (piece.shape.inflate || 0) + grow } }, pose, limbLead);
+          part.thinness += grow;
+          part.blend = Math.max(part.blend, SCULPT.leastBlend);
+          for (let axis = 0; axis < VECTOR; axis++) {
+            part.min[axis] -= grow;
+            part.max[axis] += grow;
+          }
+        }
+        // An object is one thing: its solids blend wherever they meet, and it joins nothing else.
+        kept.push({ piece, part: Object.assign(part, { group: 0, anchor: undefined, join: undefined }) });
+      });
+      if (!kept.length) return;
+      const solids = kept.map(({ part }) => part);
+      const mesh = Kit.sculpt.surface(Kit.sculpt.sample(solids, { cell: ownCell }));
+      if (!mesh.indices.length) return;
+      const [first] = kept;
+      const drapeHosts = isDrape && bodyPieces.length ? hostsFor(hangs[first.piece.bone]) : null;
+      const skin = drapeHosts ? Kit.sculpt.weights(mesh.positions, drapeHosts, { spread: SCULPT.drapeSpread, reach: Infinity, sharpness: SCULPT.drapeSharpness }) : Kit.sculpt.weights(mesh.positions, solids, { spread: SCULPT.weightSpread, reach: ownCell });
+      // Made at rest (a drape with something to hang on, or a drape alone): carried into the pose the skeleton is bound in.
+      if (isDrape) carry(mesh, skin, rest, matrices);
+      made.push({ layer: { id: `worn:${key}`, ramp: first.piece.ramp, inkGroup: first.piece.inkGroup, inkClass: first.piece.ramp, ...mesh, ...skin }, pieces: kept.map(({ piece }) => piece) });
+    });
+    return made;
   };
 
   Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers });
