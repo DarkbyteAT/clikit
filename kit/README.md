@@ -173,6 +173,24 @@ const pick = await ctx.ui.dialog({ title: 'Bait', variant: 'sheet', body: (close
 Checks: `bun tools/test-ui.js` (behaviour in a real browser: finger drags, focus, keys, 44px targets) and
 `bun tools/touch-scroll.js <selector>` ("this element scrolls under a real touch drag"; `--self-test` proves the check).
 
+### Character creator (`Kit.creator`, the `creator` screen: "Character Maker")
+
+A character editor generated from `Kit.body.editor(catalog).schema(recipe)`: nothing in it names a body part. Pure
+pieces first (unit-tested by `tools/test-creator.js`), then components (`tools/test-creator-ui.js` drives them in a browser).
+
+| File | Owns |
+|---|---|
+| `creator-rows.js` | pure. `Kit.creator.rows`: schema -> tab groups of rows (a sided pair is one row), values by key, `structureKey`, readouts, swatch gradients, double-tap rule |
+| `creator-session.js` | pure. `Kit.creator.session`: recipe, undo history (a drag is one step), locks, linked pairs, randomise all / one group, mirror, body-type switch that keeps what fits, share codes with plain-words errors (`parseShareCode`) |
+| `creator-slots.js` | pure. `Kit.creator.slots(store)`: named saved characters as share codes; `chipColors` |
+| `creator-camera.js` | pure. `Kit.creator.camera`: the director (focus a group, zoom, turn, ease), `boundsFor` (stand the body in a screen area), pinch and drag maths |
+| `creator-icons.js` | `Kit.creator.ICONS` / `Icon`: line icons as data |
+| `creator-controls.js` | `controlHost` (a signal per field, queued slider values), `DialControl`, `ColorControl`, `SocketControl`, `GroupPane`, `ControlTabs` |
+| `creator-stage.js` | `StageGestures` (drag, pinch, wheel, keys), `StageRails`, `StageTitle`, `LookChips`, `HoldButton` |
+| `creator-panels.js` | the Setup tab, the saved-characters sheet and the share dialog |
+| `creator-theme.js` | `Kit.creator.THEME`: the screen's own tokens, fonts and scoped CSS |
+| `creator.js` | the screen: composes the above, draws the figure with the fewest changes, keeps a draft |
+
 ### Adapters and shell
 
 | File | Owns |
@@ -194,6 +212,7 @@ ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bod
 lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
 body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery
 look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show  body-sheet
+creator-rows  creator-session  creator-slots  creator-camera  creator-icons  creator-controls  creator-stage  creator-panels  creator-theme  creator
 games/*.js  ui/gallery
 shell
 ui/menu
