@@ -28,6 +28,8 @@
   const SIDES = Object.freeze(['left', 'right']);
   const NO_RAMP = -1;
   const PROP_ROLE = 'prop';
+  /** Solids that run along an axis, and so need a feature solid to say where it ends. */
+  const SOLIDS_WITH_AN_AXIS = Object.freeze(['capsule', 'lathe', 'extrude']);
 
   const fail = (where, message) => {
     throw new Error(`Kit.body.${where}: ${message}`);
@@ -53,8 +55,9 @@
    * @property {number} [lift=0] metres out along the normal (a nose tip stands proud)
    * @property {Object<string, StampLayer[]>} [frames] frame name -> the stamp's layers, bottom first
    * @property {string} [rest] the frame shown when nothing animates it (default: the first frame)
-   * @property {Object} [shape] a solid in the feature's own frame (`Kit.body.SHAPES` row: +Z out along the normal,
-   *   +Y along `up`), for a nose or an ear that has a silhouette
+   * @property {Object} [shape] a solid in the feature's own frame, metres at the authored size (`Kit.body.SHAPES`
+   *   row: +X across, +Y along `up`, +Z out along the normal), for a nose or an ear that has a silhouette. A
+   *   capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
    * @property {string} [paint] the colour channel of the solid (default 'skin')
    */
 
@@ -85,6 +88,7 @@
    *   layers with their paint resolved to (index into the bake's `ramps`, shade); ramp -1 when the species lacks the channel
    * @property {?string} rest
    * @property {?Object} shape
+   * @property {number[]} scale [across, up] the solid's stretch: this copy's size over the authored size (dials)
    * @property {number} ramp the solid's ramp index (-1 when none)
    * @property {?string} part the part it came from, null for the plan's own
    */
@@ -135,6 +139,8 @@
         fail(where, `${owner} rests on the frame "${feature.rest}", which it does not have. Frames: ${Object.keys(feature.frames || {}).join(', ') || '(none)'}.`);
       if (feature.shape && !Kit.surface.KINDS[feature.shape.kind])
         fail(where, `${owner} has a solid of kind ${JSON.stringify(feature.shape.kind)}; use one of ${Object.keys(Kit.surface.KINDS).join(', ')}.`);
+      if (feature.shape && SOLIDS_WITH_AN_AXIS.includes(feature.shape.kind) && !Array.isArray(feature.shape.end))
+        fail(where, `${owner} has a ${feature.shape.kind} solid, which needs \`end\` [x, y, z]: where its long axis ends.`);
       if (!feature.shape && !Object.keys(feature.frames || {}).length) fail(where, `${owner} has neither \`frames\` (a stamp) nor a \`shape\` (a solid), so nothing would be drawn.`);
     });
     (spec.regions || []).forEach((region) => {
@@ -262,6 +268,7 @@
         const placed = Kit.surface.place(shapes[bone], layout.frames[bone], azimuth, numbers.elevation);
         if (!placed) return [];
         const isFlipped = side === 'right';
+        const authored = featureNumbers(spec).size;
         return [
           {
             id: spec.id,
@@ -276,6 +283,7 @@
             frames: resolvedFrames,
             rest: spec.rest || Object.keys(spec.frames || {})[0] || null,
             shape: spec.shape || null,
+            scale: [numbers.size[0] / authored[0], numbers.size[1] / authored[1]],
             ramp: spec.shape ? rampOf(spec.paint || 'skin') : NO_RAMP,
             part: spec.part || null,
           },
