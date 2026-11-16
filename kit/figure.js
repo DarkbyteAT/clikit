@@ -29,6 +29,9 @@
   /** Floats per vertex position or normal, and per matrix. */
   const VECTOR = 3;
   const MATRIX = 16;
+  /** Bones that may move one vertex of a sculpted surface. */
+  const SKIN_OWNERS = 4;
+  const QUATERNION = 4;
   /** Floats per vertex of a stamp's paint and of its centre (kit/figure-shapes.js `stamps`). */
   const STAMP_PAINT = 4;
   const STAMP_CENTRE = 4;
@@ -256,8 +259,77 @@
     let shown = bake;
     let shownLayout = Kit.figure.layout(bake, layoutOptions);
     const offset = { x: 0, y: 0, z: 0 };
+    const shouldSculpt = options.sculpt !== false && Boolean(Kit.figure.sculptLayers);
+    /** The skinned surfaces standing in for the body's rigid pieces (kit/figure-sculpt.js); null when not sculpted. */
+    let skin = null;
+
+    /** Takes the sculpted surfaces down. */
+    const removeSkin = () => {
+      if (!skin) return;
+      skin.meshes.forEach(({ mesh, dressed }) => {
+        root.remove(mesh);
+        view.shading.undress(dressed);
+        mesh.geometry.dispose();
+      });
+      skin.bones.forEach((bone) => root.remove(bone));
+      skin.skeleton.dispose();
+      skin = null;
+    };
+    /** Sculpts the bake shown now and binds each layer to a skeleton whose bone matrices `pose()` writes. */
+    const addSkin = () => {
+      const sculpted = Kit.figure.sculptLayers(shown, shownLayout);
+      const bones = Array.from({ length: shown.plan.boneCount }, () => {
+        const bone = new THREE.Bone();
+        bone.matrixAutoUpdate = false;
+        root.add(bone);
+        return bone;
+      });
+      const inverses = bones.map((_bone, index) => new THREE.Matrix4().fromArray(sculpted.matrices, index * MATRIX).invert());
+      const skeleton = new THREE.Skeleton(bones, inverses);
+      const meshes = sculpted.layers.map((layer) => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(layer.positions, VECTOR));
+        geometry.setAttribute('normal', new THREE.BufferAttribute(layer.normals, VECTOR));
+        geometry.setAttribute('skinIndex', new THREE.BufferAttribute(layer.owners, SKIN_OWNERS));
+        geometry.setAttribute('skinWeight', new THREE.BufferAttribute(layer.weights, SKIN_OWNERS));
+        geometry.setIndex(new THREE.BufferAttribute(layer.indices, 1));
+        const mesh = new THREE.SkinnedMesh(geometry);
+        mesh.name = layer.id;
+        // The bones move the surface anywhere; its rest bounds say nothing about where it is drawn.
+        mesh.frustumCulled = false;
+        root.add(mesh);
+        mesh.bind(skeleton, new THREE.Matrix4());
+        const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, anchor });
+        materialsCreated += MATERIALS_PER_DRESS;
+        return { mesh, dressed };
+      });
+      skin = { ...sculpted, bones, skeleton, meshes, scratch: Kit.body.createPose(shown.plan) };
+    };
+    /**
+     * The pose with every buried limb opened (kit/figure-sculpt.js `limbClearance`): the same turn in front of
+     * the lead bone's rotation whatever wrote the pose, so a walk swings the arms about their opened rest.
+     */
+    const opened = (local) => {
+      if (!skin || !skin.clearance.leads.length) return local;
+      const { leads, turns } = skin.clearance;
+      Kit.rig.copy(local, skin.scratch);
+      const rotation = skin.scratch.rotation;
+      // Per-frame: a quaternion product per opened limb, written in place.
+      for (let index = 0; index < leads.length; index++) {
+        const [at, turn] = [leads[index] * QUATERNION, index * QUATERNION];
+        const [ax, ay, az, aw] = [turns[turn], turns[turn + 1], turns[turn + 2], turns[turn + 3]];
+        const [bx, by, bz, bw] = [rotation[at], rotation[at + 1], rotation[at + 2], rotation[at + 3]];
+        rotation[at] = aw * bx + ax * bw + ay * bz - az * by;
+        rotation[at + 1] = aw * by - ax * bz + ay * bw + az * bx;
+        rotation[at + 2] = aw * bz + ax * by - ay * bx + az * bw;
+        rotation[at + 3] = aw * bw - ax * bx - ay * by - az * bz;
+      }
+      return skin.scratch;
+    };
+    const isReplaced = (piece) => Boolean(skin && skin.replaced.has(piece.id));
 
     const addPiece = (piece) => {
+      if (isReplaced(piece)) return;
       const mesh = new THREE.Mesh(cache.acquire(piece));
       // The matrix is written from the pose every frame; three.js must not rebuild it from position and rotation.
       mesh.matrixAutoUpdate = false;
@@ -297,9 +369,10 @@
         else Kit.body.copyRest(shown.plan, figure.local);
       },
       pose() {
-        Kit.body.worldTransforms(shown.plan, figure.local, figure.world, offset.x, offset.y, offset.z);
+        Kit.body.worldTransforms(shown.plan, opened(figure.local), figure.world, offset.x, offset.y, offset.z);
         // Per-frame hot path: an index loop and a direct write into each matrix, no allocation.
         for (let index = 0; index < entries.length; index++) Kit.figure.writeBoneMatrix(figure.world, entries[index].piece.bone, entries[index].mesh.matrix.elements);
+        if (skin) for (let bone = 0; bone < skin.bones.length; bone++) Kit.figure.writeBoneMatrix(figure.world, bone, skin.bones[bone].matrix.elements);
       },
       setBake(next, changes) {
         const previousPlan = shown.plan;
@@ -313,6 +386,13 @@
         shownLayout = nextLayout;
         figure.bake = next;
         figure.layout = nextLayout;
+        // The sculpted surfaces depend on every shape and every dial: made again for the new bake.
+        if (shouldSculpt) {
+          removeSkin();
+          addSkin();
+          entries.filter((entry) => isReplaced(entry.piece)).forEach(removeEntry);
+          entries = entries.filter((entry) => !isReplaced(entry.piece));
+        }
         update.add.forEach(addPiece);
         if (update.recolor) view.atlas.write(block, paddedRamps(next.ramps));
         if (next.plan !== previousPlan) {
@@ -331,11 +411,13 @@
       dispose() {
         entries.forEach(removeEntry);
         entries = [];
+        removeSkin();
         view.remove(root);
         // Rows the figure loaded itself go back to the atlas; shared rows belong to whoever loaded them.
         if (!options.rows && view.atlas.free) view.atlas.free(block);
       },
     };
+    if (shouldSculpt) addSkin();
     shownLayout.pieces.forEach(addPiece);
     remeasure();
     figure.rest();
