@@ -761,3 +761,47 @@ machine at load 20 to 40, so only the ratios mean anything.
   `degrade`); faces at under about 25 texels across must carry expression (they do not: author a small-face
   frame set); thumbnails of parts are wanted (render a figure to a small target with a shared view and
   `atlas.free`).
+
+## Kit.act: performances as data, life as stages (act branch)
+
+- **A performance is keys in channel space, not bone tracks.** Fourteen channels (`shift`, `turn`, `spine`,
+  `head`, an arm and a foot per side, `tail`, `wings`, `jaw`, `carry`, plus stepped face frames) address the
+  body by role and in its own units (leg lengths, arm lengths, radians), so one row plays on a chibi, a lanky
+  human and a winged elf, and a body without the role is refused in words (`Kit.act.refusal`). Cross-fades
+  happen in channel space with a weight per group, which is what lets a wave take one arm of a walk. Rejected:
+  baked bone rotations per species (one species at a time, no retargeting); a tiny scripting language (the
+  repertoire is 20 rows of plain data and needs no control flow).
+- **Feet and hands are solved, never keyed.** A foot channel is a place relative to where the foot stands
+  (solved with `Kit.gait.reachLeg`, extracted from the gait and shared); a hand is a place relative to the
+  shoulder (solved with `Kit.reach.twoBone` in the frame of the arm's parent). A `reach` pulls either to a
+  world point given at call time, so `kick` and `dive` take a target and choose their side from it. A foot the
+  body has been carried out of reach of hangs from the hip, which is what makes a jump and a dive leave the ground.
+- **Root motion is an offset the game collects.** A `travel` carries the hips toward the point (capped in
+  statures); when the one-shot ends the offset stays on the body until `takeRootMotion` hands it to the game.
+  Rejected: moving `motion.x/z` from inside a stage (the caller owns position; a stage that moved it would
+  fight `Kit.motion.advance`).
+- **Default points are in hand-reach heights (`ActRig.high`), caps in statures.** The first version used
+  statures for both: a chibi is 1.1 m tall with 0.22 m arms, so a default catch at 0.8 statures was above
+  anything its hands could touch. Measured: default catch 0.25 m short before, 0.02 after.
+- **Marks.** A performance names moments on its own timeline (`contact`, `land`); `play(..., { reach: { mark,
+  in } })` warps only the lead-in so the mark falls on the asked moment and the rest runs as authored. Asked
+  for by the football game: a single `rate` played the landing and getting up at three times speed.
+- **Face frames are lazy sibling meshes.** The stamps piece carries `faces` (one shape per blink / talk state
+  of `Kit.body.FRAME_SETS`); `figure.face(state)` builds a state's mesh the first time it is shown and swaps
+  visibility after. Rejected: rebuilding the face geometry per blink (a bake per blink); morph targets (the
+  frames differ in polygon count).
+- **Loose chains are found by their stiffness hint.** `Kit.motion.loose()` simulates every bone whose hint is
+  under 100 and that no gait or performance owns (hair, ears, cloaks), as `Kit.dynamics` chains on the fixed
+  step, clamped to the joint's limits (the first cloak swung through the body). A catalogue opts a part in by
+  data; no bone names in code.
+- **Locomotion.** Torso counter-rotation, arm swing sized to the stride, toes-up only during the swing (a
+  planted foot is never rotated: the first heel-strike slid the toe 7 cm and the existing plant test caught
+  it), a flight parabola when no foot is planted, lean and elbow bend from the Froude number. All in tables at
+  the top of kit/gait.js.
+- **The Character Maker always plays `Kit.act.character()`.** One motion state per bake; the picker steers it
+  (`kit/creator-perform.js`), the stage keeps the body centred with `Kit.act.keepInPlace`. Cost under software
+  GL: a frame went from about 150 to about 215 ms because the figure is now re-posed every frame; the pure
+  part of that is 0.4 ms.
+- **Revisit if** a game needs two performances on different groups at once (today one plays over the base);
+  a performance should drive a prop; faces need more than blink and talk; the proof sheet should show travel
+  (it anchors the body in its cell).
