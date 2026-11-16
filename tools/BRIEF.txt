@@ -207,3 +207,6 @@ Browser tools take one of the machine-wide browser slots, like smoke. `make setu
 
 VERSION CONTROL (amendment 20)
 The project is the Git repository "clikit". New work starts in its own worktree: make worktree NAME=<branch>, work and commit there, report the branch; the dispatcher lands it with make land. See AGENTS.md "Version control and worktrees".
+
+PHYSICS AND KINEMATICS (amendment 21)
+Movement is physically grounded: kinematics (FK, IK), springs and constraints on a fixed timestep, not canned keyframes. Game logic that reacts to physics runs per physics step, never per rendered frame.

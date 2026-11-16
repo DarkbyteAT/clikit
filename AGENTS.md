@@ -166,6 +166,9 @@ started later; the dispatcher forwards each new amendment to every agent as it a
 20. Proper architecture and organisation under version control: a Git repository (`clikit`) with
     worktrees, so improvements and demos run in parallel.
 
+21. The body system (and movement generally) uses physics simulation and kinematics (forward and
+    inverse kinematics, springs, constraints) so motion is fluid, accurate and generalisable, not canned.
+
 ## Measures we have gamed before
 
 Each of these was once treated as the goal. None of them is.
