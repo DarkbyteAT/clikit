@@ -6,7 +6,8 @@
  *
  * Owns:  the stages `breathe` (the chest swells and the spine gives, faster when the body works), `sway` (a
  *        standing body's weight drifts over its feet), `blink` (drives the blink frames of a face on a seeded
- *        schedule), `gaze` (the head follows a point, or wanders, on a spring), their controls `lookAt` /
+ *        schedule), `gaze` (the head follows a point, or wanders, on a spring), `flutter` (wings ride a slow
+ *        wave with a seeded flick, and sweep back at speed), their controls `lookAt` /
  *        `lookAhead`, and `character` (the ready composition a game or the Character Maker uses: walk or swim,
  *        life, a performer with fidgets, and trailing chains).
  * Does not own: performances and the performer (kit/act.js), walking (kit/gait.js), swimming (kit/swim.js),
@@ -36,6 +37,17 @@
     rise: 0.012, // its height (the shoulders and head ride up on it)
     arch: 0.022, // radians the spine straightens as the chest fills
     skew: 0.35, // breathing in is quicker than breathing out
+  });
+  /** Tunables of `flutter`. Radians and seconds. */
+  const FLUTTER_DEFAULTS = Object.freeze({
+    lift: 0.07, // the tips rise and fall this much each way with a slow wave
+    period: 5.3,
+    sweep: 0.05, // and fold back a little out of step with it
+    flickGap: Object.freeze([3.5, 9]), // seconds between quick shakes, drawn from the instance's seed
+    flick: 0.22, // how far a shake opens the wings
+    flickSeconds: 0.45,
+    trail: 0.28, // radians the wings sweep back at a run (per unit of Froude number, up to `mostTrail`)
+    mostTrail: 0.45,
   });
   /** Tunables of `sway`. */
   const SWAY_DEFAULTS = Object.freeze({
@@ -102,6 +114,57 @@
         scale[chest + 1] *= 1 + tune.rise * fill;
         scale[chest + 2] *= 1 + tune.swell * fill;
         for (let index = 0; index < spine.length; index++) Kit.motion.turnBody(rotation, record.rig.frame, spine[index], (-tune.arch * (fill - 0.5)) / spine.length, 0, 0);
+        motion.isWorldCurrent = false;
+      },
+    });
+  };
+
+  // ---- wings --------------------------------------------------------------------------------------------------------------
+
+  /**
+   * A stage that keeps wings alive: a slow rise and fall of the tips, a quick shake now and then (seeded), and a
+   * sweep back when the body runs. A body without wings is left alone; a performance that keys the `wings`
+   * channel plays over it.
+   * @param {Object} [options] see `Kit.act.FLUTTER_DEFAULTS`
+   * @returns {Object} a `Stage` of kit/motion.js; needs nothing
+   * @complexity O(wings) per frame; allocates a small record on an instance's first frame
+   * @example const alive = Kit.gait.walk({ before: [Kit.act.breathe(), Kit.act.flutter()] });
+   */
+  const flutter = (options = {}) => {
+    const tune = { ...FLUTTER_DEFAULTS, ...options };
+    const PHASE_FIELD = fieldOf('flutterPhase');
+    const GAP_FIELD = fieldOf('flutterGap');
+    const create = (motion) => ({
+      phase: Kit.seeded.unit(Kit.act.seedOf(motion), PHASE_FIELD),
+      wait: tune.flickGap[0],
+      flicked: tune.flickSeconds,
+      count: 0,
+      rig: Kit.act.rig(motion.plan, motion.rest),
+    });
+    return Kit.motion.stage({
+      name: 'act.flutter',
+      step(motion, _plan, dt) {
+        const record = memory(motion, 'flutter', create);
+        if (!record.rig.wings.length) return;
+        record.phase = (record.phase + dt / tune.period) % 1;
+        record.flicked += dt;
+        record.wait -= dt;
+        if (record.wait > 0) return;
+        record.count += 1;
+        record.wait = lerp(tune.flickGap[0], tune.flickGap[1], Kit.seeded.unit(Kit.act.seedOf(motion), GAP_FIELD, record.count));
+        record.flicked = 0;
+      },
+      pose(motion) {
+        const record = memory(motion, 'flutter', create);
+        const { wings, wingSign, unit, frame } = record.rig;
+        if (!wings.length) return;
+        const angle = record.phase * TAU;
+        // A shake: out and back twice, dying away over its length.
+        const shake = record.flicked < tune.flickSeconds ? Math.sin((record.flicked / tune.flickSeconds) * 2 * TAU) * (1 - record.flicked / tune.flickSeconds) * tune.flick : 0;
+        const lift = tune.lift * Math.sin(angle) + shake;
+        const trail = Math.min(tune.mostTrail, (tune.trail * motion.speed * motion.speed) / (GRAVITY * unit));
+        const sweep = tune.sweep * Math.cos(angle) - trail;
+        for (let index = 0; index < wings.length; index++) Kit.motion.turnBody(motion.pose.rotation, frame, wings[index], 0, sweep * wingSign[index], -lift * wingSign[index]);
         motion.isWorldCurrent = false;
       },
     });
@@ -288,7 +351,7 @@
   /**
    * A whole character, ready made: a body with legs walks and runs (kit/gait.js) with breathing and a weight
    * shift under it and, over it, a performer (`Kit.act.play`), a gaze and blinks, then tails, wings, hair and
-   * cloaks trailing; a body without legs swims (kit/swim.js) and blinks. Standing still, it fidgets now and
+   * cloaks trailing; a body without legs swims (kit/swim.js) under the same performer, gaze and blinks. Standing still, it fidgets now and
    * then. This is the controller the Character Maker uses and the one a game should start from.
    * @param {{base?: string, fidgets?: string[], fidgetGap?: number[]}} [options] passed to `Kit.act.performer`
    *   (default fidgets: `Kit.act.FIDGETS`; pass [] for none)
@@ -301,10 +364,11 @@
    * Kit.act.play(motion, 'wave');
    */
   const character = (options = {}) => {
-    const walker = Kit.gait.walk({ before: [breathe(), sway()], after: [Kit.act.performer({ fidgets: Kit.act.FIDGETS, ...options }), gaze(), blink()] });
-    const swimmer = Kit.motion.sequence(Kit.swim.swim(), blink());
+    const walker = Kit.gait.walk({ before: [breathe(), sway(), flutter()], after: [Kit.act.performer({ fidgets: Kit.act.FIDGETS, ...options }), gaze(), blink()] });
+    // A body without legs performs too: whatever needs only a head, a spine, arms or a tail plays over the swim.
+    const swimmer = Kit.motion.sequence(Kit.swim.swim(), flutter(), Kit.act.performer({ fidgets: Kit.act.FIDGETS, ...options }), gaze(), blink(), Kit.motion.loose());
     return Kit.motion.when((motion, plan) => Kit.act.rig(plan, motion.rest).legs !== null, walker, swimmer);
   };
 
-  Object.assign(Kit.act, { BREATHE_DEFAULTS, SWAY_DEFAULTS, BLINK_DEFAULTS, GAZE_DEFAULTS, breathe, sway, blink, gaze, lookAt, lookAhead, character });
+  Object.assign(Kit.act, { BREATHE_DEFAULTS, SWAY_DEFAULTS, FLUTTER_DEFAULTS, flutter, BLINK_DEFAULTS, GAZE_DEFAULTS, breathe, sway, blink, gaze, lookAt, lookAhead, character });
 })();

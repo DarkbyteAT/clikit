@@ -158,6 +158,21 @@
    * (1 = critical: fastest settle without overshoot).
    */
   const PHYSICAL_DEFAULTS = Object.freeze({ density: 1000, stiffness: 120, damping: 1 });
+  /**
+   * Kinds of soft bone, name -> the spring hints (and, for a hanging panel, the joint limits) a bone that says
+   * `soft: '<kind>'` gets unless it states its own. A soft bone's stiffness is under the loose threshold of
+   * `Kit.motion.loose`, so it is simulated: it trails, swings and settles without anyone tuning it. Limits are
+   * degrees about the bone's own axes, as `PlanBone.limits`.
+   */
+  const SOFT_KINDS = Object.freeze({
+    hair: Object.freeze({ stiffness: 30, damping: 0.5 }), // a lock or a fringe
+    plait: Object.freeze({ stiffness: 25, damping: 0.45 }), // a ponytail, a braid: longer, heavier, slower
+    tail: Object.freeze({ stiffness: 25, damping: 0.45 }),
+    ear: Object.freeze({ stiffness: 60, damping: 0.6, limits: [[-25, 25], [-10, 10], [-25, 25]] }), // floppy, but it stays an ear
+    scarf: Object.freeze({ stiffness: 22, damping: 0.45 }),
+    cloak: Object.freeze({ stiffness: 3, damping: 0.5, limits: [[-8, 115], [0, 0], [-60, 60]] }), // a panel hung from the shoulders: nearly limp, so it falls whichever way is down and lies where it lands; never round to the front
+    hem: Object.freeze({ stiffness: 70, damping: 0.7, limits: [[-10, 10], [0, 0], [-10, 10]] }), // a skirt or a robe's hem: it sways as one piece, a little
+  });
   const CYLINDER_AREA_FACTOR = Math.PI / 4;
 
   /** Dial channels: what one dial does to a bone it affects. `pitch` turns the bone about its x axis by
@@ -272,6 +287,8 @@
    * @property {('ball'|'hinge'|'fixed'|'free')} [joint] how the bone may turn, a `JOINTS` name (default 'ball')
    * @property {number[][]} [limits] [[minX, maxX], [minY, maxY], [minZ, maxZ]] in degrees from the rest rotation,
    *   about the bone's own axes (default: the joint type's)
+   * @property {string} [soft] a `Kit.body.SOFT_KINDS` name ('hair', 'plait', 'tail', 'ear', 'scarf', 'cloak', 'hem'):
+   *   the bone is loose, with that kind's stiffness, damping and limits wherever it states none of its own
    * @property {number} [stiffness] spring hint: squared natural frequency, 1/s^2 (default 120)
    * @property {number} [damping] spring hint: damping ratio, 1 = critical (default 1)
    * @property {Object} [shape] what a renderer draws for the bone: { kind, ...fields } per `Kit.body.SHAPES`
@@ -524,7 +541,9 @@
       compiled.length[index] = Math.hypot(...tail);
       const jointName = bone.joint === undefined ? DEFAULT_JOINT : bone.joint;
       if (!(jointName in JOINTS)) fail(where, `bone "${bone.name}" has the joint ${JSON.stringify(bone.joint)}; use one of ${Object.keys(JOINTS).join(', ')}.`);
-      const limits = bone.limits || JOINTS[jointName].limits;
+      if (bone.soft !== undefined && !(bone.soft in SOFT_KINDS)) fail(where, `bone "${bone.name}" is soft: ${JSON.stringify(bone.soft)}; use one of ${Object.keys(SOFT_KINDS).join(', ')}.`);
+      const soft = bone.soft ? SOFT_KINDS[bone.soft] : PHYSICAL_DEFAULTS;
+      const limits = bone.limits || soft.limits || JOINTS[jointName].limits;
       if (!Array.isArray(limits) || limits.length !== VECTOR_STRIDE || !limits.every((range) => Array.isArray(range) && range.length === 2 && range[0] <= range[1]))
         fail(where, `bone "${bone.name}" limits must be [[minX, maxX], [minY, maxY], [minZ, maxZ]] in degrees with min <= max, got ${JSON.stringify(bone.limits)}.`);
       compiled.joint[index] = JOINTS[jointName].id;
@@ -532,8 +551,8 @@
         compiled.limitMin[index * VECTOR_STRIDE + axis] = range[0] * DEGREES_TO_RADIANS;
         compiled.limitMax[index * VECTOR_STRIDE + axis] = range[1] * DEGREES_TO_RADIANS;
       });
-      compiled.stiffness[index] = bone.stiffness === undefined ? PHYSICAL_DEFAULTS.stiffness : bone.stiffness;
-      compiled.damping[index] = bone.damping === undefined ? PHYSICAL_DEFAULTS.damping : bone.damping;
+      compiled.stiffness[index] = bone.stiffness === undefined ? soft.stiffness : bone.stiffness;
+      compiled.damping[index] = bone.damping === undefined ? soft.damping : bone.damping;
       compiled.bonePaint[index] = bone.paint ? compiled.paintChannels.indexOf(bone.paint) + 1 : UNPAINTED;
       if (bone.shape) {
         const needed = SHAPES[bone.shape.kind];
@@ -1194,6 +1213,7 @@
     JOINTS,
     SHAPES,
     PHYSICAL_DEFAULTS,
+    SOFT_KINDS,
     roleMask,
     capabilityNames,
     groupOf,

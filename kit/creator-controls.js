@@ -35,6 +35,7 @@
    * @property {function(string): Object} lock signal (boolean) of a field's lock
    * @property {function(string, number): void} queueDial remember a slider's newest value; `flush` applies it on the next frame
    * @property {function(): boolean} flush apply queued slider values as one edit each; true when something was applied
+   * @property {function(): void} beginGesture a drag starts: its edits are one undo step until `endGesture`
    * @property {function(): void} endGesture apply what is queued and let the next drag start a new undo step
    * @property {function(string, number): void} setColor
    * @property {function(string, ?string): void} setSocket
@@ -97,6 +98,10 @@
         pendingDials.set(setId, value);
         onInput();
       },
+      beginGesture() {
+        self.flush();
+        session.beginGesture();
+      },
       endGesture() {
         self.flush();
         session.endGesture();
@@ -158,7 +163,10 @@
     const pressedAt = useRef(null);
     const defaultFraction = (slider.default - slider.min) / (slider.max - slider.min || 1);
     const label = slider.caption ? `${row.label}, ${slider.caption.toLowerCase()}` : row.label;
-    const onPointerDown = (event) => (pressedAt.current = { x: event.clientX, y: event.clientY });
+    const onPointerDown = (event) => {
+      host.beginGesture();
+      pressedAt.current = { x: event.clientX, y: event.clientY };
+    };
     const onPointerUp = (event) => {
       host.endGesture();
       const start = pressedAt.current;

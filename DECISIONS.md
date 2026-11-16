@@ -762,6 +762,101 @@ machine at load 20 to 40, so only the ratios mean anything.
   frame set); thumbnails of parts are wanted (render a figure to a small target with a shared view and
   `atlas.free`).
 
+## Kit.act: performances as data, life as stages (act branch)
+
+- **A performance is keys in channel space, not bone tracks.** Fourteen channels (`shift`, `turn`, `spine`,
+  `head`, an arm and a foot per side, `tail`, `wings`, `jaw`, `carry`, plus stepped face frames) address the
+  body by role and in its own units (leg lengths, arm lengths, radians), so one row plays on a chibi, a lanky
+  human and a winged elf, and a body without the role is refused in words (`Kit.act.refusal`). Cross-fades
+  happen in channel space with a weight per group, which is what lets a wave take one arm of a walk. Rejected:
+  baked bone rotations per species (one species at a time, no retargeting); a tiny scripting language (the
+  repertoire is 20 rows of plain data and needs no control flow).
+- **Feet and hands are solved, never keyed.** A foot channel is a place relative to where the foot stands
+  (solved with `Kit.gait.reachLeg`, extracted from the gait and shared); a hand is a place relative to the
+  shoulder (solved with `Kit.reach.twoBone` in the frame of the arm's parent). A `reach` pulls either to a
+  world point given at call time, so `kick` and `dive` take a target and choose their side from it. A foot the
+  body has been carried out of reach of hangs from the hip, which is what makes a jump and a dive leave the ground.
+- **Root motion is an offset the game collects.** A `travel` carries the hips toward the point (capped in
+  statures); when the one-shot ends the offset stays on the body until `takeRootMotion` hands it to the game.
+  Rejected: moving `motion.x/z` from inside a stage (the caller owns position; a stage that moved it would
+  fight `Kit.motion.advance`).
+- **Default points are in hand-reach heights (`ActRig.high`), caps in statures.** The first version used
+  statures for both: a chibi is 1.1 m tall with 0.22 m arms, so a default catch at 0.8 statures was above
+  anything its hands could touch. Measured: default catch 0.25 m short before, 0.02 after.
+- **Marks.** A performance names moments on its own timeline (`contact`, `land`); `play(..., { reach: { mark,
+  in } })` warps only the lead-in so the mark falls on the asked moment and the rest runs as authored. Asked
+  for by the football game: a single `rate` played the landing and getting up at three times speed.
+- **Face frames are lazy sibling meshes.** The stamps piece carries `faces` (one shape per blink / talk state
+  of `Kit.body.FRAME_SETS`); `figure.face(state)` builds a state's mesh the first time it is shown and swaps
+  visibility after. Rejected: rebuilding the face geometry per blink (a bake per blink); morph targets (the
+  frames differ in polygon count).
+- **Loose chains are found by their stiffness hint.** `Kit.motion.loose()` simulates every bone whose hint is
+  under 100 and that no gait or performance owns (hair, ears, cloaks), as `Kit.dynamics` chains on the fixed
+  step, clamped to the joint's limits (the first cloak swung through the body). A catalogue opts a part in by
+  data; no bone names in code.
+- **Locomotion.** Torso counter-rotation, arm swing sized to the stride, toes-up only during the swing (a
+  planted foot is never rotated: the first heel-strike slid the toe 7 cm and the existing plant test caught
+  it), a flight parabola when no foot is planted, lean and elbow bend from the Froude number. All in tables at
+  the top of kit/gait.js.
+- **The Character Maker always plays `Kit.act.character()`.** One motion state per bake; the picker steers it
+  (`kit/creator-perform.js`), the stage keeps the body centred with `Kit.act.keepInPlace`. Cost under software
+  GL: a frame went from about 150 to about 215 ms because the figure is now re-posed every frame; the pure
+  part of that is 0.4 ms.
+- **Revisit if** a game needs two performances on different groups at once (today one plays over the base);
+  a performance should drive a prop; faces need more than blink and talk.
+
+### Round 2 (after the lead's review)
+
+- **A family is several performances for one job, chosen by the point against the body's own reach.**
+  `Kit.act.defineFamily({ id: 'save', forms: [{ play, aside: [from, to), up: [from, to) }] })`: spans are in
+  arm spans aside and hand-reach heights up, so a short-armed body dives where a long one still catches.
+  `play` takes a family wherever it takes a performance, `playing` names the form, `choose` asks beforehand.
+  Every form has a `contact` mark, so one call with `reach: { mark: 'contact', in }` serves all of them.
+  Rejected: branching inside the dive's keys (a performance stays one timeline); a callback per family (the
+  choice stays data, checked at definition).
+- **Hands lead the head, as a rule of every reach.** The dive read as a head-first torpedo because the hips
+  stopped 0.8 of a reach short along the line, which leaves a bent arm beside the head, and because a chibi's
+  arm (0.22 m) is shorter than its head is wide (0.40 m). Now: the dive stops 0.95 of a reach short (arms
+  long); while a hand is pulled to a point, the trunk tips up and back off the line about the middle of the
+  shoulders only until the head is behind the hand or clear of the line (`leadHands`, at most 1.2 rad;
+  tipping further laid a chibi on its back in a high catch), the body backs off until the point is outside
+  the head (`clearHead`, 1.25 head radii), and the body then closes whatever the arm still cannot reach
+  (`closeHands`, at most 1.0 arm lengths; 0.6 left a short arm 0.045 m off the ball). A long-armed body
+  is not touched by any of the three. Rejected: scaling the dive's keyed tilt per species (a special case per body); longer
+  arms (not this module's to change).
+- **A hanging leg is drawn up by its foot's keyed lift** (`hangTuck`): the same `up` that lifts a planted
+  foot bends a knee in the air, so "upper leg bent, lower leg trailing" is two numbers in the dive's keys.
+- **An arm moved far goes round in front** (over 1.1 rad of raise between two keys: the hand is routed
+  towards straight ahead with the elbow bent); **a keyed hand stays outside the head** (moved out to the
+  head's radius at its own height). Both exist because chibi arms are shorter than the head they pass.
+- **A travel longer than its `stride` is run in steps**, the foot that plants taking the last; a kick's
+  default ball is in leg lengths (`defaultsIn: 'legs'`).
+- **A one-shot's last key is its end.** `sample` wrapped to key 0 at progress 1, so a held `sit` stood up on
+  its last frame. Found on the sheet, fixed in the sampler.
+- **Standing knees.** A standing body was compressed 2.5 % of its leg length (the walk's crouch), which on a
+  long leg put the knee 0.14 m forward. Standing now uses `STANCE.standCrouch` (0.4 %) and blends to the
+  walk's crouch with speed: 0.056 m on the elf and seraph.
+- **Soft parts are a kind on the part's bones** (`Kit.body.SOFT_KINDS`: hair, plait, tail, ear, scarf, cloak,
+  hem; `bone.soft`), which gives stiffness, damping and limits by default; the catalogue still may override.
+  **Loose chains collide** with the ground and with the body's own solids at bone level (balls strung along
+  each bone the chain is not worn round, written once a frame without allocation); a link is also pushed out
+  at its middle, which is what stops a long cloak panel from cutting a corner through the trunk. Stays at
+  bone level on purpose: the sculpt branch replaces rigid pieces with skinned surfaces. Rejected: clamping
+  feedback into the simulation (it drove a cloak's tip underground).
+- **A drag is one undo step by gesture**, pointer-down to pointer-up (`session.beginGesture` /
+  `endGesture`); the 700 ms window is kept only for keyboard nudges and reads the session's injected clock,
+  which the screen drives from frames (capped at 100 ms a frame).
+- **A proof cell of a movement is framed by what the movement sweeps** (`Kit.body.proof.sweep`: joints over
+  the whole act from that direction, plus what the rest pose's surface adds), each figure at its own scale
+  standing on its cell's floor, so a diver does not spill and a hound is not a speck beside a seraph. Travel
+  is a dashed line on the ground back to a cross where the body began, with the metres in the label; a ball
+  is a ring. Each act names the two directions it is judged from (`ProofAct.views`). The `saves` suite shows
+  the contact frame of a 5 by 3 goal of shots from behind and from the front. Rejected: letting the body run
+  across a wide cell (eight phases of a 3.5 m step-and-dive make every figure a fifth of its cell).
+- **Revisit if** a body needs a fin channel (the carp plays only what its head, spine and tail can do); the
+  far hand of a short-armed body should also arrive (today the near hand leads and the far one follows as
+  far as its arm goes); skinned cloth lands (the bone-level solids then need a surface).
+
 ## Spot Kick Showdown (games/penalty*.js) and Kit.flight, Kit.slingshot, Kit.netting (football branch)
 
 - **Ball flight is its own pure module (`Kit.flight`), not cannon.js.** A penalty needs drag, spin lift (curl), wind
@@ -838,6 +933,7 @@ machine at load 20 to 40, so only the ratios mean anything.
   says so) while the game is paused, `down` / `move` / `up` hold a drag across a screenshot, `flick` and `resize`
   exist, and a game hands its test handles to scripts through `tools` on its instance (`Kit.debug.tools()`),
   which replaces the game-private `ctx.debug` field.
+
 ## Looks and rolls: lighting, ink, pixel and roll rules that hold for any roll (looks branch)
 
 - **Light is a key, a capped fill and a back light, in view space** (`Kit.look.LIGHTING`, mirrored in script by

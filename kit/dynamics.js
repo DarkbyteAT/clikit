@@ -25,7 +25,7 @@
   const STABILITY_LIMIT = 1;
   const VECTOR_STRIDE = 3;
   const SPRING_DEFAULTS = Object.freeze({ stiffness: 120, mass: 1 });
-  const CHAIN_DEFAULTS = Object.freeze({ gravity: Object.freeze([0, -9.8, 0]), drag: 3, stiffness: 0, iterations: 4 });
+  const CHAIN_DEFAULTS = Object.freeze({ gravity: Object.freeze([0, -9.8, 0]), drag: 3, stiffness: 0, iterations: 4, grip: 0.5 });
 
   /**
    * How many fixed steps are due after `dt` more seconds, for anything that must simulate on a fixed clock.
@@ -118,14 +118,21 @@
    * @property {number} stiffness how strongly each link straightens towards the one before it, per second (0 = limp rope)
    * @property {number} iterations constraint passes per step: more keeps the lengths tighter under fast motion
    * @property {number} carry seconds not yet simulated (owned by `stepChain`)
+   * @property {number} floor the height no point may go below (-Infinity: no floor); the owner sets it
+   * @property {number} thickness how far a point's surface is from its centre: what keeps it off the floor and the balls
+   * @property {Float32Array} balls solids the points are pushed out of: x, y, z, radius each; the owner fills
+   *   them every frame (a body's bones as balls) and sets `ballCount`
+   * @property {number} ballCount how many of `balls` are in use
+   * @property {number} grip 0..1: how much of a point's sliding a touch takes away each step (cloth drags on what it lies on)
    */
 
   /**
    * Makes a chain of points joined by links of fixed length, hanging from an anchor: Verlet integration (each
    * point's velocity is implied by where it was a step ago) with position-based length constraints.
-   * @param {{count: number, lengths: (number|ArrayLike<number>), gravity?: ReadonlyArray<number>, drag?: number, stiffness?: number, iterations?: number}} options
+   * @param {{count: number, lengths: (number|ArrayLike<number>), gravity?: ReadonlyArray<number>, drag?: number, stiffness?: number, iterations?: number, balls?: number, thickness?: number, grip?: number}} options
    *   `count` points (2 or more); `lengths` one number for every link or a list of count - 1; gravity defaults
-   *   to [0, -9.8, 0], drag to 3, stiffness to 0, iterations to 4
+   *   to [0, -9.8, 0], drag to 3, stiffness to 0, iterations to 4; `balls` is room for that many solids to
+   *   collide with (default 0), `thickness` and `grip` as on `PointChain`
    * @returns {PointChain} laid out straight down from the origin; call `placeChain` to put it where it belongs
    * @throws {Error} for fewer than 2 points or the wrong number of lengths
    * @complexity O(count) time and space
@@ -133,7 +140,7 @@
    * const tail = Kit.dynamics.chain({ count: 4, lengths: 0.2, stiffness: 8 });
    * Kit.dynamics.placeChain(tail, hip.x, hip.y, hip.z, 0, 0, -1);
    */
-  const chain = ({ count, lengths, gravity = CHAIN_DEFAULTS.gravity, drag = CHAIN_DEFAULTS.drag, stiffness = CHAIN_DEFAULTS.stiffness, iterations = CHAIN_DEFAULTS.iterations }) => {
+  const chain = ({ count, lengths, gravity = CHAIN_DEFAULTS.gravity, drag = CHAIN_DEFAULTS.drag, stiffness = CHAIN_DEFAULTS.stiffness, iterations = CHAIN_DEFAULTS.iterations, balls = 0, thickness = 0, grip = CHAIN_DEFAULTS.grip }) => {
     if (!Number.isInteger(count) || count < 2) throw new Error(`Kit.dynamics.chain: a chain needs 2 or more points, got ${count}.`);
     const linkLengths = typeof lengths === 'number' ? new Float32Array(count - 1).fill(lengths) : Float32Array.from(lengths || []);
     if (linkLengths.length !== count - 1)
@@ -148,6 +155,11 @@
       stiffness,
       iterations,
       carry: 0,
+      floor: -Infinity,
+      thickness,
+      balls: new Float32Array(balls * BALL_STRIDE),
+      ballCount: 0,
+      grip,
     };
     return placeChain(state, 0, 0, 0, 0, -1, 0);
   };
@@ -179,6 +191,54 @@
     state.previous.set(state.positions);
     state.carry = 0;
     return state;
+  };
+
+  /** Numbers per ball of a chain's `balls`: x, y, z, radius. */
+  const BALL_STRIDE = 4;
+
+  /** Pushes a chain's free points out of its floor and its balls; a point that touched loses some of its slide. */
+  const collideChain = (state) => {
+    const { positions, previous, balls, count, thickness } = state;
+    const lowest = state.floor + thickness;
+    for (let point = 1; point < count; point++) {
+      const at = point * VECTOR_STRIDE;
+      let hasTouched = false;
+      if (positions[at + 1] < lowest) {
+        positions[at + 1] = lowest;
+        hasTouched = true;
+      }
+      for (let ball = 0; ball < state.ballCount; ball++) {
+        const ballAt = ball * BALL_STRIDE;
+        const offsetX = positions[at] - balls[ballAt];
+        const offsetY = positions[at + 1] - balls[ballAt + 1];
+        const offsetZ = positions[at + 2] - balls[ballAt + 2];
+        const clear = balls[ballAt + VECTOR_STRIDE] + thickness;
+        const distanceSquared = offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ;
+        if (distanceSquared >= clear * clear || distanceSquared === 0) continue;
+        const push = clear / Math.sqrt(distanceSquared);
+        positions[at] = balls[ballAt] + offsetX * push;
+        positions[at + 1] = Math.max(lowest, balls[ballAt + 1] + offsetY * push);
+        positions[at + 2] = balls[ballAt + 2] + offsetZ * push;
+        hasTouched = true;
+      }
+      // A link is long: its middle is kept out of the balls too, by swinging its far end (twice the push, as a lever).
+      const before = at - VECTOR_STRIDE;
+      for (let ball = 0; ball < state.ballCount; ball++) {
+        const ballAt = ball * BALL_STRIDE;
+        const offsetX = (positions[at] + positions[before]) / 2 - balls[ballAt];
+        const offsetY = (positions[at + 1] + positions[before + 1]) / 2 - balls[ballAt + 1];
+        const offsetZ = (positions[at + 2] + positions[before + 2]) / 2 - balls[ballAt + 2];
+        const clear = balls[ballAt + VECTOR_STRIDE] + thickness;
+        const distanceSquared = offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ;
+        if (distanceSquared >= clear * clear || distanceSquared === 0) continue;
+        const push = (2 * (clear - Math.sqrt(distanceSquared))) / Math.sqrt(distanceSquared);
+        positions[at] += offsetX * push;
+        positions[at + 1] = Math.max(lowest, positions[at + 1] + offsetY * push);
+        positions[at + 2] += offsetZ * push;
+        hasTouched = true;
+      }
+      if (hasTouched) for (let axis = 0; axis < VECTOR_STRIDE; axis++) previous[at + axis] += (positions[at + axis] - previous[at + axis]) * state.grip;
+    }
   };
 
   /** One fixed step of a chain whose point 0 has already been moved to this step's anchor. */
@@ -231,6 +291,7 @@
         positions[at + 1] -= offsetY * error * (1 - shareBefore);
         positions[at + 2] -= offsetZ * error * (1 - shareBefore);
       }
+      if (state.ballCount > 0 || state.floor > -Infinity) collideChain(state);
     }
   };
 
@@ -268,5 +329,5 @@
     return positions;
   };
 
-  Kit.dynamics = { FIXED_STEP, MOST_STEPS_PER_UPDATE, SPRING_DEFAULTS, CHAIN_DEFAULTS, stepsDue, criticalDamping, spring, stepSpring, chain, placeChain, stepChain };
+  Kit.dynamics = { BALL_STRIDE, FIXED_STEP, MOST_STEPS_PER_UPDATE, SPRING_DEFAULTS, CHAIN_DEFAULTS, stepsDue, criticalDamping, spring, stepSpring, chain, placeChain, stepChain };
 })();

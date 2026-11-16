@@ -66,7 +66,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [region.js](#regionjs) (8) - Kit region: areas of a surface as data.
 - [rig.js](#rigjs) (11) - Kit rig: a hierarchy of joints as flat typed arrays, and the one pass that turns each joint's transform relative to its parent into a transf
 - [reach.js](#reachjs) (7) - Kit reach: inverse kinematics over a `Kit.rig` - "put the end of this limb there" solved for the joint rotations.
-- [dynamics.js](#dynamicsjs) (9) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
+- [dynamics.js](#dynamicsjs) (10) - Kit dynamics: the two small simulations behind secondary motion - a damped spring (a value that chases a target with weight: body bob, lean,
 - [body-plan.js](#body-planjs) (0) - Kit body plan: the skeleton of any kind of thing (a biped, a fish, a sword) compiled from data into flat typed arrays: a joint hierarchy, ty
 - [body-parts.js](#body-partsjs) (0) - Kit body parts: things that plug into sockets.
 - [body-surface.js](#body-surfacejs) (0) - Kit body surface: what is drawn ON a body's bones rather than as bones.
@@ -90,19 +90,20 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [motion.js](#motionjs) (29) - Kit motion: movement as small stages that compose.
 - [gait.js](#gaitjs) (23) - Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages.
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
-- [act.js](#actjs) (25) - Kit act: performances.
+- [act.js](#actjs) (31) - Kit act: performances.
 - [act-moves.js](#act-movesjs) (1) - Kit act moves: the everyday repertoire, as data.
-- [act-sport.js](#act-sportjs) (0) - Kit act sport: the moves a ball game needs, as data.
+- [act-sport.js](#act-sportjs) (1) - Kit act sport: the moves a ball game needs, as data.
 - [act-life.js](#act-lifejs) (0) - Kit act life: what a body does when it is doing nothing, as small `Kit.motion` stages to sequence with anything - a walk, a swim, a performa
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
 - [body-portrait.js](#body-portraitjs) (4) - Kit body portrait: the `portrait` screen (`Kit.play('portrait')`), the evidence sheet for how wardrobe characters look.
-- [body-proof.js](#body-proofjs) (7) - Kit body proof: coverage sheets for judging the body system by eye.
+- [body-proof.js](#body-proofjs) (11) - Kit body proof: coverage sheets for judging the body system by eye.
 - [creator-rows.js](#creator-rowsjs) (0) - Kit creator rows: turns what `Kit.body.editor(...).schema(recipe)` says is editable into the rows a character creator shows, so no control i
 - [creator-session.js](#creator-sessionjs) (0) - Kit creator session: the state and every editing action of a character creator, with no interface in it.
 - [creator-slots.js](#creator-slotsjs) (0) - Kit creator slots: several named characters kept between visits, as plain data over any key-value store.
 - [creator-camera.js](#creator-camerajs) (0) - Kit creator camera: where the stage camera looks and how it gets there, as plain numbers.
 - [creator-icons.js](#creator-iconsjs) (0) - Kit creator icons: a small set of line icons as data, and the component that draws one.
+- [creator-perform.js](#creator-performjs) (0) - Kit creator perform: what the character on the stage is doing, and the picker that chooses it.
 - [creator-controls.js](#creator-controlsjs) (0) - Kit creator controls: the interface generated from the rows of a schema.
 - [creator-stage.js](#creator-stagejs) (0) - Kit creator stage: the part of the screen the character stands in, as components.
 - [creator-panels.js](#creator-panelsjs) (0) - Kit creator panels: the parts of the creator that are not generated from the schema.
@@ -7123,6 +7124,10 @@ const miss = Kit.reach.chain(plan.parent, pose, world, tailBones, lure.x, lure.y
 >
 > Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
 
+### `Kit.dynamics.BALL_STRIDE`
+
+Numbers per ball of a chain's `balls`: x, y, z, radius.
+
 ### `Kit.dynamics.FIXED_STEP`
 
 Seconds per simulation step. 120 Hz keeps a stiff spring stable and divides evenly into 60 and 30 fps frames.
@@ -7194,12 +7199,12 @@ keeps energy bounded where the plain method gains it).
 sprite.y = Kit.dynamics.stepSpring(bounce, dt);
 ```
 
-### `Kit.dynamics.chain({ count, lengths, gravity = CHAIN_DEFAULTS.gravity, drag = CHAIN_DEFAULTS.drag, stiffness = CHAIN_DEFAULTS.stiffness, iterations = CHAIN_DEFAULTS.iterations })`
+### `Kit.dynamics.chain({ count, lengths, gravity = CHAIN_DEFAULTS.gravity, drag = CHAIN_DEFAULTS.drag, stiffness = CHAIN_DEFAULTS.stiffness, iterations = CHAIN_DEFAULTS.iterations, balls = 0, thickness = 0, grip = CHAIN_DEFAULTS.grip })`
 
 Makes a chain of points joined by links of fixed length, hanging from an anchor: Verlet integration (each
 point's velocity is implied by where it was a step ago) with position-based length constraints.
 
-- `options` *{count: number, lengths: (number\|ArrayLike\<number\>), gravity?: ReadonlyArray\<number\>, drag?: number, stiffness?: number, iterations?: number}* - `count` points (2 or more); `lengths` one number for every link or a list of count - 1; gravity defaults to [0, -9.8, 0], drag to 3, stiffness to 0, iterations to 4
+- `options` *{count: number, lengths: (number\|ArrayLike\<number\>), gravity?: ReadonlyArray\<number\>, drag?: number, stiffness?: number, iterations?: number, balls?: number, thickness?: number, grip?: number}* - `count` points (2 or more); `lengths` one number for every link or a list of count - 1; gravity defaults to [0, -9.8, 0], drag to 3, stiffness to 0, iterations to 4; `balls` is room for that many solids to collide with (default 0), `thickness` and `grip` as on `PointChain`
 
 **Returns** *PointChain* laid out straight down from the origin; call `placeChain` to put it where it belongs
 
@@ -7274,6 +7279,11 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `stiffness` *number* - how strongly each link straightens towards the one before it, per second (0 = limp rope)
   - `iterations` *number* - constraint passes per step: more keeps the lengths tighter under fast motion
   - `carry` *number* - seconds not yet simulated (owned by `stepChain`)
+  - `floor` *number* - the height no point may go below (-Infinity: no floor); the owner sets it
+  - `thickness` *number* - how far a point's surface is from its centre: what keeps it off the floor and the balls
+  - `balls` *Float32Array* - solids the points are pushed out of: x, y, z, radius each; the owner fills them every frame (a body's bones as balls) and sets `ballCount`
+  - `ballCount` *number* - how many of `balls` are in use
+  - `grip` *number* - 0..1: how much of a point's sliding a touch takes away each step (cloth drags on what it lies on)
 
 ## body-plan.js
 
@@ -7314,6 +7324,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[mass]` *number* - rest mass in kilograms (default: plan density x the cylinder of its length and girth)
   - `[joint]` *('ball'\|'hinge'\|'fixed'\|'free')* - how the bone may turn, a `JOINTS` name (default 'ball')
   - `[limits]` *number[][]* - [[minX, maxX], [minY, maxY], [minZ, maxZ]] in degrees from the rest rotation, about the bone's own axes (default: the joint type's)
+  - `[soft]` *string* - a `Kit.body.SOFT_KINDS` name ('hair', 'plait', 'tail', 'ear', 'scarf', 'cloak', 'hem'): the bone is loose, with that kind's stiffness, damping and limits wherever it states none of its own
   - `[stiffness]` *number* - spring hint: squared natural frequency, 1/s^2 (default 120)
   - `[damping]` *number* - spring hint: damping ratio, 1 = critical (default 1)
   - `[shape]` *Object* - what a renderer draws for the bone: { kind, ...fields } per `Kit.body.SHAPES` (default: a capsule of the bone's length and girth)
@@ -8846,7 +8857,9 @@ cloak, floppy ears - any bone whose `stiffness` hint is low (`Kit.motion.LOOSE_D
 default is stiff) and that no other stage moves. Each run of such bones is shadowed by a `Kit.dynamics`
 chain dragged from its base, with a point at the END of the last bone too, so a single loose bone (a
 cloak panel) swings like a pendulum. The chain steps on the fixed clock, so it behaves the same at any
-frame rate. Put it last, after whatever moves the body.
+frame rate. Its points are kept above the ground the body stands on and out of the body's own solids (every
+stiff, thick bone, as a row of balls), except the solids a part is worn round. Put it last, after whatever
+moves the body.
 
 - `[options]` *{below?: number, except?: string[], gravity?: number[], drag?: number, stiffnessScale?: number}* - see `Kit.motion.LOOSE_DEFAULTS`
 
@@ -9184,7 +9197,22 @@ const walk = Kit.motion.sequence(Kit.gait.arms(), Kit.gait.plant());
 
 ### `Kit.gait.walk({ before = [], after = [] } = {})`
 
-_Undocumented: add a JSDoc block in the source._
+Walking, ready made: lean, arms, planted feet, and tails, wings and everything loose trailing at full
+detail; clock-driven swing at level of detail 1; nothing beyond. The same stage walks any plan with two or
+more legs. Other stages join it at the two places where order matters: `before` the legs are solved
+(whatever moves the body over its feet: breathing, a weight shift) and `after` (whatever poses the upper
+body over the walk: a performance, a gaze), both ahead of the trailing chains.
+
+- `[options]` *{before?: Array\<Object\|Function\>, after?: Array\<Object\|Function\>}* - stages of kit/motion.js
+
+**Returns** *Object* a `Stage`
+
+**Complexity** see `plant` (detail 0) and `swing` (detail 1)
+
+```js
+const motion = Kit.motion.state(bake, Kit.gait.walk());
+Kit.motion.advance(motion, dt, x, 0, z, heading);
+```
 
 ### `Kit.gait.feet(motion)`
 
@@ -9430,19 +9458,25 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 >   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });  // the foot swings through that world point
 >   Kit.act.play(motion, 'dive', { target: [x, y, z] });              // dives to the side the point is on, hands to it
 >   Kit.act.aim(motion, 'target', x, y, z);                           // the point moved (a ball in flight)
->   Kit.act.playing(motion)                                           // 'dive' until it has finished, then null
+>   Kit.act.marks('dive').contact                                     // seconds into a dive that the hands arrive
+>   Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: 0.3 } }); // hands there in 0.3 s; landing as authored
+>   Kit.act.play(motion, 'save', { target, reach: { mark: 'contact', in: 0.4 } }); // a FAMILY: the form that gets there
+>   Kit.act.playing(motion)                                           // 'dive' (or the form a family chose) until it has finished
 >   Kit.act.takeRootMotion(motion, offset)                            // after a kick or a dive: where the body ended up
 >   Kit.act.base(motion, 'keeperReady');                              // the loop it returns to between one-shots
 >   Kit.act.lookAt(motion, x, y, z);                                  // head and gaze follow a point (kit/act-life.js)
 >   figure.face(Kit.act.face(motion));                                // show the blink / talk frames it chose
 > `Kit.act.REPERTOIRE` lists what can be played (kit/act-moves.js, kit/act-sport.js); `Kit.act.refusal(id, plan)`
-> says why a body cannot do one.
+> says why a body cannot do one. `Kit.act.FAMILIES` lists the jobs that have several forms (`save`), and
+> `Kit.act.choose(motion, familyId, { target })` says which form a body would use for a point.
 >
 > Owns:  `CHANNELS` and `EASES` (the vocabulary of a performance), `performance` (check and compile a spec),
->        `REPERTOIRE` / `define` (the performances by id), `rig` (what a plan's roles are, measured once),
+>        `REPERTOIRE` / `define` (the performances by id), `FAMILIES` / `defineFamily` / `choose` (several
+>        performances for one job, chosen by where the point is against the body's own reach), `rig` (what a plan's roles are, measured once),
 >        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
 >        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
->        controls (`play`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `takeRootMotion`, `cast`), `refusal`,
+>        controls (`play`, `marks`, `stop`, `base`, `aim`, `point`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+>        `takeRootMotion`, `cast`), `refusal`,
 >        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
 > Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
 >        body solves the legs with `Kit.gait.reachLeg`), the solvers (kit/reach.js), always-on life such as
@@ -9455,6 +9489,12 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 > its legs reach lifts its feet), hands are placed by two-bone inverse kinematics, the spine and neck share a
 > turn between their bones. A `reach` pulls a hand or a foot to a world point given at call time; a `travel`
 > carries the body towards one.
+>
+> Rules every performance gets without asking (each a few lines in `poseActing`, tuned in `TUNING`): an arm
+> moved far between two keys goes round in front of the body, not out through a T; a keyed hand stays outside
+> the head; a hand pulled to a point leads the head there (the trunk tips off the line on a short-armed body)
+> and the body closes the last of the distance its arm cannot; a leg hanging in the air is drawn up by its
+> foot's keyed lift; a travel longer than its `stride` is run in steps.
 >
 > Conventions (kit/motion.js): metres, seconds, radians; +Y up; heading 0 faces +Z; "body frame" is left, up,
 > forward. A turn is [pitch, yaw, tilt]: pitch positive leans forward (nods down), yaw positive turns to the
@@ -9506,6 +9546,10 @@ Tunables of running a performance.
 The performances that can be played by id. Open: `Kit.act.define(spec)` adds a row (kit/act-moves.js and
 kit/act-sport.js fill it), and every row appears on the acts proof sheet for every body that can do it.
 
+### `Kit.act.FAMILIES`
+
+Families by id: `Kit.act.play` takes one wherever it takes a performance. Open: `Kit.act.defineFamily` adds a row.
+
 ### `Kit.act.performance(spec)`
 
 Checks a performance spec and compiles it to flat buffers, once. Everything a typo can break is refused
@@ -9533,6 +9577,38 @@ Compiles a performance spec and adds it to the repertoire under its id.
 
 ```js
 Kit.act.define({ id: 'nod', seconds: 0.8, keys: [{ at: 0.4, head: [0.35, 0, 0] }] }); Kit.act.play(motion, 'nod');
+```
+
+### `Kit.act.defineFamily(spec)`
+
+Checks a family and adds it under its id.
+
+- `spec` *FamilySpec*
+
+**Returns** *Object* the family, frozen
+
+**Complexity** O(forms)
+
+```js
+Kit.act.defineFamily({ id: 'greet', forms: [{ play: 'bow', aside: [0, 1] }, { play: 'wave' }] });
+```
+
+### `Kit.act.choose(motion, familyId, params)`
+
+Which form of a family a body would play for a point: the first whose spans hold the point, measured against
+this body's own reach, among the forms the body can do at all.
+
+- `motion` *Object* - a `MotionState`
+- `familyId` *string* - an id of `Kit.act.FAMILIES`
+- `params` *Object* - the family's point in the world: { target: [x, y, z] }
+
+**Returns** *?string* the id of a performance; null when the body can do none of the forms
+
+**Complexity** O(forms); O(needs) more the first time a body is asked about a form; no allocation after
+
+```js
+const form = Kit.act.choose(keeper, 'save', { target: [x, y, z] });   // 'catch', 'catchHigh', 'smother', 'dive' or 'diveStep'
+Kit.act.play(keeper, 'save', { target: [x, y, z], reach: { mark: 'contact', in: Kit.act.marks(form).contact } });
 ```
 
 ### `Kit.act.rig(plan, rest)`
@@ -9678,8 +9754,8 @@ Plays a performance on an instance whose controller has a `Kit.act.performer` (a
 does): it cross-fades in over what the body was doing, and a one-shot hands back to the base when done.
 
 - `motion` *Object* - a `MotionState`
-- `performanceOrId` *string\|Object* - an id of `Kit.act.REPERTOIRE`, or a compiled performance
-- `[params]` *Object* - named world points ({ target: [x, y, z] }; a performance's own default otherwise), `side` ('left' or 'right': which hand waves, which foot kicks; default: the side its point is on, or the authored one), `rate` (speed, default 1) and `fade` (seconds of cross-fade)
+- `performanceOrId` *string\|Object* - an id of `Kit.act.REPERTOIRE` or of `Kit.act.FAMILIES` (the form that suits the point is played; `Kit.act.playing` then names it), or a compiled performance
+- `[params]` *Object* - named world points ({ target: [x, y, z] }; a performance's own default otherwise), `side` ('left' or 'right': which hand waves, which foot kicks; default: the side its point is on, or the authored one), `rate` (speed, default 1), `fade` (seconds of cross-fade) and `reach` ({ mark, in }: meet the named mark of the performance `in` seconds from now - the lead-in up to the mark is sped up or slowed to fit, and everything after it runs at `rate`, so a dive hurried to a shot still lands and gets up as authored)
 
 **Returns** *boolean* false, changing nothing, when this body cannot do it (`Kit.act.refusal` says why)
 
@@ -9687,6 +9763,7 @@ does): it cross-fades in over what the body was doing, and a one-shot hands back
 
 ```js
 Kit.act.play(motion, 'kick', { target: [ball.x, ball.y, ball.z] });
+Kit.act.play(keeper, 'dive', { target: [x, y, z], reach: { mark: 'contact', in: secondsUntilTheBallArrives } });
 ```
 
 ### `Kit.act.base(motion, performanceOrId)`
@@ -9739,6 +9816,23 @@ travel follows it until the body has left the ground.
 Kit.act.aim(keeper, 'target', ball.x, ball.y, ball.z);
 ```
 
+### `Kit.act.point(motion, name, out)`
+
+Where a named point of the performance that is playing is: the one it was given, its own default placed in
+front of the body, or where `aim` last moved it. For drawing the ball a default kick is aimed at.
+
+- `motion` *Object* - a `MotionState`
+- `name` *string* - the point's name (usually 'target')
+- `out` *Float32Array\|number[]* - receives [x, y, z], world metres
+
+**Returns** *boolean* false (leaving `out` alone) when nothing playing uses a point of that name
+
+**Complexity** O(targets), no allocation
+
+```js
+if (Kit.act.point(player, 'target', spot)) ball.position.set(spot[0], spot[1], spot[2]);
+```
+
 ### `Kit.act.playing(motion)`
 
 What an instance is playing: the id of a one-shot until it has finished (a held one stays), else null.
@@ -9752,6 +9846,21 @@ The base loop does not count.
 
 ```js
 if (Kit.act.playing(player) !== 'kick') startNextMove();
+```
+
+### `Kit.act.marks(performanceOrId)`
+
+The named moments of a performance, in seconds from its start at the authored speed (`contact`, `land`...).
+
+- `performanceOrId` *string\|Object* - an id of `Kit.act.REPERTOIRE`, or a compiled performance
+
+**Returns** *Object\<string, number\>* mark name -> seconds; frozen, empty when it declares none
+
+**Complexity** O(1)
+
+```js
+const lead = Kit.act.marks('dive').contact;   // seconds a dive needs to get its hands there, unhurried
+if (ballArrivesIn < lead) Kit.act.play(keeper, 'dive', { target, reach: { mark: 'contact', in: ballArrivesIn } });
 ```
 
 ### `Kit.act.progress(motion)`
@@ -9782,6 +9891,23 @@ uncollected plus the travel of the one playing. Reads only; a camera or a proof 
 
 ```js
 Kit.act.rootMotion(keeper.motion, offset); camera.lookAt(keeper.x + offset[0], 1, keeper.z + offset[1]);
+```
+
+### `Kit.act.keepInPlace(motion, pose)`
+
+Puts a body that a performance has carried away back over the instance's position in a copy of its pose:
+the pose is kept, the distance covered is not. For a view that stays on the character (a maker's stage, a
+proof sheet); a game moves the instance with `takeRootMotion` instead.
+
+- `motion` *Object* - a `MotionState`
+- `pose` *Object* - a copy of `motion.pose` (`Kit.rig.copy`); its carrier bone is moved back
+
+**Returns** *void*
+
+**Complexity** O(1), no allocation
+
+```js
+Kit.rig.copy(motion.pose, figure.local); Kit.act.keepInPlace(motion, figure.local); figure.pose();
 ```
 
 ### `Kit.act.takeRootMotion(motion, out)`
@@ -9853,6 +9979,7 @@ const blinkGap = Kit.seeded.unit(Kit.act.seedOf(motion), BLINK_FIELD, count);
   - `[most=1]` *number* - the furthest it goes sideways and forwards, in statures (the body's standing height)
   - `[mostUp=0.4]` *number* - the highest it rises, in statures
   - `[axes=[1, 1, 1]` *number[]* - ] which of left, up, forward it travels along
+  - `[stride]` *number* - leg lengths one step covers: a travel longer than this is run in steps, the feet landing in turn ahead of the body, the last step taken by the foot a `ground` reach plants (default: one lunge)
 - **PerformanceSpec**
   - `id` *string*
   - `[label]` *string* - for a picker (default: the id)
@@ -9862,16 +9989,32 @@ const blinkGap = Kit.seeded.unit(Kit.act.seedOf(motion), BLINK_FIELD, count);
   - `[needs]` *Object* - a requirement spec for `Kit.body.requirement` ({ needs, atLeast })
   - `[side]` *string* - 'left' or 'right': the side it is authored for; played mirrored for the other
   - `[sideBy]` *string* - the name of a target: the side is the one that point is on
-  - `[defaults]` *Object\<string, number[]\>* - target name -> [left, up, forward] in statures (the body's standing height) from where the body stands: where the point is when the caller gives none
+  - `[leanBySide=false]` *boolean* - with `sideBy`: the sideways parts of its keys (the lean, yaw and tilt of the body, spine and head) play in proportion to how far to the side the point is, in full at an arm's length, so a point straight ahead is met squarely instead of leaning the shoulder away from it
+  - `[defaults]` *Object\<string, number[]\>* - target name -> [left, up, forward] from where the body stands, in units of how high its hands reach (`ActRig.high`; its standing height when it has no arms): where the point is when the caller gives none, so a default is within reach of a long body and a squat one alike
+  - `[marks]` *Object\<string, number\>* - named moments on its own timeline, each 0..1 through it (`contact`, `release`, `land`): a game reads them with `Kit.act.marks` and can ask `play` to meet one at a given time
+  - `[defaultsIn='high']` *string* - what the defaults are measured in: 'high' (hand-reach heights) or 'legs' (leg lengths: for a point a foot must meet, such as a ball to kick)
   - `keys` *PerformanceKey[]*
   - `[reaches]` *PerformanceReach[]*
   - `[travel]` *PerformanceTravel*
+- **FamilyForm** - One way of doing a family's job, and where its point must be for it to be the way chosen.
+  - `play` *string* - the id of a performance of the repertoire that is given the family's point
+  - `[aside=[0, Infinity]` *number[]* - ] [from, to): how far to the side of the body the point is, in arm spans (`ActRig.span`: the body's middle to the end of an arm held out sideways)
+  - `[up=[0, Infinity]` *number[]* - ] [from, to): how high above the ground it is, in hand-reach heights (`ActRig.high`: as high as a hand goes with the feet on the ground)
+- **FamilySpec** - Several performances that do one job (stop a ball), told apart by where the point is relative to the body's own reach: a game names the family and the point, and the body does whichever form gets there.
+  - `id` *string*
+  - `[label=id]` *string*
+  - `[target='target']` *string* - the named point the choice is made by
+  - `forms` *FamilyForm[]* - in order: the first whose spans hold the point is chosen, the last when none does
 - **ActRig** - A plan's parts as performances address them, measured once from the plan and a proportioned rest pose.
   - `carrier` *number* - the bone the body is carried by (`Kit.motion.carrier`)
   - `legs` *?Object* - the `LegRig` of kit/gait.js, or null for a body that cannot stand on legs
   - `unit` *number* - metres a `shift` of 1 moves the body: its leg length (half its height without legs)
-  - `stature` *number* - metres from its lowest point to its highest at rest: what default points and travel caps scale by
+  - `stature` *number* - metres from its lowest point to its highest at rest: what travel caps scale by
+  - `headRadius` *number* - metres: half the head bone's height, the ball a keyed hand is kept out of (0 without a head)
+  - `high` *number* - metres from its lowest point to as high as a hand reaches (the stature without arms): what default points scale by
   - `reach` *number* - metres from the hips to the end of an outstretched arm (0 without arms)
+  - `halfWidth` *number* - metres from the body's middle to a shoulder (a tenth of the stature without arms): how high it lies on its side
+  - `span` *number* - metres from the body's middle to the end of an arm held out sideways (0 without arms)
   - `spine` *Int16Array* - the spine's bones above the carrier
   - `neck` *Int16Array*
   - `head` *number* - the head bone, or -1
@@ -9924,17 +10067,27 @@ The fidgets: what `Kit.act.character` lets a standing body do on its own now and
 >
 > Owns:  the rows `kick` (a step up, the plant, a swing through the point, the follow-through), `keeperReady`
 >        (a goalkeeper's stance, a loop), `dive` (a dive to the side the point is on, hands to it, the landing
->        and getting up there), `catch` (both hands to the point, the ball gathered in), `parry` (one hand
->        punched to it), `celebrate` and `slump`, defined into `Kit.act.REPERTOIRE`.
+>        and getting up there), `diveStep` (the same dive after a step, for a ball further off), `catch` (both
+>        hands to the point, the ball gathered in), `catchHigh` (a jump for a ball overhead), `smother` (down
+>        onto a ball at the feet), `parry` (one hand punched to it), `celebrate` and `slump`, defined into
+>        `Kit.act.REPERTOIRE`; and the family `save` (whichever of the five gets the hands to the ball).
 > Does not own: how a performance is run (kit/act.js), the ball, or when a game plays a move.
 >
 > Playing one (kit/act.js):
 >   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });   // contact at half way: Kit.act.progress(motion) >= 0.5
 >   Kit.act.play(motion, 'dive', { target: [x, y, z] });               // hands on the point at 0.4 of the way
+>   Kit.act.play(motion, 'save', { target: [x, y, z], reach: { mark: 'contact', in: seconds } });  // the form is chosen
+>   Kit.act.playing(motion);                                           // 'catch', 'catchHigh', 'smother', 'dive' or 'diveStep'
 >   Kit.act.takeRootMotion(motion, offset);                            // afterwards: the kick stepped, the dive flew
-> The moment of contact of each move is `Kit.act.CONTACT[id]`, 0..1 through it.
+> The moment of contact of each move is `Kit.act.CONTACT[id]`, 0..1 through it, and `Kit.act.marks(id).contact`
+> in seconds; `Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: seconds } })` meets it on time.
 >
 > Pure (no DOM, no THREE): data only; unit-tested by tools/test-act.js.
+
+### `Kit.act.CONTACT`
+
+When each move meets its point, 0..1 through it: the frame a game launches the ball or stops it. The same
+moments, in seconds, are `Kit.act.marks(id).contact`; `Kit.act.play` can be asked to meet one at a given time.
 
 ## act-life.js
 
@@ -9945,7 +10098,8 @@ The fidgets: what `Kit.act.character` lets a standing body do on its own now and
 >
 > Owns:  the stages `breathe` (the chest swells and the spine gives, faster when the body works), `sway` (a
 >        standing body's weight drifts over its feet), `blink` (drives the blink frames of a face on a seeded
->        schedule), `gaze` (the head follows a point, or wanders, on a spring), their controls `lookAt` /
+>        schedule), `gaze` (the head follows a point, or wanders, on a spring), `flutter` (wings ride a slow
+>        wave with a seeded flick, and sweep back at speed), their controls `lookAt` /
 >        `lookAhead`, and `character` (the ready composition a game or the Character Maker uses: walk or swim,
 >        life, a performer with fidgets, and trailing chains).
 > Does not own: performances and the performer (kit/act.js), walking (kit/gait.js), swimming (kit/swim.js),
@@ -10066,7 +10220,8 @@ columnsFor(FRAMINGS.head, 2) // 2
 > option of every socket, every dial at both ends, seeded rolls, and every movement in eight phases.
 >
 > Owns:  `Kit.body.proof.SUITES` and `suite(name, catalog)` (pure: a catalogue -> the cells of a sheet), `ACTS`
->        (the movements a cell can show, open for other modules to add to), `CATALOGS` (the catalogues a sheet
+>        (the movements a cell can show, open for other modules to add to), `pose` / `sweep` (a figure at a
+>        moment of a movement, and the room the whole movement needs from a direction), `CATALOGS` (the catalogues a sheet
 >        can be made of) and the `proof` workbench screen that draws a sheet (`Kit.currentGame.show(job)`).
 > Does not own: the catalogues, baking, drawing or movement themselves; taking the pictures (tools/dev/proof.js).
 >
@@ -10080,6 +10235,15 @@ Directions of a turnaround, in turns of a full circle; 0 faces the camera and th
 ### `Kit.body.proof.THREE_VIEWS`
 
 The three directions that between them show a front, a side and a back.
+
+### `Kit.body.proof.DEFAULT_VIEWS`
+
+A three-quarter view and the front: what a movement is shown from unless its row says otherwise.
+
+### `Kit.body.proof.GOAL_GRID`
+
+The shots of the saves suite: fractions of half a goal's width to the keeper's left and of its height. The
+goal is a football goal (7.32 m by 2.44 m for a 1.8 m keeper) scaled to the body's stature.
 
 ### `Kit.body.proof.SUITES`
 
@@ -10113,8 +10277,7 @@ Kit.body.proof.suite('turn', catalog).cells.length // 8 per species
 
 ### `Kit.body.proof.perform(figure, actId, phase)`
 
-Poses a figure at a phase of an act by simulating it from a standing start, so the same cell is the same
-picture every time.
+Poses a figure at a phase of an act by simulating it from a standing start.
 
 - `figure` *Object* - from `Kit.figure.build`
 - `actId` *string* - a key of `ACTS`
@@ -10122,10 +10285,44 @@ picture every time.
 
 **Returns** *?string* why the body cannot do it (the stage's refusal), or null when posed
 
-**Complexity** O(seconds simulated / SIMULATION_STEP) motion steps
+**Complexity** as `pose`
 
 ```js
 Kit.body.proof.perform(figure, 'walk', 0.25)
+```
+
+### `Kit.body.proof.pose(figure, actId, phase)`
+
+Poses a figure at a phase of an act.
+
+- `figure` *Object* - from `Kit.figure.build`
+- `actId` *string* - a key of `ACTS`
+- `phase` *number* - 0..1
+
+**Returns** *ProofPose*
+
+**Complexity** O(seconds simulated / SIMULATION_STEP) motion steps
+
+```js
+Kit.body.proof.pose(figure, 'kick', 0.5).travel // [x, z] the kick has stepped by then
+```
+
+### `Kit.body.proof.sweep(bake, actId, yaw)`
+
+The bounds of an act's whole movement for a bake seen from a direction: what a cell must have room for so
+that no phase spills out of it. The point the act is aimed at (a ball) is included while it is within a
+stature of the body.
+
+- `bake` *Object*
+- `actId` *string* - a key of `ACTS` (`rest`, or an act the body cannot do, gives the rest pose's bounds)
+- `yaw` *number* - turns of a full circle, as a cell's
+
+**Returns** *SweptBounds*
+
+**Complexity** O(seconds of the act / SIMULATION_STEP * bones)
+
+```js
+const { left, right, top } = Kit.body.proof.sweep(bake, 'dive', 0);
 ```
 
 ### Types
@@ -10139,7 +10336,7 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
 - **ProofSheet**
   - `title` *string*
   - `columns` *number* - cells per row
-  - `framing` *('body'\|'head')*
+  - `framing` *('body'\|'head'\|'swept')* - `body`: every figure at one scale, cells sized by the largest; `head`: close on the head; `swept`: each figure fills its own cell, fitted to everything its movement sweeps
   - `cells` *ProofCell[]*
 - **ProofAct** - A movement a cell can show.
   - `stage` *function(): Object* - makes the motion stage (kit/motion.js)
@@ -10148,6 +10345,22 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
   - `[begin]` *function(Object): void* - called with the motion state once it has settled, before the cycle that is shown (a one-shot performance starts here)
   - `[refusal]` *function(Object): ?string* - why a bake cannot do it, beyond what its stage needs
   - `[anchor]` *function(Object, Object): void* - called with the motion state and the figure's local pose before it is drawn: a movement that carries the body away puts it back in its cell here
+  - `[travel]` *function(Object, number[]): void* - writes how far the movement has carried the body from where it began, [x, z] metres in the body's frame: the sheet draws it as a mark on the ground
+  - `[point]` *function(Object, number[]): boolean* - writes the point the movement is aimed at (a ball), [x, y, z] metres from where the body began; false when it has none
+  - `[views]` *number[]* - the two directions its phases are shown from, in turns (default `DEFAULT_VIEWS`)
+  - `[isUnlisted]` *boolean* - left out of the acts suite unless asked for by id
+- **ProofPose**
+  - `refusal` *?string* - why the body cannot do the act (the figure is then at rest), or null
+  - `travel` *number[]* - [x, z]: how far the act has carried the body from where it began, metres in the body's frame; the figure itself is drawn in place
+  - `point` *?number[]* - [x, y, z]: what the act is aimed at, metres from where the body is DRAWN; or null
+  - `origin` *number[]* - [x, y, z]: where the bake's own origin (the ground under it) is in the figure's space - a figure is centred and grounded by its rest pose, a moving body stands by its legs
+- **SweptBounds** - Everything a body's joints pass through over a whole act, seen from one direction, with the body drawn in place: metres in the bake's own space (the ground it stands on at 0), `left`..`right` across the view and `bottom`..`top` up it.
+  - `left` *number*
+  - `right` *number*
+  - `bottom` *number*
+  - `top` *number*
+  - `restTop` *number*
+  - `restHalf` *number*
 
 ## creator-rows.js
 
@@ -10240,6 +10453,7 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
   - `redo` *function(): boolean*
   - `canUndo` *function(): boolean*
   - `canRedo` *function(): boolean*
+  - `beginGesture` *function(): void* - a drag starts: every edit to one control until `endGesture` is one undo step, however long the drag lasts or however slowly its edits arrive
   - `endGesture` *function(): void* - the next edit to the same control starts a new undo step
   - `name` *function(): string*
   - `setName` *function(string): string*
@@ -10317,6 +10531,29 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
 >
 > Every icon is an original, simple stroke drawing. Needs the DOM (kit/ui/), so it is exercised in the browser.
 
+## creator-perform.js
+
+> Kit creator perform: what the character on the stage is doing, and the picker that chooses it. The character
+> is never frozen: with nothing chosen it idles (breathes, shifts its weight, looks about, blinks, fidgets);
+> the picker offers walking, running and every performance of `Kit.act.REPERTOIRE` this body can do.
+>
+> Owns:  `Kit.creator.performanceChoices` (pure: a bake -> the rows of the picker, each with why the body cannot
+>        do it, if it cannot), `Kit.creator.stagePlayer` (pure: the motion state behind the stage, made again
+>        when the body changes, advanced each frame towards the chosen row) and `Kit.creator.PerformPicker`
+>        (the rail button and its list; needs the DOM and kit/ui/).
+> Does not own: the performances (kit/act*.js), walking (kit/gait.js), or drawing (kit/creator.js copies the
+>        pose this hands back into the figure).
+>
+> The two pure parts are unit-tested in tools/test-act.js; the picker in the browser (tools/test-creator-ui.js).
+
+### Types
+
+- **PerformanceChoice**
+  - `id` *string* - 'idle', 'walk', 'run' or an id of `Kit.act.REPERTOIRE`
+  - `label` *string*
+  - `kind` *'loop'\|'hold'\|'once'*
+  - `refusal` *?string* - why this body cannot do it; null when it can
+
 ## creator-controls.js
 
 > Kit creator controls: the interface generated from the rows of a schema. A row of kind `dial` becomes sliders,
@@ -10344,6 +10581,7 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
   - `lock` *function(string): Object* - signal (boolean) of a field's lock
   - `queueDial` *function(string, number): void* - remember a slider's newest value; `flush` applies it on the next frame
   - `flush` *function(): boolean* - apply queued slider values as one edit each; true when something was applied
+  - `beginGesture` *function(): void* - a drag starts: its edits are one undo step until `endGesture`
   - `endGesture` *function(): void* - apply what is queued and let the next drag start a new undo step
   - `setColor` *function(string, number): void*
   - `setSocket` *function(string, ?string): void*
@@ -10358,7 +10596,7 @@ Kit.body.proof.perform(figure, 'walk', 0.25)
 
 > Kit creator stage: the part of the screen the character stands in, as components. A gesture layer (drag to
 > turn, pinch or wheel to zoom, arrow keys and + / - for the keyboard), a left rail (undo, redo), a right rail
-> (zoom, hold-to-compare, walk), the character's name, and the quick look presets.
+> (zoom, hold-to-compare, the performance picker), the character's name, and the quick look presets.
 >
 > Owns:  `Kit.creator.StageGestures`, `StageRails`, `StageTitle`, `LookChips`, `HoldButton` and the stage
 >        stylesheet. Each is a component over plain props, so a screen composes them and a test can mount one.

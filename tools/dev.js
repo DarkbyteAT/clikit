@@ -134,7 +134,7 @@ async function commandSheet({ positionals, flags }, skinsOf) {
 
 async function commandProof({ positionals, flags }) {
   const { makeProof } = require('./dev/proof');
-  if (!positionals.length) throw new Error('which suites? Usage: node tools/dev.js proof turn rolls options extremes acts heads faces [--catalog wardrobe|samples] [--preset toon|pixel|soft] [--species person,stout] [--acts walk,wave] [--pages 2] [--count 64]');
+  if (!positionals.length) throw new Error('which suites? Usage: node tools/dev.js proof turn rolls options extremes acts saves heads faces [--catalog wardrobe|samples] [--preset toon|pixel|soft] [--species person,stout] [--acts walk,wave] [--pages 2] [--count 64]');
   const { files, problems } = await makeProof({ suites: positionals, catalog: flags.catalog, preset: flags.preset, species: flags.species ? String(flags.species).split(',') : [], acts: flags.acts ? String(flags.acts).split(',') : undefined, out: flags.out ? path.resolve(flags.out) : undefined, pages: flags.pages ? Number(flags.pages) : undefined, count: flags.count ? Number(flags.count) : undefined });
   files.forEach((file) => console.log(`proof: ${path.relative(ROOT, file)}`));
   problems.forEach((problem) => console.log(`  ${problem}`));

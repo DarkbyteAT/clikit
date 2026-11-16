@@ -15,7 +15,10 @@
  * passed in, so a test controls both.
  */
 (() => {
-  /** Edits to one control within this long of each other are one step of the undo history (a drag, a held arrow key). */
+  /**
+   * Outside a gesture (a held arrow key, a wheel), edits to one control within this long of each other are one
+   * step of the undo history. A drag needs no window: it is one step from `beginGesture` to `endGesture`.
+   */
   const MERGE_WINDOW_MS = 700;
   /** The most undo steps kept. */
   const HISTORY_LIMIT = 100;
@@ -132,6 +135,8 @@
    * @property {function(): boolean} redo
    * @property {function(): boolean} canUndo
    * @property {function(): boolean} canRedo
+   * @property {function(): void} beginGesture a drag starts: every edit to one control until `endGesture` is one
+   *   undo step, however long the drag lasts or however slowly its edits arrive
    * @property {function(): void} endGesture the next edit to the same control starts a new undo step
    * @property {function(): string} name
    * @property {function(string): string} setName
@@ -163,6 +168,7 @@
     let revision = 0;
     let lastMergeKey = null;
     let lastEditAt = 0;
+    let isGestureOpen = false;
     let cachedFor = null;
     let cachedSchema = null;
     let cachedGroups = null;
@@ -193,12 +199,13 @@
     /**
      * Makes a recipe current as one undo step, or merges it into the step before when it continues the same gesture.
      * @param {Object} next
-     * @param {?string} mergeKey identifies the control being dragged; null never merges
+     * @param {?string} mergeKey identifies the control being dragged; null never merges. Within an open gesture
+     *   the same key always merges; outside one, only within `MERGE_WINDOW_MS` of the edit before
      */
     const commit = (next, mergeKey = null) => {
       const isSame = JSON.stringify(next) === JSON.stringify(current);
       if (isSame) return;
-      const canMerge = mergeKey !== null && mergeKey === lastMergeKey && now() - lastEditAt <= MERGE_WINDOW_MS && history.canUndo();
+      const canMerge = mergeKey !== null && mergeKey === lastMergeKey && (isGestureOpen || now() - lastEditAt <= MERGE_WINDOW_MS) && history.canUndo();
       if (canMerge) history.undo();
       history.push(next);
       current = next;
@@ -283,7 +290,12 @@
       },
       canUndo: () => history.canUndo(),
       canRedo: () => history.canRedo(),
+      beginGesture() {
+        isGestureOpen = true;
+        lastMergeKey = null;
+      },
       endGesture() {
+        isGestureOpen = false;
         lastMergeKey = null;
       },
       name: () => characterName,

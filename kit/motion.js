@@ -60,6 +60,11 @@
     drag: 3, // per second
     stiffnessScale: 2.2, // as `trail`: straightening rate per square root of the base bone's stiffness hint
     shortestTip: 0.01, // metres: a last bone shorter than this has no end to swing
+    solidGirth: 0.07, // metres: a stiff bone at least this thick is a solid the loose chains are kept out of
+    solidShare: 0.85, // of a bone's half girth its balls take: drawn shapes are rounder than a cylinder
+    mostBallsPerBone: 4,
+    wornWithin: 1.25, // a chain whose rest points lie within this many radii of a solid's ball is worn round it and does not collide with it
+    thickness: 0.1, // of the chain's own girth: how far its points keep from the floor and the solids
   });
   /** Tunables of `course`. */
   const COURSE_DEFAULTS = Object.freeze({ acceleration: 2.5, turnAcceleration: 4, x: 0, z: 0, heading: 0 });
@@ -752,27 +757,98 @@
     return chains;
   };
 
+  /**
+   * The solids loose chains are kept out of: every stiff, thick bone that is not part of a loose chain, as a
+   * row of balls from its joint to its end. Returns the bones, how many balls each has, and room for the balls.
+   */
+  const solidsOf = (plan, world, chains, tune) => {
+    const isInChain = new Uint8Array(plan.boneCount);
+    chains.forEach((joints) => {
+      for (let bone = joints[0]; bone < plan.subtreeEnd[joints[0]]; bone++) isInChain[bone] = 1;
+    });
+    const bones = [];
+    const perBone = [];
+    for (let bone = 1; bone < plan.boneCount; bone++) {
+      if (isInChain[bone] || plan.girth[bone] < tune.solidGirth || plan.stiffness[bone] < tune.below) continue;
+      Kit.body.tailPosition(plan, world, bone, scratchTip);
+      const at = bone * VECTOR_STRIDE;
+      const length = Math.hypot(scratchTip[0] - world.translation[at], scratchTip[1] - world.translation[at + 1], scratchTip[2] - world.translation[at + 2]);
+      bones.push(bone);
+      perBone.push(Math.max(1, Math.min(tune.mostBallsPerBone, Math.round(length / (plan.girth[bone] * tune.solidShare)))));
+    }
+    const count = perBone.reduce((sum, each) => sum + each, 0);
+    return { bones: Int16Array.from(bones), perBone: Uint8Array.from(perBone), radius: Float32Array.from(bones, (bone) => (plan.girth[bone] / 2) * tune.solidShare), count, balls: new Float32Array(count * Kit.dynamics.BALL_STRIDE) };
+  };
+
+  /** Writes where a body's solids are now into their balls: evenly along each bone, joint to end. */
+  const writeBalls = (plan, world, solids) => {
+    const { balls } = solids;
+    let ball = 0;
+    for (let index = 0; index < solids.bones.length; index++) {
+      const bone = solids.bones[index];
+      const at = bone * VECTOR_STRIDE;
+      Kit.body.tailPosition(plan, world, bone, scratchTip);
+      for (let part = 0; part < solids.perBone[index]; part++, ball++) {
+        const along = (part + 0.5) / solids.perBone[index];
+        const ballAt = ball * Kit.dynamics.BALL_STRIDE;
+        for (let axis = 0; axis < VECTOR_STRIDE; axis++) balls[ballAt + axis] = world.translation[at + axis] + (scratchTip[axis] - world.translation[at + axis]) * along;
+        balls[ballAt + VECTOR_STRIDE] = solids.radius[index];
+      }
+    }
+  };
+
   /** Builds the simulated chains of a `loose` stage for one instance: a point per joint, and one more for the end of the last bone. */
   const createLoose = (motion, tune) => {
     const { plan } = motion;
     const world = refreshWorld(motion);
-    const between = (from, to) => Math.hypot(world.translation[to] - world.translation[from], world.translation[to + 1] - world.translation[from + 1], world.translation[to + 2] - world.translation[from + 2]);
-    const chains = looseChains(plan, tune)
+    const between = (from, to) =>
+      Math.hypot(world.translation[to] - world.translation[from], world.translation[to + 1] - world.translation[from + 1], world.translation[to + 2] - world.translation[from + 2]);
+    const found = looseChains(plan, tune);
+    const solids = solidsOf(plan, world, found, tune);
+    const chains = found
       .map((joints) => {
         const last = joints[joints.length - 1];
         Kit.body.tailPosition(plan, world, last, scratchTip);
-        const tipLength = Math.hypot(scratchTip[0] - world.translation[last * VECTOR_STRIDE], scratchTip[1] - world.translation[last * VECTOR_STRIDE + 1], scratchTip[2] - world.translation[last * VECTOR_STRIDE + 2]);
+        const tipLength = Math.hypot(
+          scratchTip[0] - world.translation[last * VECTOR_STRIDE],
+          scratchTip[1] - world.translation[last * VECTOR_STRIDE + 1],
+          scratchTip[2] - world.translation[last * VECTOR_STRIDE + 2]
+        );
         const hasTip = tipLength > tune.shortestTip;
         const lengths = [...joints.slice(1).map((joint, link) => between(joints[link] * VECTOR_STRIDE, joint * VECTOR_STRIDE)), ...(hasTip ? [tipLength] : [])];
         if (!lengths.length) return null;
         return {
           joints: Int16Array.from(joints),
           hasTip,
-          points: Kit.dynamics.chain({ count: lengths.length + 1, lengths, gravity: tune.gravity, drag: tune.drag, stiffness: tune.stiffnessScale * Math.sqrt(plan.stiffness[joints[0]]) }),
+          points: Kit.dynamics.chain({
+            count: lengths.length + 1,
+            lengths,
+            gravity: tune.gravity,
+            drag: tune.drag,
+            stiffness: tune.stiffnessScale * Math.sqrt(plan.stiffness[joints[0]]),
+            balls: solids.count,
+            thickness: plan.girth[last] * tune.thickness,
+          }),
+          tipLength,
+          collides: null,
         };
       })
       .filter(Boolean);
-    return { chains, epoch: -1 };
+    // A chain collides with every solid except the ones it is worn round: where its rest points already are.
+    writeBalls(plan, world, solids);
+    chains.forEach((chain) => {
+      const used = [];
+      for (let ball = 0; ball < solids.count; ball++) {
+        const ballAt = ball * Kit.dynamics.BALL_STRIDE;
+        const isWornRound = Array.from(chain.joints.slice(1))
+          .map((joint) => world.translation.subarray(joint * VECTOR_STRIDE, joint * VECTOR_STRIDE + VECTOR_STRIDE))
+          .concat(chain.hasTip ? [Kit.body.tailPosition(plan, world, chain.joints[chain.joints.length - 1], [0, 0, 0])] : [])
+          .some((point) => Math.hypot(point[0] - solids.balls[ballAt], point[1] - solids.balls[ballAt + 1], point[2] - solids.balls[ballAt + 2]) < solids.balls[ballAt + VECTOR_STRIDE] * tune.wornWithin);
+        if (!isWornRound) used.push(ball);
+      }
+      chain.collides = Int16Array.from(used);
+    });
+    return { chains, solids, epoch: -1 };
   };
 
   /**
@@ -781,7 +857,9 @@
    * default is stiff) and that no other stage moves. Each run of such bones is shadowed by a `Kit.dynamics`
    * chain dragged from its base, with a point at the END of the last bone too, so a single loose bone (a
    * cloak panel) swings like a pendulum. The chain steps on the fixed clock, so it behaves the same at any
-   * frame rate. Put it last, after whatever moves the body.
+   * frame rate. Its points are kept above the ground the body stands on and out of the body's own solids (every
+   * stiff, thick bone, as a row of balls), except the solids a part is worn round. Put it last, after whatever
+   * moves the body.
    * @param {{below?: number, except?: string[], gravity?: number[], drag?: number, stiffnessScale?: number}} [options]
    *   see `Kit.motion.LOOSE_DEFAULTS`
    * @returns {Stage} needs nothing: a body with nothing loose is left alone
@@ -797,8 +875,14 @@
         if (!record.chains.length) return;
         const world = refreshWorld(motion);
         const position = world.translation;
+        // The body's solids as they are this frame, before anything loose is moved; the floor is where the body stands.
+        writeBalls(plan, world, record.solids);
         for (let index = 0; index < record.chains.length; index++) {
-          const { joints, points, hasTip } = record.chains[index];
+          const { joints, points, hasTip, collides } = record.chains[index];
+          const stride = Kit.dynamics.BALL_STRIDE;
+          for (let ball = 0; ball < collides.length; ball++) for (let part = 0; part < stride; part++) points.balls[ball * stride + part] = record.solids.balls[collides[ball] * stride + part];
+          points.ballCount = collides.length;
+          points.floor = motion.y;
           const last = joints[joints.length - 1];
           const base = joints[0] * VECTOR_STRIDE;
           // The way the chain leaves the body this frame, before it is bent: towards its second joint, or the end of its only bone.
@@ -826,7 +910,8 @@
               scratchArc
             );
             Kit.rig.turnWorld(plan.parent, motion.pose, world, last, scratchArc);
-            Kit.reach.clamp(motion.pose, last, plan.jointLimits);
+            // The world joint is refreshed too: what reads the pose after this stage sees the bone where its limits leave it.
+            if (Kit.reach.clamp(motion.pose, last, plan.jointLimits)) Kit.rig.worldTransforms(plan.parent, motion.pose, world, 0, 0, 0, 0, last, last + 1);
           }
           Kit.body.worldTransforms(plan, motion.pose, world, motion.x, motion.y, motion.z, motion.heading, joints[0] + 1, plan.subtreeEnd[joints[0]]);
         }

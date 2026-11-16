@@ -2804,6 +2804,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', 'look-settings
 // ---- Kit.figure: shapes, layout, update planning, grounding and framing (pure half) ----
 require('./test-figure.js')({ Kit, sandbox, test, assert });
 require('./test-gait.js')({ Kit, sandbox, test, assert });
+require('./test-act.js')({ Kit, sandbox, test, assert });
 require('./test-proof.js')({ Kit, sandbox, test, assert });
 // ---- how characters are lit and rolled: the light model and the roll rules (harmony, followers, contrast, rooms, locks) ----
 require('./test-looks.js')({ Kit, sandbox, test, assert });

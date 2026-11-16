@@ -438,7 +438,7 @@
     // The cap stands proud of the scalp and hides a brow beneath it, as hair does.
     regions: [{ id: 'hair', bones: ['@host'], where: cap, paint: 'hair', layer: 5, raise: RAISE.hair, occludes: true, ...extra }],
   });
-  const strand = (name, parent, at, tail, girth, extra = {}) => ({ name, parent, at, tail, girth, roles: parent ? [] : ['root'], stiffness: 30, damping: 0.5, paint: 'hair', ...extra });
+  const strand = (name, parent, at, tail, girth, extra = {}) => ({ name, parent, at, tail, girth, roles: parent ? [] : ['root'], soft: 'hair', paint: 'hair', ...extra });
   /** A plait or tail of three loose capsules, for one side or the back. */
   const chain = (prefix, start, steps, girths, roles = []) =>
     steps.map((step, index) => ({
@@ -449,8 +449,7 @@
       roles: [...(index ? [] : ['root']), ...roles],
       girth: girths[index],
       shape: { kind: 'capsule', radius: girths[index] / 2, taper: 0.85 },
-      stiffness: 25,
-      damping: 0.45,
+      soft: roles.includes('tail') ? 'tail' : 'plait',
       paint: 'hair',
     }));
 
@@ -523,6 +522,8 @@
     at: [0, -worn(drop), 0],
     tail: [0, -worn(length), 0],
     girth: 0.3,
+    // A hem sways a little as one piece (`Kit.body.SOFT_KINDS.hem`).
+    soft: 'hem',
     // The renderer builds a lathe up its bone's positive axis, so a skirt that falls states negative heights.
     shape: roundLathe(
       [
@@ -929,13 +930,7 @@
           tail: [0, -0.85, 0],
           girth: 0.4,
           // Loose: a panel hung from the shoulders swings out behind the body, never forward through it (`Kit.motion.loose`).
-          stiffness: 30,
-          damping: 0.5,
-          limits: [
-            [-3, 70],
-            [0, 0],
-            [-20, 20],
-          ],
+          soft: 'cloak',
           shape: {
             kind: 'extrude',
             outline: [

@@ -12,19 +12,25 @@
  *   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });  // the foot swings through that world point
  *   Kit.act.play(motion, 'dive', { target: [x, y, z] });              // dives to the side the point is on, hands to it
  *   Kit.act.aim(motion, 'target', x, y, z);                           // the point moved (a ball in flight)
- *   Kit.act.playing(motion)                                           // 'dive' until it has finished, then null
+ *   Kit.act.marks('dive').contact                                     // seconds into a dive that the hands arrive
+ *   Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: 0.3 } }); // hands there in 0.3 s; landing as authored
+ *   Kit.act.play(motion, 'save', { target, reach: { mark: 'contact', in: 0.4 } }); // a FAMILY: the form that gets there
+ *   Kit.act.playing(motion)                                           // 'dive' (or the form a family chose) until it has finished
  *   Kit.act.takeRootMotion(motion, offset)                            // after a kick or a dive: where the body ended up
  *   Kit.act.base(motion, 'keeperReady');                              // the loop it returns to between one-shots
  *   Kit.act.lookAt(motion, x, y, z);                                  // head and gaze follow a point (kit/act-life.js)
  *   figure.face(Kit.act.face(motion));                                // show the blink / talk frames it chose
  * `Kit.act.REPERTOIRE` lists what can be played (kit/act-moves.js, kit/act-sport.js); `Kit.act.refusal(id, plan)`
- * says why a body cannot do one.
+ * says why a body cannot do one. `Kit.act.FAMILIES` lists the jobs that have several forms (`save`), and
+ * `Kit.act.choose(motion, familyId, { target })` says which form a body would use for a point.
  *
  * Owns:  `CHANNELS` and `EASES` (the vocabulary of a performance), `performance` (check and compile a spec),
- *        `REPERTOIRE` / `define` (the performances by id), `rig` (what a plan's roles are, measured once),
+ *        `REPERTOIRE` / `define` (the performances by id), `FAMILIES` / `defineFamily` / `choose` (several
+ *        performances for one job, chosen by where the point is against the body's own reach), `rig` (what a plan's roles are, measured once),
  *        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
  *        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
- *        controls (`play`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `takeRootMotion`, `cast`), `refusal`,
+ *        controls (`play`, `marks`, `stop`, `base`, `aim`, `point`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+ *        `takeRootMotion`, `cast`), `refusal`,
  *        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
  * Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
  *        body solves the legs with `Kit.gait.reachLeg`), the solvers (kit/reach.js), always-on life such as
@@ -37,6 +43,12 @@
  * its legs reach lifts its feet), hands are placed by two-bone inverse kinematics, the spine and neck share a
  * turn between their bones. A `reach` pulls a hand or a foot to a world point given at call time; a `travel`
  * carries the body towards one.
+ *
+ * Rules every performance gets without asking (each a few lines in `poseActing`, tuned in `TUNING`): an arm
+ * moved far between two keys goes round in front of the body, not out through a T; a keyed hand stays outside
+ * the head; a hand pulled to a point leads the head there (the trunk tips off the line on a short-armed body)
+ * and the body closes the last of the distance its arm cannot; a leg hanging in the air is drawn up by its
+ * foot's keyed lift; a travel longer than its `stride` is run in steps.
  *
  * Conventions (kit/motion.js): metres, seconds, radians; +Y up; heading 0 faces +Z; "body frame" is left, up,
  * forward. A turn is [pitch, yaw, tilt]: pitch positive leans forward (nods down), yaw positive turns to the
@@ -101,6 +113,8 @@
   /** Where each channel starts in a values buffer, and the buffer's length. */
   const OFFSET = Object.freeze(Object.fromEntries(CHANNEL_NAMES.map((name, index) => [name, CHANNEL_NAMES.slice(0, index).reduce((sum, other) => sum + CHANNELS[other].size, 0)])));
   const VALUE_COUNT = CHANNEL_NAMES.reduce((sum, name) => sum + CHANNELS[name].size, 0);
+  /** The values that are sideways: every part of a channel that a mirror negates (a lean, a yaw, a tilt). */
+  const SIDEWAYS_VALUES = Object.freeze(CHANNEL_NAMES.flatMap((name) => (CHANNELS[name].mirror || []).map((sign, part) => (sign < 0 ? OFFSET[name] + part : -1)).filter((at) => at >= 0)));
   /** A key's shorthand for both sides at once. */
   const BOTH = Object.freeze({ arms: ['armLeft', 'armRight'], feet: ['footLeft', 'footRight'] });
   /** The limbs a `reach` can pull, and which sides each means. */
@@ -108,6 +122,15 @@
   const SIDES = Object.freeze(['left', 'right']);
   /** +1 for the left side, -1 for the right: the sign of "out" along the body's left axis. */
   const SIDE_SIGN = Object.freeze([1, -1]);
+  /** The `front` of an arm channel that points straight ahead, radians. */
+  const AHEAD = Math.PI / 2;
+  /** Where the last part of a foot channel (its pitch) and of an arm channel (how far out its elbow is) sits. */
+  const FOOT_PITCH = 3;
+  const ELBOW_OUT = FOOT_PITCH;
+  /** Metres under which a flat offset has no direction. */
+  const TINY = 1e-6;
+  /** Joints an arm needs to be posed as an arm: shoulder, elbow, hand. */
+  const ARM_JOINTS = 3;
 
   const BACK_OVERSHOOT = 1.70158;
   /**
@@ -129,7 +152,22 @@
   /** Tunables of running a performance. */
   const TUNING = Object.freeze({
     fadeSeconds: 0.22, // cross-fade between two performances
+    /** The lowest a `travel` that rises takes the hips at its arrival, in half-widths of the body above the ground: a body flying flat, on its side, not yet landed. */
+    lowestFlight: 1.2,
     legStretch: 0.985, // the furthest a leg is asked to straighten (a dead-straight limb has no bend direction)
+    stepLift: 0.22, // leg lengths a foot rises at the middle of a step of a stepped travel
+    arcFrom: 1.1, // radians of raise an arm must cover between two keys before its hand is routed on an arc in front
+    arcFront: 0.75, // how far towards straight ahead the arc pulls the arm at its middle, 0..1
+    arcBend: 0.3, // and how much shorter the reach is there (the elbow bends): the hand never sweeps out through a T
+    headClear: 1.05, // a hand keyed inside the head is moved out to this many head radii from its middle
+    handLead: 0.35, // arm lengths a reaching hand is kept ahead of the head's surface along its reach, where the body can
+    leadMost: 1.2, // radians the trunk will tip up off a reach line to let the hands lead (a short-armed, big-headed body)
+    closeMost: 1, // arm lengths the body is moved to bring a point its hand is pulled to within the arm's reach
+    leadOverhead: 0.3, // radians of that tipping left when the point is straight overhead (a lean back, not a fall)
+    pointClear: 1.25, // head radii a point a hand is pulled to is kept from the head's middle: the ball is met in front of the face, not inside it
+    leadBack: 0.35, // how much of that tipping is backwards rather than upwards
+    hangTuck: 0.6, // the most of its length a hanging leg is drawn up by its foot's keyed lift
+    hangTuckOver: 0.2, // leg lengths clear of the ground over which that drawing-up comes on
     hangPitch: 2.4, // radians a foot's toes drop per leg length it has been lifted clear by the body
     mostHangPitch: 0.9,
     armShortest: 0.18, // arm lengths: a hand is never asked closer to its shoulder than this
@@ -177,6 +215,8 @@
    * @property {number} [most=1] the furthest it goes sideways and forwards, in statures (the body's standing height)
    * @property {number} [mostUp=0.4] the highest it rises, in statures
    * @property {number[]} [axes=[1, 1, 1]] which of left, up, forward it travels along
+   * @property {number} [stride] leg lengths one step covers: a travel longer than this is run in steps, the feet
+   *   landing in turn ahead of the body, the last step taken by the foot a `ground` reach plants (default: one lunge)
    */
 
   /**
@@ -189,8 +229,16 @@
    * @property {Object} [needs] a requirement spec for `Kit.body.requirement` ({ needs, atLeast })
    * @property {string} [side] 'left' or 'right': the side it is authored for; played mirrored for the other
    * @property {string} [sideBy] the name of a target: the side is the one that point is on
-   * @property {Object<string, number[]>} [defaults] target name -> [left, up, forward] in statures (the body's
-   *   standing height) from where the body stands: where the point is when the caller gives none
+   * @property {boolean} [leanBySide=false] with `sideBy`: the sideways parts of its keys (the lean, yaw and tilt of the
+   *   body, spine and head) play in proportion to how far to the side the point is, in full at an arm's length, so a
+   *   point straight ahead is met squarely instead of leaning the shoulder away from it
+   * @property {Object<string, number[]>} [defaults] target name -> [left, up, forward] from where the body stands, in
+   *   units of how high its hands reach (`ActRig.high`; its standing height when it has no arms): where the
+   *   point is when the caller gives none, so a default is within reach of a long body and a squat one alike
+   * @property {Object<string, number>} [marks] named moments on its own timeline, each 0..1 through it (`contact`,
+   *   `release`, `land`): a game reads them with `Kit.act.marks` and can ask `play` to meet one at a given time
+   * @property {string} [defaultsIn='high'] what the defaults are measured in: 'high' (hand-reach heights) or 'legs'
+   *   (leg lengths: for a point a foot must meet, such as a ball to kick)
    * @property {PerformanceKey[]} keys
    * @property {PerformanceReach[]} [reaches]
    * @property {PerformanceTravel} [travel]
@@ -276,7 +324,14 @@
       if (!limb) fail(where, `a reach names the limb "${reach.limb}". Limbs: ${Object.keys(REACH_LIMBS).join(', ')}.`);
       requireSpan(where, `the \`in\` of the ${reach.limb} reach`, reach.in);
       if (reach.out) requireSpan(where, `the \`out\` of the ${reach.limb} reach`, reach.out);
-      return Object.freeze({ ...limb, target: targetIndex(reach.target), in: reach.in.slice(), out: reach.out ? reach.out.slice() : null, offset: requireNumbers(where, 'a reach `offset`', reach.offset || [0, 0, 0], 3).slice(), ground: reach.ground === true });
+      return Object.freeze({
+        ...limb,
+        target: targetIndex(reach.target),
+        in: reach.in.slice(),
+        out: reach.out ? reach.out.slice() : null,
+        offset: requireNumbers(where, 'a reach `offset`', reach.offset || [0, 0, 0], VECTOR_STRIDE).slice(),
+        ground: reach.ground === true,
+      });
     });
     reaches.forEach((reach) => {
       if (reach.hand) reach.hand.forEach((side) => used.add(side ? 'armRight' : 'armLeft'));
@@ -284,20 +339,42 @@
       if (reach.head) used.add('head');
     });
     const travelSpec = spec.travel;
-    if (travelSpec && !(travelSpec.start >= 0 && travelSpec.arrive > travelSpec.start && travelSpec.arrive <= 1 && (travelSpec.land === undefined || (travelSpec.land > travelSpec.arrive && travelSpec.land <= 1))))
+    if (
+      travelSpec &&
+      !(travelSpec.start >= 0 && travelSpec.arrive > travelSpec.start && travelSpec.arrive <= 1 && (travelSpec.land === undefined || (travelSpec.land > travelSpec.arrive && travelSpec.land <= 1)))
+    )
       fail(where, `a travel needs 0 <= start < arrive (< land) <= 1, got ${JSON.stringify(travelSpec)}.`);
     const travel = travelSpec
-      ? Object.freeze({ keep: 0, most: 1, mostUp: 0.4, land: -1, ...travelSpec, target: targetIndex(travelSpec.target), axes: requireNumbers(where, 'a travel `axes`', travelSpec.axes || [1, 1, 1], 3).slice() })
+      ? Object.freeze({
+          keep: 0,
+          most: 1,
+          mostUp: 0.4,
+          land: -1,
+          ...travelSpec,
+          target: targetIndex(travelSpec.target),
+          axes: requireNumbers(where, 'a travel `axes`', travelSpec.axes || [1, 1, 1], VECTOR_STRIDE).slice(),
+        })
       : null;
     if (travel) used.add('shift');
     const defaults = new Float32Array(TUNING.mostTargets * VECTOR_STRIDE);
     targets.forEach((name, index) => {
       if (spec.sideBy !== undefined && !targets.includes(spec.sideBy)) fail(where, `\`sideBy\` names "${spec.sideBy}", which no reach or travel uses.`);
-      defaults.set(requireNumbers(where, `the default of the point "${name}" (\`defaults.${name}\`: [left, up, forward] in leg lengths)`, (spec.defaults || {})[name], 3), index * VECTOR_STRIDE);
+      defaults.set(
+        requireNumbers(where, `the default of the point "${name}" (\`defaults.${name}\`: [left, up, forward] in hand-reach heights)`, (spec.defaults || {})[name], VECTOR_STRIDE),
+        index * VECTOR_STRIDE
+      );
+    });
+    const marks = {};
+    Object.keys(spec.marks || {}).forEach((name) => {
+      const at = spec.marks[name];
+      if (!(at >= 0 && at <= 1)) fail(where, `the mark "${name}" must be a moment 0..1 through the performance, got ${JSON.stringify(at)}.`);
+      marks[name] = at * spec.seconds;
     });
     const uses = new Uint8Array(GROUP_NAMES.length);
     used.forEach((name) => (uses[GROUP[CHANNELS[name].group]] = 1));
     const movesBody = uses[GROUP.body] === 1;
+    // Legs are needed only by what works them: a foot channel, a foot pulled to a point, or a body carried somewhere.
+    const standsOnLegs = used.has('footLeft') || used.has('footRight') || reaches.some((reach) => reach.foot) || Boolean(travel);
     return Object.freeze({
       id: spec.id,
       label: spec.label || spec.id,
@@ -306,8 +383,11 @@
       hold: Boolean(spec.hold),
       needs: spec.needs ? Kit.body.requirement(spec.needs) : null,
       movesBody,
+      standsOnLegs,
       side: spec.side ? SIDES.indexOf(spec.side) : -1,
       sideBy: spec.sideBy === undefined ? -1 : targets.indexOf(spec.sideBy),
+      leanBySide: Boolean(spec.leanBySide) && spec.sideBy !== undefined,
+      defaultsInLegs: spec.defaultsIn === 'legs',
       keyCount: keys.length,
       times: Float32Array.from(keys, (key) => key.at),
       eases: keys.map((key) => EASES[key.ease || 'smooth']),
@@ -319,6 +399,7 @@
       travel,
       targets: Object.freeze(targets),
       defaults,
+      marks: Object.freeze(marks),
     });
   };
 
@@ -344,9 +425,74 @@
     return compiled;
   };
 
+  /**
+   * @typedef {Object} FamilyForm
+   * One way of doing a family's job, and where its point must be for it to be the way chosen.
+   * @property {string} play the id of a performance of the repertoire that is given the family's point
+   * @property {number[]} [aside=[0, Infinity]] [from, to): how far to the side of the body the point is, in arm
+   *   spans (`ActRig.span`: the body's middle to the end of an arm held out sideways)
+   * @property {number[]} [up=[0, Infinity]] [from, to): how high above the ground it is, in hand-reach heights
+   *   (`ActRig.high`: as high as a hand goes with the feet on the ground)
+   */
+
+  /**
+   * @typedef {Object} FamilySpec
+   * Several performances that do one job (stop a ball), told apart by where the point is relative to the body's
+   * own reach: a game names the family and the point, and the body does whichever form gets there.
+   * @property {string} id
+   * @property {string} [label=id]
+   * @property {string} [target='target'] the named point the choice is made by
+   * @property {FamilyForm[]} forms in order: the first whose spans hold the point is chosen, the last when none does
+   */
+
+  /** Families by id: `Kit.act.play` takes one wherever it takes a performance. Open: `Kit.act.defineFamily` adds a row. */
+  const FAMILIES = {};
+  const ANYWHERE = Object.freeze([0, Infinity]);
+
+  /**
+   * Checks a family and adds it under its id.
+   * @param {FamilySpec} spec
+   * @returns {Object} the family, frozen
+   * @throws {Error} naming the first thing wrong with it: an id already taken, no forms, a form that is not a
+   *   performance of the repertoire or does not take the family's point, a span that is not [from, to)
+   * @complexity O(forms)
+   * @example
+   * Kit.act.defineFamily({ id: 'greet', forms: [{ play: 'bow', aside: [0, 1] }, { play: 'wave' }] });
+   */
+  const defineFamily = (spec) => {
+    const where = 'defineFamily';
+    if (!spec || typeof spec.id !== 'string' || !spec.id) fail(where, `a family needs an \`id\`, got ${JSON.stringify(spec && spec.id)}.`);
+    if (FAMILIES[spec.id] || REPERTOIRE[spec.id]) fail(where, `"${spec.id}" is already ${FAMILIES[spec.id] ? 'a family' : 'a performance'}.`);
+    if (!Array.isArray(spec.forms) || !spec.forms.length) fail(where, `the family "${spec.id}" needs \`forms\`: at least one { play: performanceId }.`);
+    const target = spec.target || 'target';
+    const forms = spec.forms.map((form, index) => {
+      const compiled = REPERTOIRE[form && form.play];
+      if (!compiled) fail(where, `form ${index} of "${spec.id}" plays ${JSON.stringify(form && form.play)}, which is not in the repertoire: ${Object.keys(REPERTOIRE).join(', ')}.`);
+      if (!compiled.targets.includes(target)) fail(where, `form "${form.play}" of "${spec.id}" takes no point named "${target}" (it takes: ${compiled.targets.join(', ') || 'none'}).`);
+      ['aside', 'up'].forEach((name) => {
+        const span = form[name];
+        if (span !== undefined && !(Array.isArray(span) && span.length === 2 && span[0] >= 0 && span[1] > span[0]))
+          fail(where, `\`${name}\` of form "${form.play}" of "${spec.id}" must be [from, to) with 0 <= from < to, got ${JSON.stringify(span)}.`);
+      });
+      return Object.freeze({ play: form.play, compiled, aside: Object.freeze([...(form.aside || ANYWHERE)]), up: Object.freeze([...(form.up || ANYWHERE)]) });
+    });
+    const family = Object.freeze({ id: spec.id, label: spec.label || spec.id, target, forms: Object.freeze(forms) });
+    FAMILIES[spec.id] = family;
+    return family;
+  };
+
   /** A compiled performance from an id, a spec or a compiled performance. */
   const resolve = (where, performanceOrId) => {
-    if (typeof performanceOrId === 'string') return REPERTOIRE[performanceOrId] || fail(where, `no performance "${performanceOrId}". Repertoire: ${Object.keys(REPERTOIRE).join(', ')}.`);
+    if (typeof performanceOrId === 'string')
+      return (
+        REPERTOIRE[performanceOrId] ||
+        fail(
+          where,
+          FAMILIES[performanceOrId]
+            ? `"${performanceOrId}" is a family of performances: which one is played depends on the point. Ask \`Kit.act.choose(motion, "${performanceOrId}", { ${FAMILIES[performanceOrId].target}: [x, y, z] })\` for its id first.`
+            : `no performance "${performanceOrId}". Repertoire: ${Object.keys(REPERTOIRE).join(', ')}. Families: ${Object.keys(FAMILIES).join(', ') || 'none'}.`
+        )
+      );
     if (performanceOrId && performanceOrId.values instanceof Float32Array) return performanceOrId;
     return performance(performanceOrId);
   };
@@ -359,8 +505,12 @@
    * @property {number} carrier the bone the body is carried by (`Kit.motion.carrier`)
    * @property {?Object} legs the `LegRig` of kit/gait.js, or null for a body that cannot stand on legs
    * @property {number} unit metres a `shift` of 1 moves the body: its leg length (half its height without legs)
-   * @property {number} stature metres from its lowest point to its highest at rest: what default points and travel caps scale by
+   * @property {number} stature metres from its lowest point to its highest at rest: what travel caps scale by
+   * @property {number} headRadius metres: half the head bone's height, the ball a keyed hand is kept out of (0 without a head)
+   * @property {number} high metres from its lowest point to as high as a hand reaches (the stature without arms): what default points scale by
    * @property {number} reach metres from the hips to the end of an outstretched arm (0 without arms)
+   * @property {number} halfWidth metres from the body's middle to a shoulder (a tenth of the stature without arms): how high it lies on its side
+   * @property {number} span metres from the body's middle to the end of an arm held out sideways (0 without arms)
    * @property {Int16Array} spine the spine's bones above the carrier
    * @property {Int16Array} neck
    * @property {number} head the head bone, or -1
@@ -406,7 +556,7 @@
     const sideOfBone = (bone) => (plan.roles[bone] & maskOf('left') ? 0 : plan.roles[bone] & maskOf('right') ? 1 : at(bone, 0) >= 0 ? 0 : 1);
     // One arm a side: the primary one when a body has several; it needs a shoulder, an elbow and a wrist to be placed.
     const primary = maskOf('primary');
-    const armChains = Kit.body.chains(plan, maskOf('arm')).filter((chain) => chain.length >= 3);
+    const armChains = Kit.body.chains(plan, maskOf('arm')).filter((chain) => chain.length >= ARM_JOINTS);
     const armOf = (side) => {
       const onSide = armChains.filter((chain) => sideOfBone(chain[0]) === side);
       return onSide.find((chain) => plan.roles[chain[0]] & primary) || onSide[0] || null;
@@ -418,7 +568,10 @@
       if (!chain) return;
       const offset = [0, 1, 2].map((axis) => at(chain[2], axis) - at(chain[0], axis));
       const distance = Math.hypot(...offset) || 1;
-      armRest.set([Math.acos(clamp(-offset[1] / distance, -1, 1)), Math.atan2(offset[2], offset[0] * SIDE_SIGN[side]), clamp(distance / armLength[side], TUNING.armShortest, TUNING.armLongest), 0], side * CHANNELS.armLeft.size);
+      armRest.set(
+        [Math.acos(clamp(-offset[1] / distance, -1, 1)), Math.atan2(offset[2], offset[0] * SIDE_SIGN[side]), clamp(distance / armLength[side], TUNING.armShortest, TUNING.armLongest), 0],
+        side * CHANNELS.armLeft.size
+      );
     });
     const legOf = (side) => {
       if (!legs) return -1;
@@ -442,7 +595,11 @@
       legs,
       unit: legs ? legs.legLength : (Math.max(...heights) - Math.min(...heights)) / 2 || 1,
       stature: Math.max(...tops) - Math.min(...heights, ...tops) || 1,
+      headRadius: head >= 0 ? Math.max(0, tops[head] - heights[head]) / 2 : 0,
+      high: Math.max(...armLength) > 0 ? shoulderHeight - Math.min(...heights, ...tops) + Math.max(...armLength) : Math.max(...tops) - Math.min(...heights, ...tops) || 1,
       reach: Math.max(...armLength) > 0 ? shoulderHeight - at(carrier, 1) + Math.max(...armLength) : 0,
+      halfWidth: arms.reduce((widest, chain) => (chain ? Math.max(widest, Math.abs(at(chain[0], 0))) : widest), 0) || (Math.max(...tops) - Math.min(...heights, ...tops)) / 10 || 1,
+      span: arms.reduce((widest, chain, side) => (chain ? Math.max(widest, Math.abs(at(chain[0], 0)) + armLength[side]) : widest), 0),
       spine: Int16Array.from(spine),
       neck: Int16Array.from(neck),
       head,
@@ -477,10 +634,10 @@
     return measured;
   };
 
-  /** What a performance needs of a plan, as stage needs (kit/motion.js): its own requirement, and legs to stand on when it moves the body. */
+  /** What a performance needs of a plan, as stage needs (kit/motion.js): its own requirement, and legs to stand on when it works them (a body without legs still bows, turns and waves). */
   const needsOf = (compiled) => [
     ...(compiled.needs ? [{ consumer: `the "${compiled.id}" performance`, requirement: compiled.needs }] : []),
-    ...(compiled.movesBody ? WALK_STAGE.needs.map((need) => ({ ...need, consumer: `the "${compiled.id}" performance` })) : []),
+    ...(compiled.standsOnLegs ? WALK_STAGE.needs.map((need) => ({ ...need, consumer: `the "${compiled.id}" performance` })) : []),
   ];
 
   /**
@@ -617,6 +774,11 @@
       now: null,
       time: 0,
       rate: 1,
+      leadUntil: 0,
+      sideways: 1,
+      steps: 1,
+      lastFoot: 0,
+      leadRate: 1,
       isMirrored: false,
       values: new Float32Array(VALUE_COUNT),
       weights: new Float32Array(GROUP_NAMES.length),
@@ -658,6 +820,10 @@
     acting.now = compiled;
     acting.time = 0;
     acting.rate = params && params.rate > 0 ? params.rate : 1;
+    // A mark to be met at a given moment: the lead-in up to it is time-warped, what follows runs as authored.
+    const meeting = compiled && params && params.reach;
+    acting.leadUntil = meeting ? compiled.marks[meeting.mark] : 0;
+    acting.leadRate = meeting ? compiled.marks[meeting.mark] / meeting.in : 1;
     acting.travel.fill(0);
     acting.travelled.fill(0);
     if (!compiled) return;
@@ -672,18 +838,21 @@
         acting.points[at + 2] = given[2];
         continue;
       }
-      const { stature } = acting.rig;
-      toWorld(motion, compiled.defaults[at] * stature, compiled.defaults[at + 2] * stature);
+      const high = compiled.defaultsInLegs ? acting.rig.unit : acting.rig.high;
+      toWorld(motion, compiled.defaults[at] * high, compiled.defaults[at + 2] * high);
       acting.points[at] = scratchPoint[0];
-      acting.points[at + 1] = motion.y + compiled.defaults[at + 1] * stature;
+      acting.points[at + 1] = motion.y + compiled.defaults[at + 1] * high;
       acting.points[at + 2] = scratchPoint[2];
     }
+    acting.sideways = 1;
     // The side: asked for outright, or the one the named point is on; mirrored when it is not the authored one.
     let side = params && params.side ? SIDES.indexOf(params.side) : -1;
     if (side < 0 && compiled.sideBy >= 0) {
       const at = compiled.sideBy * VECTOR_STRIDE;
       const left = (acting.points[at] - motion.x) * Math.cos(motion.heading) - (acting.points[at + 2] - motion.z) * Math.sin(motion.heading);
       side = left >= 0 ? 0 : 1;
+      const armsLength = Math.max(acting.rig.armLength[0], acting.rig.armLength[1]) || acting.rig.unit;
+      acting.sideways = compiled.leanBySide ? clamp(Math.abs(left) / armsLength, 0, 1) : 1;
     }
     acting.isMirrored = compiled.side >= 0 && side >= 0 && side !== compiled.side;
   };
@@ -709,7 +878,15 @@
     const flat = Math.hypot(left, forward);
     const cap = flat > travel.most * measured.stature ? (travel.most * measured.stature) / flat : 1;
     acting.travel[0] = left * cap;
-    acting.travel[1] = travel.land < 0 ? 0 : clamp(up, 0, travel.mostUp * measured.stature);
+    // A travel longer than a stride is run in steps; the foot that plants beside the point takes the last one.
+    acting.steps = travel.stride > 0 && measured.legs ? Math.max(1, Math.round(Math.min(flat, travel.most * measured.stature) / (travel.stride * measured.unit))) : 1;
+    acting.lastFoot = 0;
+    for (let index = 0; index < acting.now.reaches.length; index++) {
+      const reach = acting.now.reaches[index];
+      if (reach.foot && reach.ground) acting.lastFoot = acting.isMirrored ? 1 - reach.foot[0] : reach.foot[0];
+    }
+    // A low point is dived at low: the hips come down towards it, though never to the ground before the landing.
+    acting.travel[1] = travel.land < 0 ? 0 : clamp(up, Math.min(0, TUNING.lowestFlight * measured.halfWidth - hipHeight), travel.mostUp * measured.stature);
     acting.travel[2] = forward * cap;
   };
 
@@ -724,7 +901,8 @@
     while (next < keyCount && times[next] <= progress) next += 1;
     // A loop's last key leads back to its first; a one-shot's first and last keys are at 0 and 1.
     const from = next === 0 ? keyCount - 1 : next - 1;
-    const to = next === keyCount ? 0 : next;
+    // Only a loop leads from its last key back to its first: a one-shot at its very end is its last key (a held pose stays).
+    const to = next === keyCount ? (compiled.loop ? 0 : keyCount - 1) : next;
     const fromTime = next === 0 ? times[from] - 1 : times[from];
     const toTime = next === keyCount ? times[to] + 1 : times[to];
     const span = toTime - fromTime;
@@ -740,11 +918,20 @@
       for (let index = 0; index < CHANNELS.armLeft.size; index++) {
         const first = values[fromAt + channel + index];
         const second = values[toAt + channel + index];
-        if (first === first && second === second) continue;
+        if (!Number.isNaN(first) && !Number.isNaN(second)) continue;
         const rest = measured.armRest[restAt + index];
-        out[channel + index] = lerp(first === first ? first : rest, second === second ? second : rest, amount);
+        out[channel + index] = lerp(Number.isNaN(first) ? rest : first, Number.isNaN(second) ? rest : second, amount);
+      }
+      // An arm raised or lowered a long way goes by an arc in front of the body, elbow bent, not out through a T.
+      const raiseFrom = Number.isNaN(values[fromAt + channel]) ? measured.armRest[restAt] : values[fromAt + channel];
+      const raiseTo = Number.isNaN(values[toAt + channel]) ? measured.armRest[restAt] : values[toAt + channel];
+      const arc = Math.sin(Math.PI * amount) * clamp((Math.abs(raiseTo - raiseFrom) - TUNING.arcFrom) / TUNING.arcFrom, 0, 1);
+      if (arc > 0) {
+        out[channel + 1] = lerp(out[channel + 1], AHEAD, arc * TUNING.arcFront);
+        out[channel + 2] *= 1 - TUNING.arcBend * arc;
       }
     }
+    if (acting.sideways < 1) for (let index = 0; index < SIDEWAYS_VALUES.length; index++) out[SIDEWAYS_VALUES[index]] *= acting.sideways;
     if (acting.isMirrored) mirrorValues(out);
     return next === 0 ? keyCount - 1 : next - 1;
   };
@@ -773,7 +960,12 @@
     acting.fade = Math.min(1, acting.fade + dt / acting.fadeSeconds);
     const compiled = acting.now;
     if (!compiled) return;
-    acting.time += dt * acting.rate;
+    if (acting.time < acting.leadUntil) {
+      // Up to the mark time runs at the lead-in's rate; a step that crosses it spends its remainder at the authored one.
+      const needed = (acting.leadUntil - acting.time) / acting.leadRate;
+      acting.time = dt < needed ? acting.time + dt * acting.leadRate : acting.leadUntil + (dt - needed) * acting.rate;
+      if (dt >= needed) acting.leadUntil = 0;
+    } else acting.time += dt * acting.rate;
     if (compiled.loop) {
       if (acting.time >= compiled.seconds) acting.time -= compiled.seconds;
       return;
@@ -790,7 +982,17 @@
   // ---- applying channels to the pose ---------------------------------------------------------------------------------
 
   /** How strongly each reach of the playing performance pulls now; per side for hands and feet, and the gaze. Rewritten every frame. */
-  const pulls = { hand: new Float32Array(2), handPoint: new Int8Array(2), handOffset: [null, null], foot: new Float32Array(2), footPoint: new Int8Array(2), footOffset: [null, null], footGround: [false, false], head: 0, headPoint: 0 };
+  const pulls = {
+    hand: new Float32Array(2),
+    handPoint: new Int8Array(2),
+    handOffset: [null, null],
+    foot: new Float32Array(2),
+    footPoint: new Int8Array(2),
+    footOffset: [null, null],
+    footGround: [false, false],
+    head: 0,
+    headPoint: 0,
+  };
 
   const measurePulls = (acting, progress) => {
     pulls.hand.fill(0);
@@ -841,24 +1043,199 @@
     translation[at + 2] += forward / measured.stretch[2];
   };
 
+  const scratchLead = new Float32Array(QUATERNION_STRIDE);
+
+  /**
+   * Hands lead the head: while a hand is pulled to a point, the trunk tips up and back off the line to it (about the
+   * middle of the shoulders, which stays where it was) until the head is behind the hand along that line - as
+   * or clear of it to one side - as far as `TUNING.leadMost` allows. A long-armed body is left alone; a short-armed, big-headed one dives with
+   * its body across the line and its arm out along it, instead of head first.
+   * @returns {boolean} whether the pose changed (the world transforms are then stale)
+   */
+  const leadHands = (motion, acting) => {
+    const measured = acting.rig;
+    const pull = Math.max(pulls.hand[0], pulls.hand[1]);
+    if (pull <= 0 || measured.head < 0 || measured.armUpper[0] < 0 || measured.armUpper[1] < 0) return false;
+    const { translation, rotation } = motion.world;
+    const left = measured.armUpper[0] * VECTOR_STRIDE;
+    const right = measured.armUpper[1] * VECTOR_STRIDE;
+    const head = measured.head * VECTOR_STRIDE;
+    const point = (pulls.hand[0] >= pulls.hand[1] ? pulls.handPoint[0] : pulls.handPoint[1]) * VECTOR_STRIDE;
+    const middleX = (translation[left] + translation[right]) / 2;
+    const middleY = (translation[left + 1] + translation[right + 1]) / 2;
+    const middleZ = (translation[left + 2] + translation[right + 2]) / 2;
+    let lineX = acting.points[point] - middleX;
+    let lineY = acting.points[point + 1] - middleY;
+    let lineZ = acting.points[point + 2] - middleZ;
+    const away = Math.hypot(lineX, lineY, lineZ);
+    if (away < TINY) return false;
+    lineX /= away;
+    lineY /= away;
+    lineZ /= away;
+    // The head's middle: a head radius beyond its joint, along the neck.
+    let headX = translation[head] - middleX;
+    let headY = translation[head + 1] - middleY;
+    let headZ = translation[head + 2] - middleZ;
+    const neck = Math.hypot(headX, headY, headZ);
+    if (neck < TINY) return false;
+    const toMiddle = (neck + measured.headRadius) / neck;
+    headX *= toMiddle;
+    headY *= toMiddle;
+    headZ *= toMiddle;
+    const along = headX * lineX + headY * lineY + headZ * lineZ;
+    // How far along the line the leading hand gets: to the point, or as far as its arm goes from its shoulder.
+    const leadLeft = (translation[left] - middleX) * lineX + (translation[left + 1] - middleY) * lineY + (translation[left + 2] - middleZ) * lineZ;
+    const arm = Math.max(measured.armLength[0], measured.armLength[1]);
+    const most = Math.min(away, Math.abs(leadLeft) + arm) - TUNING.handLead * arm - measured.headRadius;
+    if (along <= most) return false;
+    // The way the head goes: up off the line and a little back from the way the body faces (straight back for a reach overhead).
+    const backX = -Math.sin(motion.heading) * TUNING.leadBack;
+    const backZ = -Math.cos(motion.heading) * TUNING.leadBack;
+    const upAlong = backX * lineX + lineY + backZ * lineZ;
+    const offX = backX - upAlong * lineX;
+    const offY = 1 - upAlong * lineY;
+    const offZ = backZ - upAlong * lineZ;
+    const off = Math.hypot(offX, offY, offZ);
+    const aside = (headX * offX + headY * offY + headZ * offZ) / off;
+    const size = Math.hypot(along, aside);
+    // Tipping up towards standing is free; tipping over backwards under a point overhead is not: only a lean.
+    const level = Math.sqrt(Math.max(0, 1 - lineY * lineY));
+    const furthest = TUNING.leadMost * level + TUNING.leadOverhead * (1 - level);
+    // Enough is the lesser of: the head behind the hand, or the head clear of the line (the ball then passes its face).
+    const behind = Math.acos(clamp(most / size, -1, 1));
+    const beside = Math.asin(clamp((TUNING.pointClear * measured.headRadius) / size, 0, 1));
+    const angle = clamp(Math.min(behind, beside) - Math.atan2(Math.max(aside, 0), along), 0, furthest) * pull;
+    if (!(angle > 0)) return false;
+    // A turn about the axis line x off, in the world, laid on the carrier inside its parent's frame.
+    const half = Math.sin(angle / 2) / off;
+    const turnX = (lineY * offZ - lineZ * offY) * half;
+    const turnY = (lineZ * offX - lineX * offZ) * half;
+    const turnZ = (lineX * offY - lineY * offX) * half;
+    const turnW = Math.cos(angle / 2);
+    const parent = motion.plan.parent[measured.carrier];
+    const parentAt = parent * QUATERNION_STRIDE;
+    const parentX = parent < 0 ? 0 : rotation[parentAt];
+    const parentY = parent < 0 ? Math.sin(motion.heading / 2) : rotation[parentAt + 1];
+    const parentZ = parent < 0 ? 0 : rotation[parentAt + 2];
+    const parentW = parent < 0 ? Math.cos(motion.heading / 2) : rotation[parentAt + QUATERNION_W];
+    const local = motion.pose.rotation;
+    const at = measured.carrier * QUATERNION_STRIDE;
+    multiplyInto(scratchLead, 0, parentX, parentY, parentZ, parentW, local[at], local[at + 1], local[at + 2], local[at + QUATERNION_W]);
+    multiplyInto(scratchLead, 0, turnX, turnY, turnZ, turnW, scratchLead[0], scratchLead[1], scratchLead[2], scratchLead[QUATERNION_W]);
+    multiplyInto(local, at, -parentX, -parentY, -parentZ, parentW, scratchLead[0], scratchLead[1], scratchLead[2], scratchLead[QUATERNION_W]);
+    // The shoulders stay where they were: the hips swing out under them.
+    motion.isWorldCurrent = false;
+    refreshWorld(motion);
+    const movedX = middleX - (translation[left] + translation[right]) / 2;
+    const movedY = middleY - (translation[left + 1] + translation[right + 1]) / 2;
+    const movedZ = middleZ - (translation[left + 2] + translation[right + 2]) / 2;
+    const sine = Math.sin(motion.heading);
+    const cosine = Math.cos(motion.heading);
+    shiftCarrier(motion, measured, movedX * cosine - movedZ * sine, movedY, movedX * sine + movedZ * cosine);
+    return true;
+  };
+
+  /**
+   * The ball is not in the head: while a hand is pulled to a point, the body backs off (or ducks) until the
+   * point is `TUNING.pointClear` head radii from the head's middle. A body whose arms reach past its head never
+   * needs it; one whose hands cannot get above its head meets a high ball in front of its face.
+   * @returns {boolean} whether the pose changed (the world transforms are then stale)
+   */
+  const clearHead = (motion, acting) => {
+    const measured = acting.rig;
+    const side = pulls.hand[0] >= pulls.hand[1] ? 0 : 1;
+    const pull = pulls.hand[side];
+    if (pull <= 0 || measured.head < 0 || !(measured.headRadius > 0)) return false;
+    const { translation } = motion.world;
+    const head = measured.head * VECTOR_STRIDE;
+    const point = pulls.handPoint[side] * VECTOR_STRIDE;
+    const offsetX = translation[head] - acting.points[point];
+    const offsetY = translation[head + 1] + measured.headRadius * measured.stretch[1] - acting.points[point + 1];
+    const offsetZ = translation[head + 2] - acting.points[point + 2];
+    const distance = Math.hypot(offsetX, offsetY, offsetZ);
+    const missing = (TUNING.pointClear * measured.headRadius - distance) * pull;
+    if (!(missing > 0) || distance < TINY) return false;
+    const share = missing / distance;
+    const sine = Math.sin(motion.heading);
+    const cosine = Math.cos(motion.heading);
+    shiftCarrier(motion, measured, (offsetX * cosine - offsetZ * sine) * share, offsetY * share, (offsetX * sine + offsetZ * cosine) * share);
+    return true;
+  };
+
+  /**
+   * Hands reach: while a hand is pulled to a point its arm cannot get to from where the keys have put the
+   * shoulder, the whole body is moved towards the point by what is missing, up to `TUNING.closeMost` arm lengths.
+   * @returns {boolean} whether the pose changed (the world transforms are then stale)
+   */
+  const closeHands = (motion, acting) => {
+    const measured = acting.rig;
+    const side = pulls.hand[0] >= pulls.hand[1] ? 0 : 1;
+    const pull = pulls.hand[side];
+    if (pull <= 0 || measured.armUpper[side] < 0) return false;
+    const length = measured.armLength[side];
+    const shoulder = measured.armUpper[side] * VECTOR_STRIDE;
+    const { translation } = motion.world;
+    reachPoint(motion, acting, pulls.handPoint[side], pulls.handOffset[side], side, length);
+    const offsetX = scratchPoint[0] - translation[shoulder];
+    const offsetY = scratchPoint[1] - translation[shoulder + 1];
+    const offsetZ = scratchPoint[2] - translation[shoulder + 2];
+    const distance = Math.hypot(offsetX, offsetY, offsetZ);
+    const missing = Math.min(distance - TUNING.armLongest * length, TUNING.closeMost * length) * pull;
+    if (!(missing > 0)) return false;
+    const share = missing / distance;
+    const sine = Math.sin(motion.heading);
+    const cosine = Math.cos(motion.heading);
+    shiftCarrier(motion, measured, (offsetX * cosine - offsetZ * sine) * share, offsetY * share, (offsetX * sine + offsetZ * cosine) * share);
+    return true;
+  };
+
+  /** Where each side's foot is in a stepped travel: how far along it its standing place has got, how high it is lifted, and whether a reach may take it yet. */
+  const stepped = { carry: new Float32Array(2), lift: new Float32Array(2), gate: new Float32Array(2), keyed: 1 };
+
+  /**
+   * Fills `stepped` for a travel `along` (0..1, linear in time) its way. The travel's time is cut into as many
+   * equal steps as it has; the feet take them in turn, each landing where the body will be when its step ends,
+   * and the planting foot takes the last. With one step the feet are left to the `carry` channel.
+   */
+  const stepFeet = (acting, along) => {
+    const { steps } = acting;
+    if (steps <= 1) return;
+    const step = Math.min(steps - 1, Math.floor(along * steps));
+    const within = along >= 1 ? 1 : along * steps - step;
+    for (let side = 0; side < SIDES.length; side++) {
+      const isStepping = ((steps - 1 - step) % 2 === 0) === (side === acting.lastFoot);
+      if (isStepping) {
+        stepped.carry[side] = Kit.blend.smooth(lerp(Math.max(0, step - 1) / steps, (step + 1) / steps, Kit.blend.smooth(within)));
+        stepped.lift[side] = Math.sin(Math.PI * within);
+      } else stepped.carry[side] = Kit.blend.smooth(step / steps);
+    }
+    // The planting foot goes to its point on its last step, not before; and what the keys ask of the feet (a wind-up)
+    // waits for that step too: until then they are running.
+    stepped.gate[acting.lastFoot] = step === steps - 1 ? Kit.blend.smooth(within) : 0;
+    stepped.keyed = stepped.gate[acting.lastFoot];
+  };
+
   /** Solves every leg to its foot: where it stands at rest, moved by its side's foot channel, the travel it has followed and any reach. */
   const poseLegs = (motion, acting, values, travelLeft, travelForward) => {
     const measured = acting.rig;
     const { legs } = measured;
     const { translation } = motion.world;
-    const carry = values[OFFSET.carry];
+    const keyedCarry = values[OFFSET.carry];
     for (let leg = 0; leg < legs.count; leg++) {
       const side = legs.side[leg] === 2 ? 1 : 0;
       const isMoved = measured.footLeg[side] === leg;
+      const carry = Math.max(keyedCarry, stepped.carry[side]);
       const channel = side ? OFFSET.footRight : OFFSET.footLeft;
       const length = legs.length[leg];
-      const out = isMoved ? values[channel] * SIDE_SIGN[side] * length : 0;
-      const forward = isMoved ? values[channel + 2] * length : 0;
+      // While the body is still running up (a stepped travel before its last step) the keys' foot poses wait.
+      const keyed = isMoved ? (keyedCarry < 1 ? stepped.keyed : 1) : 0;
+      const out = values[channel] * SIDE_SIGN[side] * length * keyed;
+      const forward = values[channel + 2] * length * keyed;
       toWorld(motion, legs.homeX[leg] + out + travelLeft * carry + acting.carried[0], legs.homeZ[leg] + forward + travelForward * carry + acting.carried[1]);
       let targetX = scratchPoint[0];
-      let targetY = motion.y + legs.sole[leg] + (isMoved ? values[channel + 1] * length : 0);
+      let targetY = motion.y + legs.sole[leg] + values[channel + 1] * length * keyed + stepped.lift[side] * TUNING.stepLift * length * (1 - keyedCarry);
       let targetZ = scratchPoint[2];
-      const pull = isMoved ? pulls.foot[side] : 0;
+      const pull = isMoved ? pulls.foot[side] * (acting.steps > 1 && pulls.footGround[side] && keyedCarry < 1 ? stepped.gate[side] : 1) : 0;
       if (pull > 0) {
         reachPoint(motion, acting, pulls.footPoint[side], pulls.footOffset[side], side, length);
         targetX = lerp(targetX, scratchPoint[0], pull);
@@ -872,10 +1249,13 @@
       const offsetZ = targetZ - translation[hip + 2];
       const distance = Math.hypot(offsetX, offsetY, offsetZ);
       const longest = TUNING.legStretch * length;
-      const pulledIn = distance > longest ? longest / distance : 1;
+      // A leg hanging clear is drawn up by its foot's keyed lift: the knee bends in the air instead of trailing straight.
+      const clear = clamp((distance - longest) / (TUNING.hangTuckOver * length), 0, 1);
+      const tuck = 1 - clear * clamp(values[channel + 1] * keyed, 0, TUNING.hangTuck);
+      const pulledIn = distance > longest ? (longest * tuck) / distance : 1;
       Kit.gait.reachLeg(motion, legs, leg, translation[hip] + offsetX * pulledIn, translation[hip + 1] + offsetY * pulledIn, translation[hip + 2] + offsetZ * pulledIn);
       const lifted = Math.max(0, distance - longest) / length;
-      Kit.gait.levelFoot(motion, legs, leg, motion.heading, (isMoved ? values[channel + 3] : 0) + Math.min(TUNING.mostHangPitch, lifted * TUNING.hangPitch));
+      Kit.gait.levelFoot(motion, legs, leg, motion.heading, values[channel + FOOT_PITCH] * keyed + Math.min(TUNING.mostHangPitch, lifted * TUNING.hangPitch));
     }
   };
 
@@ -890,13 +1270,24 @@
     const raise = values[channel];
     const front = values[channel + 1];
     const extend = clamp(values[channel + 2], TUNING.armShortest, TUNING.armLongest) * length;
-    const elbowOut = values[channel + 3];
+    const elbowOut = values[channel + ELBOW_OUT];
     const outSign = SIDE_SIGN[side];
     const level = Math.sin(raise);
     // The frame the arm hangs in: how its parent has turned from rest (rest^-1 first, then the parent's world rotation).
     const parentAt = plan.parent[upper] * QUATERNION_STRIDE;
     const frameAt = upper * QUATERNION_STRIDE;
-    multiplyInto(scratchTurn, 0, world.rotation[parentAt], world.rotation[parentAt + 1], world.rotation[parentAt + 2], world.rotation[parentAt + QUATERNION_W], -measured.frame[frameAt], -measured.frame[frameAt + 1], -measured.frame[frameAt + 2], measured.frame[frameAt + QUATERNION_W]);
+    multiplyInto(
+      scratchTurn,
+      0,
+      world.rotation[parentAt],
+      world.rotation[parentAt + 1],
+      world.rotation[parentAt + 2],
+      world.rotation[parentAt + QUATERNION_W],
+      -measured.frame[frameAt],
+      -measured.frame[frameAt + 1],
+      -measured.frame[frameAt + 2],
+      measured.frame[frameAt + QUATERNION_W]
+    );
     const frameX = scratchTurn[0];
     const frameY = scratchTurn[1];
     const frameZ = scratchTurn[2];
@@ -913,6 +1304,25 @@
     let targetX = shoulderX + scratchPoint[0];
     let targetY = shoulderY + scratchPoint[1];
     let targetZ = shoulderZ + scratchPoint[2];
+    if (measured.headRadius > 0) {
+      // A keyed hand is kept out of the head: a short arm raised beside a big head goes up and out round it.
+      const headAt = measured.head * VECTOR_STRIDE;
+      const centreY = world.translation[headAt + 1] + measured.headRadius * measured.stretch[1];
+      const clear = measured.headRadius * TUNING.headClear;
+      const offX = targetX - world.translation[headAt];
+      const offY = targetY - centreY;
+      const offZ = targetZ - world.translation[headAt + 2];
+      const inside = Math.hypot(offX, offY, offZ);
+      if (inside < clear) {
+        // Out sideways (or forwards), at its own height: the level circle of the ball there.
+        const level = Math.sqrt(Math.max(0, clear * clear - offY * offY));
+        const flat = Math.hypot(offX, offZ);
+        const outX = flat > TINY ? offX / flat : Math.cos(motion.heading) * outSign;
+        const outZ = flat > TINY ? offZ / flat : -Math.sin(motion.heading) * outSign;
+        targetX = world.translation[headAt] + outX * level;
+        targetZ = world.translation[headAt + 2] + outZ * level;
+      }
+    }
     const pull = pulls.hand[side];
     if (pull > 0) {
       reachPoint(motion, acting, pulls.handPoint[side], pulls.handOffset[side], side, length);
@@ -921,7 +1331,20 @@
       targetZ = lerp(targetZ, scratchPoint[2], pull);
     }
     rotateBy(scratchTurn, 0, outSign * (TUNING.elbowAside + elbowOut) * length, -TUNING.elbowDown * length, -TUNING.elbowBack * length);
-    Kit.reach.twoBone(plan.parent, motion.pose, world, upper, measured.armMiddle[side], measured.armEnd[side], targetX, targetY, targetZ, shoulderX + scratchPoint[0], shoulderY + scratchPoint[1], shoulderZ + scratchPoint[2]);
+    Kit.reach.twoBone(
+      plan.parent,
+      motion.pose,
+      world,
+      upper,
+      measured.armMiddle[side],
+      measured.armEnd[side],
+      targetX,
+      targetY,
+      targetZ,
+      shoulderX + scratchPoint[0],
+      shoulderY + scratchPoint[1],
+      shoulderZ + scratchPoint[2]
+    );
   };
 
   /** Mixes the bones of one group back towards the pose they had before the performance, by what is left of the group's weight. */
@@ -968,7 +1391,8 @@
       const group = GROUP[CHANNELS[name].group];
       const wasUsed = acting.fromWeights[group] > 0;
       const isUsed = compiled ? compiled.uses[group] === 1 : false;
-      for (let part = 0, at = OFFSET[name]; part < CHANNELS[name].size; part++, at++) values[at] = !wasUsed ? target[at] : !isUsed ? acting.fromValues[at] : lerp(acting.fromValues[at], target[at], fade);
+      for (let part = 0, at = OFFSET[name]; part < CHANNELS[name].size; part++, at++)
+        values[at] = !wasUsed ? target[at] : !isUsed ? acting.fromValues[at] : lerp(acting.fromValues[at], target[at], fade);
     }
     let isActive = acting.carried[0] !== 0 || acting.carried[1] !== 0;
     for (let group = 0; group < GROUP_NAMES.length; group++) {
@@ -988,10 +1412,15 @@
     const { rotation } = motion.pose;
     let travelLeft = 0;
     let travelForward = 0;
+    stepped.carry.fill(0);
+    stepped.lift.fill(0);
+    stepped.gate.fill(1);
+    stepped.keyed = 1;
     if (compiled && compiled.travel) {
       const { travel } = compiled;
       if (progress <= travel.start) measureTravel(motion, acting);
       const along = Kit.blend.smooth(clamp((progress - travel.start) / (travel.arrive - travel.start), 0, 1));
+      stepFeet(acting, clamp((progress - travel.start) / (travel.arrive - travel.start), 0, 1));
       // Upwards a thrown body decelerates to its highest point and accelerates back down: two halves of a parabola.
       const rising = clamp((progress - travel.start) / (travel.arrive - travel.start), 0, 1);
       const falling = travel.land > 0 ? clamp((progress - travel.arrive) / (travel.land - travel.arrive), 0, 1) : 0;
@@ -1002,18 +1431,20 @@
       acting.travelled[2] = travelForward;
       shiftCarrier(motion, measured, travelLeft, up, travelForward);
     }
-    const isBodyMoved = weights[GROUP.body] > 0 && measured.legs !== null;
+    const isBodyMoved = weights[GROUP.body] > 0;
+    const isStanding = isBodyMoved && measured.legs !== null;
     if (isBodyMoved) {
       const { unit } = measured;
       // A locomotion stage that ran this frame has already stood the body on its feet; alone, this stage does it.
-      const gaitFeet = Kit.gait.feet(motion);
-      const isStood = gaitFeet !== null && gaitFeet.steppedAt === motion.time;
+      const gaitFeet = isStanding ? Kit.gait.feet(motion) : null;
+      const isStood = !isStanding || (gaitFeet !== null && gaitFeet.steppedAt === motion.time);
       shiftCarrier(motion, measured, values[OFFSET.shift] * unit, values[OFFSET.shift + 1] * unit + (isStood ? 0 : measured.legs.standLift), values[OFFSET.shift + 2] * unit);
       turnBody(rotation, measured, measured.carrier, values[OFFSET.turn], values[OFFSET.turn + 1], values[OFFSET.turn + 2]);
     }
     if (weights[GROUP.spine] > 0) turnShared(rotation, measured, measured.spine, values[OFFSET.spine], values[OFFSET.spine + 1], values[OFFSET.spine + 2]);
     if (weights[GROUP.head] > 0) turnHead(rotation, measured, values[OFFSET.head], values[OFFSET.head + 1], values[OFFSET.head + 2]);
-    if (weights[GROUP.tail] > 0) for (let index = 0; index < measured.tails.length; index++) turnBody(rotation, measured, measured.tails[index], values[OFFSET.tail], values[OFFSET.tail + 1], values[OFFSET.tail + 2]);
+    if (weights[GROUP.tail] > 0)
+      for (let index = 0; index < measured.tails.length; index++) turnBody(rotation, measured, measured.tails[index], values[OFFSET.tail], values[OFFSET.tail + 1], values[OFFSET.tail + 2]);
     if (weights[GROUP.wings] > 0) {
       // Lifting a left wing's tip is a lean to the right about the forward axis; the right wing mirrors it.
       for (let index = 0; index < measured.wings.length; index++)
@@ -1022,12 +1453,24 @@
     if (weights[GROUP.jaw] > 0 && measured.jaw >= 0) turnBody(rotation, measured, measured.jaw, values[OFFSET.jaw], 0, 0);
     motion.isWorldCurrent = false;
     refreshWorld(motion);
+    if (leadHands(motion, acting)) {
+      motion.isWorldCurrent = false;
+      refreshWorld(motion);
+    }
+    if (clearHead(motion, acting)) {
+      motion.isWorldCurrent = false;
+      refreshWorld(motion);
+    }
+    if (closeHands(motion, acting)) {
+      motion.isWorldCurrent = false;
+      refreshWorld(motion);
+    }
     if (pulls.head > 0) {
       const at = pulls.headPoint * VECTOR_STRIDE;
       lookAngles(motion, acting.points[at], acting.points[at + 1], acting.points[at + 2], scratchAngles);
       turnHead(rotation, measured, scratchAngles[0] * pulls.head, scratchAngles[1] * pulls.head, 0);
     }
-    if (isBodyMoved) poseLegs(motion, acting, values, travelLeft, travelForward);
+    if (isStanding) poseLegs(motion, acting, values, travelLeft, travelForward);
     if (weights[GROUP.armLeft] > 0) poseArm(motion, acting, values, 0);
     if (weights[GROUP.armRight] > 0) poseArm(motion, acting, values, 1);
     for (let group = 0; group < GROUP_NAMES.length; group++) if (weights[group] > 0) fadeGroup(motion, acting, group);
@@ -1135,26 +1578,82 @@
   };
 
   /**
+   * Which form of a family a body would play for a point: the first whose spans hold the point, measured against
+   * this body's own reach, among the forms the body can do at all.
+   * @param {Object} motion a `MotionState`
+   * @param {string} familyId an id of `Kit.act.FAMILIES`
+   * @param {Object} params the family's point in the world: { target: [x, y, z] }
+   * @returns {?string} the id of a performance; null when the body can do none of the forms
+   * @throws {Error} for an unknown family or a missing point
+   * @complexity O(forms); O(needs) more the first time a body is asked about a form; no allocation after
+   * @example
+   * const form = Kit.act.choose(keeper, 'save', { target: [x, y, z] });   // 'catch', 'catchHigh', 'smother', 'dive' or 'diveStep'
+   * Kit.act.play(keeper, 'save', { target: [x, y, z], reach: { mark: 'contact', in: Kit.act.marks(form).contact } });
+   */
+  const choose = (motion, familyId, params) => {
+    const family = FAMILIES[familyId] || fail('choose', `no family "${familyId}". Families: ${Object.keys(FAMILIES).join(', ') || 'none'}.`);
+    const point = params && params[family.target];
+    if (!point || !(point.length >= VECTOR_STRIDE)) fail('choose', `the family "${familyId}" chooses by its point: give { ${family.target}: [x, y, z] }, got ${JSON.stringify(point)}.`);
+    const acting = actingOf(motion);
+    const measured = acting.rig;
+    const left = (point[0] - motion.x) * Math.cos(motion.heading) - (point[2] - motion.z) * Math.sin(motion.heading);
+    const aside = Math.abs(left) / (measured.span || measured.unit);
+    const up = Math.max(0, point[1] - motion.y) / measured.high;
+    let fallback = null;
+    for (let index = 0; index < family.forms.length; index++) {
+      const form = family.forms[index];
+      if (!canPerform(motion, acting, form.compiled)) continue;
+      if (aside >= form.aside[0] && aside < form.aside[1] && up >= form.up[0] && up < form.up[1]) return form.play;
+      fallback = form.play;
+    }
+    return fallback;
+  };
+
+  /**
    * Plays a performance on an instance whose controller has a `Kit.act.performer` (as `Kit.act.character`
    * does): it cross-fades in over what the body was doing, and a one-shot hands back to the base when done.
    * @param {Object} motion a `MotionState`
-   * @param {string|Object} performanceOrId an id of `Kit.act.REPERTOIRE`, or a compiled performance
+   * @param {string|Object} performanceOrId an id of `Kit.act.REPERTOIRE` or of `Kit.act.FAMILIES` (the form that
+   *   suits the point is played; `Kit.act.playing` then names it), or a compiled performance
    * @param {Object} [params] named world points ({ target: [x, y, z] }; a performance's own default otherwise),
    *   `side` ('left' or 'right': which hand waves, which foot kicks; default: the side its point is on, or the
-   *   authored one), `rate` (speed, default 1) and `fade` (seconds of cross-fade)
+   *   authored one), `rate` (speed, default 1), `fade` (seconds of cross-fade) and `reach` ({ mark, in }: meet
+   *   the named mark of the performance `in` seconds from now - the lead-in up to the mark is sped up or slowed
+   *   to fit, and everything after it runs at `rate`, so a dive hurried to a shot still lands and gets up as authored)
    * @returns {boolean} false, changing nothing, when this body cannot do it (`Kit.act.refusal` says why)
-   * @throws {Error} for an unknown id
+   * @throws {Error} for an unknown id, a mark the performance does not declare, or a time that is not positive
    * @complexity O(needs) the first time a body is asked for a performance, O(targets) after
    * @example
    * Kit.act.play(motion, 'kick', { target: [ball.x, ball.y, ball.z] });
+   * Kit.act.play(keeper, 'dive', { target: [x, y, z], reach: { mark: 'contact', in: secondsUntilTheBallArrives } });
    */
   const play = (motion, performanceOrId, params) => {
-    const compiled = resolve('play', performanceOrId);
+    const form = typeof performanceOrId === 'string' && FAMILIES[performanceOrId] ? choose(motion, performanceOrId, params) : performanceOrId;
+    if (form === null) return false;
+    const compiled = resolve('play', form);
+    if (params && params.reach) {
+      const { mark, in: seconds } = params.reach;
+      if (!(mark in compiled.marks)) fail('play', `the "${compiled.id}" performance has no mark "${mark}". Its marks: ${Object.keys(compiled.marks).join(', ') || 'none'}.`);
+      if (!(compiled.marks[mark] > 0)) fail('play', `the mark "${mark}" of "${compiled.id}" is at its very start: there is no lead-in to fit to a time.`);
+      if (!(seconds > 0)) fail('play', `\`reach.in\` must be seconds greater than 0, got ${JSON.stringify(seconds)}.`);
+    }
     const acting = actingOf(motion);
     if (!canPerform(motion, acting, compiled)) return false;
     begin(motion, acting, compiled, params);
     return true;
   };
+
+  /**
+   * The named moments of a performance, in seconds from its start at the authored speed (`contact`, `land`...).
+   * @param {string|Object} performanceOrId an id of `Kit.act.REPERTOIRE`, or a compiled performance
+   * @returns {Object<string, number>} mark name -> seconds; frozen, empty when it declares none
+   * @throws {Error} for an unknown id
+   * @complexity O(1)
+   * @example
+   * const lead = Kit.act.marks('dive').contact;   // seconds a dive needs to get its hands there, unhurried
+   * if (ballArrivesIn < lead) Kit.act.play(keeper, 'dive', { target, reach: { mark: 'contact', in: ballArrivesIn } });
+   */
+  const marks = (performanceOrId) => resolve('marks', performanceOrId).marks;
 
   const setBase = (motion, compiled) => {
     const acting = actingOf(motion);
@@ -1213,6 +1712,24 @@
   };
 
   /**
+   * Where a named point of the performance that is playing is: the one it was given, its own default placed in
+   * front of the body, or where `aim` last moved it. For drawing the ball a default kick is aimed at.
+   * @param {Object} motion a `MotionState`
+   * @param {string} name the point's name (usually 'target')
+   * @param {Float32Array|number[]} out receives [x, y, z], world metres
+   * @returns {boolean} false (leaving `out` alone) when nothing playing uses a point of that name
+   * @complexity O(targets), no allocation
+   * @example if (Kit.act.point(player, 'target', spot)) ball.position.set(spot[0], spot[1], spot[2]);
+   */
+  const point = (motion, name, out) => {
+    const acting = actingOf(motion);
+    const index = acting.now ? acting.now.targets.indexOf(name) : -1;
+    if (index < 0) return false;
+    for (let axis = 0; axis < VECTOR_STRIDE; axis++) out[axis] = acting.points[index * VECTOR_STRIDE + axis];
+    return true;
+  };
+
+  /**
    * What an instance is playing: the id of a one-shot until it has finished (a held one stays), else null.
    * The base loop does not count.
    * @param {Object} motion a `MotionState`
@@ -1253,6 +1770,24 @@
     out[0] = left * Math.cos(motion.heading) + forward * Math.sin(motion.heading);
     out[1] = -left * Math.sin(motion.heading) + forward * Math.cos(motion.heading);
     return out;
+  };
+
+  /**
+   * Puts a body that a performance has carried away back over the instance's position in a copy of its pose:
+   * the pose is kept, the distance covered is not. For a view that stays on the character (a maker's stage, a
+   * proof sheet); a game moves the instance with `takeRootMotion` instead.
+   * @param {Object} motion a `MotionState`
+   * @param {Object} pose a copy of `motion.pose` (`Kit.rig.copy`); its carrier bone is moved back
+   * @returns {void}
+   * @complexity O(1), no allocation
+   * @example Kit.rig.copy(motion.pose, figure.local); Kit.act.keepInPlace(motion, figure.local); figure.pose();
+   */
+  const keepInPlace = (motion, pose) => {
+    const acting = actingOf(motion);
+    const measured = acting.rig || rig(motion.plan, motion.rest);
+    const at = measured.carrier * VECTOR_STRIDE;
+    pose.translation[at] -= (acting.carried[0] + acting.travelled[0]) / measured.stretch[0];
+    pose.translation[at + 2] -= (acting.carried[1] + acting.travelled[2]) / measured.stretch[2];
   };
 
   /**
@@ -1305,8 +1840,11 @@
     EASES,
     TUNING,
     REPERTOIRE,
+    FAMILIES,
     performance,
     define,
+    defineFamily,
+    choose,
     rig,
     refusal,
     turnHead,
@@ -1319,9 +1857,12 @@
     base,
     stop,
     aim,
+    point,
     playing,
+    marks,
     progress,
     rootMotion,
+    keepInPlace,
     takeRootMotion,
     cast,
     seedOf,
