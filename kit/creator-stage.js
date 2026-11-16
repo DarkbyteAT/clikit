@@ -196,7 +196,8 @@
     .cr-title b { font: 600 17px/1.2 var(--display); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 8px rgba(0, 0, 0, .55); }
     .cr-title span { font: 500 12px var(--body); color: var(--dim); text-shadow: 0 1px 6px rgba(0, 0, 0, .55); }
     .cr-looks { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: auto; }
-    .cr-chip { min-height: var(--ui-hit); padding: 4px 14px; font: 600 13px var(--body); border-radius: 999px; box-shadow: none; }
+    .cr-chip { min-height: var(--ui-hit); padding: 4px 14px; font: 600 13px var(--body); border-radius: 999px; box-shadow: none; white-space: nowrap; }
+    .cr-chip .ui-button-text { white-space: nowrap; }
   `);
 
   Kit.creator = Object.assign(Kit.creator || {}, { StageGestures, HoldButton, StageRails, StageTitle, LookChips });

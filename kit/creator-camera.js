@@ -23,9 +23,9 @@
    * @type {Object<string, {anchor: number, span: number}>}
    */
   const GROUP_FOCUS = Object.freeze({
-    head: { anchor: 0.9, span: 0.32 },
-    face: { anchor: 0.91, span: 0.2 },
-    hair: { anchor: 0.91, span: 0.3 },
+    head: { anchor: 0.9, span: 0.42 },
+    face: { anchor: 0.915, span: 0.34 },
+    hair: { anchor: 0.91, span: 0.4 },
     body: { anchor: 0.62, span: 0.62 },
     arms: { anchor: 0.62, span: 0.66 },
     legs: { anchor: 0.3, span: 0.62 },

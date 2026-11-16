@@ -50,6 +50,7 @@
 
   css(`
     .cr-root { position: fixed; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr) ${PANEL_SIZE.portraitHeight}; grid-template-columns: minmax(0, 1fr); pointer-events: none; color: var(--ink); font-family: var(--body); }
+    .cr-failed { place-items: center; padding: 72px 24px 24px; pointer-events: auto; }
     .cr-panel { pointer-events: auto; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border-top: var(--border) solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
     @media (orientation: landscape) {
       .cr-root { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) ${PANEL_SIZE.landscapeWidth}; }
@@ -91,11 +92,22 @@
     </div>`;
 
   /**
-   * Builds the screen.
+   * Builds the screen, or a message saying why it could not start.
    * @param {Object} ctx the shell context
-   * @returns {Object} `{ update, render, dispose, debugState, session, host, director }`
+   * @returns {Object} `{ update, render, dispose, debugState, session, host, director }` (only `update` and `dispose` when it could not start)
    */
   const createCreator = (ctx) => {
+    try {
+      return buildCreator(ctx);
+    } catch (error) {
+      // A broken catalogue or a missing piece must not leave a blank screen: say what happened and let the person go back.
+      ctx.ui.mount(html`<div class="cr-root cr-failed"><${Kit.ui.Empty} title="Character Maker could not start" text=${error.message} /></div>`);
+      return { update() {}, dispose() {} };
+    }
+  };
+
+  /** Builds the working screen; `createCreator` wraps it so a failure shows as a message. */
+  const buildCreator = (ctx) => {
     const { renderer, size } = ctx;
     const catalog = Kit.body.catalog(Kit.body.wardrobe.CATALOG);
     const editor = Kit.body.editor(catalog);
@@ -131,7 +143,7 @@
     };
     const status = signal(statusNow());
     const latencies = [];
-    const measurement = { applyMs: 0, inputToApplyMs: 0, applied: 0 };
+    const measurement = { applyMs: 0, flushMs: 0, inputToApplyMs: 0, applied: 0 };
     let lastInputAt = 0;
     let isDraftDirty = false;
     let quietSeconds = 0;
@@ -276,7 +288,8 @@
       render() {
         watchStage();
         // Slider values queued since the last frame become one edit each, then the figure follows: input to pixels in one frame.
-        host.flush();
+        const flushStartedAt = performance.now();
+        if (host.flush()) measurement.flushMs = performance.now() - flushStartedAt;
         const wanted = held.value ? session.baseline() : session.recipe();
         if (wanted !== drawnRecipe) showRecipe(wanted);
         const now = performance.now();

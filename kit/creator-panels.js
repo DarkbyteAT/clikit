@@ -179,7 +179,7 @@
         <label class="ui-label" for="cr-code-out">Your code</label>
         <div class="cr-code-row">
           <input id="cr-code-out" class="ui-input cr-code" readonly value=${yours} onFocus=${(event) => event.target.select()} onKeyDown=${(event) => event.stopPropagation()} />
-          <${Button} id="cr-copy" onClick=${copy}><${Icon} name="copy" /> <span>Copy</span><//>
+          <${Button} id="cr-copy" class="cr-wide" onClick=${copy}><${Icon} name="copy" /> <span>Copy</span><//>
         </div>
         <small class="ui-field-note" role="status" id="cr-copy-note">${copied.value || 'Anyone with this code can open this character.'}</small>
       </div>

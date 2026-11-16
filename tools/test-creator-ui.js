@@ -137,8 +137,9 @@ async function main() {
   const afterSlider = await state();
   const inputToApply = timings.map((entry) => entry.inputToApplyMs);
   const applyOnly = timings.map((entry) => entry.applyMs);
+  const afterSliderMeasurement = (entries) => entries[entries.length - 1].flushMs;
   const median = (values) => [...values].sort((first, second) => first - second)[Math.floor(values.length / 2)];
-  report.sliderToFigure = { inputToApplyMs_median: median(inputToApply), inputToApplyMs_max: Math.max(...inputToApply), applyMs_median: median(applyOnly), applyMs_max: Math.max(...applyOnly), inputs: LATENCY_INPUTS, wallToTwoFramesMs_median: median(timings.map((entry) => entry.wallMs)) };
+  report.sliderToFigure = { flushMs_last: afterSliderMeasurement(timings), inputToApplyMs_median: median(inputToApply), inputToApplyMs_max: Math.max(...inputToApply), applyMs_median: median(applyOnly), applyMs_max: Math.max(...applyOnly), inputs: LATENCY_INPUTS, wallToTwoFramesMs_median: median(timings.map((entry) => entry.wallMs)) };
   check('slider: dragging changes the recipe and the figure draws the new one', JSON.stringify(afterSlider.recipe) !== JSON.stringify(before.recipe) && afterSlider.drawnIsCurrent, { applied: afterSlider.measurement.applied });
   await press('#cr-undo');
   const undone = await state();
@@ -157,6 +158,21 @@ async function main() {
   await shot('slider-mid-drag');
   await page.mouse.up();
   await settle(300);
+
+  // Double tap on a moved slider puts it back to its default.
+  await read(`(() => { const input = document.querySelector('#cr-pane .cr-dial input[type=range]'); input.value = String(Number(input.min) + (Number(input.max) - Number(input.min)) * 0.85); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await frames();
+  await frames();
+  const movedByDrag = await read(`document.querySelector('#cr-pane .cr-dial output').textContent`);
+  await page.evaluate(() => {
+    const wrapper = document.querySelector('#cr-pane .cr-dial .cr-slider');
+    const rect = wrapper.getBoundingClientRect();
+    const tap = (type) => wrapper.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 3, clientX: rect.left + 20, clientY: rect.top + 30 }));
+    ['pointerdown', 'pointerup', 'pointerdown', 'pointerup'].forEach(tap);
+  });
+  await settle(300);
+  const afterDoubleTap = await read(`(() => { const slider = Kit.currentGame.session.groups().flatMap((group) => group.rows).find((row) => row.kind === 'dial'); const value = Kit.currentGame.session.schema().dials.find((dial) => dial.id === slider.sliders[0].setId.split('@')[0]).value; return { readout: document.querySelector('#cr-pane .cr-dial output').textContent, atDefault: Math.abs(value - slider.sliders[0].default) <= slider.sliders[0].step }; })()`);
+  check('double tap: a slider that was moved goes back to its default', movedByDrag !== afterDoubleTap.readout && afterDoubleTap.atDefault, { movedByDrag, afterDoubleTap });
 
   // ---- randomise, lock, compare ----
   await press('.cr-panel [role=tab]:nth-of-type(1)');
@@ -245,6 +261,35 @@ async function main() {
   await press('#cr-code-load');
   check('share: a good code loads and closes the dialog', !(await read(`Boolean(document.querySelector('dialog[open]'))`)) && session.errors.length === 0, session.errors);
 
+  // ---- real finger gestures on the stage: a one-finger drag turns the character, a two-finger spread zooms in ----
+  await press('.cr-panel [role=tab]:nth-of-type(1)');
+  const yawBefore = (await state()).camera.yaw;
+  const stageBox = await read(`(() => { const rect = document.getElementById('cr-view').getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.55, w: rect.width }; })()`);
+  const devtools = await page.context().newCDPSession(page);
+  const touch = (type, points) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+  await touch('touchStart', [{ x: stageBox.x - 60, y: stageBox.y }]);
+  for (let step = 1; step <= 6; step++) {
+    await touch('touchMove', [{ x: stageBox.x - 60 + step * 20, y: stageBox.y }]);
+    await page.waitForTimeout(20);
+  }
+  await touch('touchEnd', []);
+  await settle(200);
+  const yawAfter = (await state()).camera.yaw;
+  check('touch: a one-finger drag across the stage turns the character', Math.abs(yawAfter - yawBefore) > 0.5, { yawBefore, yawAfter });
+  const spanBefore = (await state()).cameraTarget.span;
+  await touch('touchStart', [{ x: stageBox.x - 20, y: stageBox.y }, { x: stageBox.x + 20, y: stageBox.y }]);
+  for (let step = 1; step <= 6; step++) {
+    await touch('touchMove', [{ x: stageBox.x - 20 - step * 12, y: stageBox.y }, { x: stageBox.x + 20 + step * 12, y: stageBox.y }]);
+    await page.waitForTimeout(20);
+  }
+  await touch('touchEnd', []);
+  await settle(200);
+  const spanAfter = (await state()).cameraTarget.span;
+  check('touch: spreading two fingers zooms in', spanAfter < spanBefore * 0.8, { spanBefore, spanAfter });
+  await read(`document.getElementById('cr-view').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))`);
+  await settle(200);
+  check('keyboard: Home on the stage puts the view back to the whole body, facing front', (await state()).cameraTarget.span === 1);
+
   // ---- keyboard ----
   await press('.cr-panel [role=tab]:nth-of-type(3)');
   const keyboard = await page.evaluate(async () => {
@@ -270,6 +315,22 @@ async function main() {
   check('keyboard: the focused control shows a focus ring', !/^none/.test(focusRing.outline), focusRing);
   await page.keyboard.press('Home');
 
+  // ---- setup tab lower down, and the look settings ----
+  await press('.cr-panel [role=tab]:nth-of-type(1)');
+  await read(`document.getElementById('cr-pane').scrollTop = 99999`);
+  await settle(300);
+  await shot('setup-bottom');
+  await read(`document.getElementById('cr-look-details').open = true; document.getElementById('cr-pane').scrollTop = 99999`);
+  await settle(400);
+  await shot('setup-look-settings');
+
+  // ---- reduced motion: the camera jumps instead of easing ----
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await press('.cr-panel [role=tab]:nth-of-type(6)');
+  const reduced = await state();
+  check('reduced motion: the camera is at its target one moment after choosing a group (no easing)', Math.abs(reduced.camera.span - reduced.cameraTarget.span) < 1e-6 && Math.abs(reduced.camera.anchor - reduced.cameraTarget.anchor) < 1e-6, reduced);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
   // ---- 44px targets ----
   const small = await read(`(() => {
     const selector = 'button, [role=tab], [role=radio], [role=option], input[type=range], input[type=text], summary, .ui-toggle';
@@ -286,6 +347,15 @@ async function main() {
   check('touch: a finger drag scrolls the control pane (starting on whatever control is under it)', failure === null, failure || drag);
   report.touchDrag = drag;
   await shot('after-touch-scroll');
+
+  // ---- leaving and coming back keeps the character ----
+  const lastSeen = await state();
+  await press('#back');
+  await settle(600);
+  await session.launchGame('creator');
+  await settle(1200);
+  const returned = await state();
+  check('draft: leaving to the menu and coming back restores the character, its name and its look', JSON.stringify(returned.recipe) === JSON.stringify(lastSeen.recipe) && returned.name === lastSeen.name && returned.preset === lastSeen.preset, { lastSeen: lastSeen.name, returned: returned.name });
 
   // ---- done ----
   check('no page errors during the whole run', session.errors.length === 0, session.errors);

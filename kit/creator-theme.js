@@ -49,6 +49,7 @@
       & .ui-label { font-weight: 500; }
       & .ui-dialog-card { box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); }
       & #hud-top .chip { background: rgba(22, 26, 33, 0.82); }
+      & #game-name { display: none; }
     `,
   });
 

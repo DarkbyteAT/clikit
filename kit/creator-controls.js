@@ -342,17 +342,23 @@
 
   css(`
     .cr-tabs { flex: 1 1 0; min-height: 0; gap: 0; }
-    .cr-tabs .ui-tablist { border-radius: 0; border-width: 0 0 var(--border) 0; padding: 4px 8px; gap: 2px; background: transparent; }
+    /* Scroll shadows: a soft edge appears only on a side that has more tabs beyond it (the "local" layers scroll with the tabs, the "scroll" ones stay). */
+    .cr-tabs .ui-tablist {
+      border-radius: 0; border-width: 0 0 var(--border) 0; padding: 4px 8px; gap: 2px; background-color: var(--panel);
+      background-image: linear-gradient(to right, var(--panel), var(--panel)), linear-gradient(to left, var(--panel), var(--panel)), linear-gradient(to right, rgba(134, 217, 195, .3), transparent), linear-gradient(to left, rgba(134, 217, 195, .3), transparent);
+      background-position: left, right, left, right; background-repeat: no-repeat; background-size: 20px 100%, 20px 100%, 14px 100%, 14px 100%;
+      background-attachment: local, local, scroll, scroll;
+    }
     .cr-tabs .ui-tablist [role="tab"] { flex-direction: column; display: flex; align-items: center; justify-content: center; gap: 2px; min-width: 64px; padding: 4px 10px; font: 600 11px/1.1 var(--body); border-radius: var(--radius); }
     .cr-tabs .ui-tablist [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .cr-tabs .ui-tabpanel { flex: 1 1 0; min-height: 0; }
     .cr-pane { padding: 0 max(14px, env(safe-area-inset-right, 0px)) 0 max(14px, env(safe-area-inset-left, 0px)); }
-    .cr-pane-inner { display: flex; flex-direction: column; gap: 14px; padding: 12px 0 calc(24px + env(safe-area-inset-bottom, 0px)); }
+    .cr-pane-inner { display: flex; flex-direction: column; gap: 8px; padding: 6px 0 calc(24px + env(safe-area-inset-bottom, 0px)); }
     .cr-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ui-hit); }
     .cr-pane-head h2 { margin: 0; font: 600 18px var(--display); }
     .cr-wide { flex-direction: row; gap: 8px; padding: 6px 12px; font-size: 14px; }
     .cr-wide .ui-button-text { display: inline-flex; align-items: center; gap: 8px; }
-    .cr-row { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding-bottom: 14px; border-bottom: var(--border) solid var(--line); }
+    .cr-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding-bottom: 8px; border-bottom: var(--border) solid var(--line); }
     .cr-row:last-child { border-bottom: 0; }
     .cr-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ui-hit); }
     .cr-row-title { display: flex; flex-direction: column; min-width: 0; }
