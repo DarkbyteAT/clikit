@@ -24,7 +24,8 @@
  *   - Synergies (Kit.synergy): each upgrade carries a tag; three kinetic, three energy, three orbit or two hull
  *     rows switch on a set bonus, so the second and third pick of a colour is worth more than the first.
  *   - Evolutions: maxing a weapon and its partner passive unlocks a transformed weapon. Going deep (evolution) and
- *     going wide (synergies) compete for the same dozen picks.
+ *     going wide (synergies) compete for the same dozen picks, and the gun evolves only once: Storm Array (a fan
+ *     both ways) or Rail Lance (one beam through everything), never both.
  *   - Counters: the enemy mix shifts with time, so a build is tested by what it cannot handle (see above).
  *   - Rerolls: elites drop one; spend it on a hand that does not fit the build.
  * Hours - the long arc (Kit.profile).
@@ -105,14 +106,14 @@
   /** @type {ArenaUpgrade[]} Every level-up choice. */
   const UPGRADES = [
     // Weapons: change how the ship attacks. A ship has few weapon slots.
-    { id: 'multi', kind: 'weapon', slot: 'weapon', tags: ['kinetic'], name: 'Multishot', desc: 'Two more shots fan out with every volley', color: '#4de2c5', max: 3, mods: { multishot: { add: 2 } }, weight: weaponWeight },
+    { id: 'multi', kind: 'weapon', slot: 'weapon', tags: ['kinetic'], name: 'Multishot', desc: (level) => (level > 1 ? 'One more shot in the fan' : 'Two more shots fan out with every volley'), color: '#4de2c5', max: 3, mods: (level) => ({ multishot: { add: level + 1 } }), weight: weaponWeight },
     { id: 'pierce', kind: 'weapon', slot: 'weapon', tags: ['energy'], name: 'Lance Rounds', desc: 'Shots become beams that pierce 2 more enemies and punch through bulwark armour', color: '#8fe9ff', max: 3, mods: { pierce: { add: 2 } }, weight: weaponWeight },
     { id: 'blade', kind: 'weapon', slot: 'weapon', tags: ['orbit'], name: 'Orbit Blades', desc: (level) => (level > 1 ? 'One more blade in the ring' : 'Two blades circle you and shred anything close'), color: '#dff3ff', max: 3, mods: (level) => ({ blades: { add: level + 1 } }), weight: weaponWeight },
     { id: 'pulse', kind: 'weapon', slot: 'weapon', tags: ['energy'], unlock: 'pulse', name: 'Pulse Coil', desc: 'A shockwave bursts from the hull every few seconds; stronger each level', color: '#c9a1ff', max: 3, mods: { pulse: { add: 1 } }, weight: weaponWeight },
     { id: 'mines', kind: 'weapon', slot: 'weapon', tags: ['kinetic'], unlock: 'mines', name: 'Wake Mines', desc: 'Drop mines behind you while you move; they blast whatever follows', color: '#ffb347', max: 3, mods: { mines: { add: 1 } }, weight: weaponWeight },
     // Passives: every one costs something.
-    { id: 'rate', kind: 'passive', slot: 'passive', tags: ['kinetic'], name: 'Rapid Fire', desc: 'Shoot 35% faster, each shot 6% weaker', color: '#ffc145', max: 3, mods: { fireRate: { mul: 1.35 }, damage: { mul: 0.94 } } },
-    { id: 'dmg', kind: 'passive', slot: 'passive', tags: ['kinetic'], name: 'Heavy Rounds', desc: '+50% damage and fatter shots, 8% slower fire', color: '#ff5d73', max: 3, mods: { damage: { mul: 1.5 }, fireRate: { mul: 0.92 } } },
+    { id: 'rate', kind: 'passive', slot: 'passive', tags: ['kinetic'], name: 'Rapid Fire', desc: 'Shoot 30% faster, each shot 6% weaker', color: '#ffc145', max: 3, mods: { fireRate: { mul: 1.3 }, damage: { mul: 0.94 } } },
+    { id: 'dmg', kind: 'passive', slot: 'passive', tags: ['kinetic'], name: 'Heavy Rounds', desc: '+40% damage and fatter shots, 8% slower fire', color: '#ff5d73', max: 3, mods: { damage: { mul: 1.4 }, fireRate: { mul: 0.92 } } },
     { id: 'speed', kind: 'passive', slot: 'passive', tags: ['orbit'], name: 'Thrusters', desc: '+14% move speed, dash recharges 10% sooner', color: '#9bff7a', max: 3, mods: { speed: { mul: 1.14 }, dashCooldown: { mul: 0.9 } } },
     { id: 'magnet', kind: 'passive', slot: 'passive', tags: ['orbit'], name: 'Magnet', desc: 'Gems fly to you from 60% further away', color: '#b06bff', max: 3, mods: { magnet: { mul: 1.6 } } },
     { id: 'plating', kind: 'passive', slot: 'passive', tags: ['hull'], excludes: 'reactor', name: 'Plating', desc: '+30 max hull and repair 20, but 4% slower. Cannot be fitted with Glass Reactor', color: '#ff8fa0', max: 3, mods: { maxHp: { add: 30 }, speed: { mul: 0.96 } }, heal: 20 },
@@ -120,8 +121,8 @@
     { id: 'reactor', kind: 'passive', slot: 'passive', tags: ['energy'], excludes: 'plating', unlock: 'reactor', name: 'Glass Reactor', desc: '+35% damage for 18 max hull. Cannot be fitted with Plating', color: '#ffe38a', max: 3, mods: { damage: { mul: 1.35 }, maxHp: { add: -18 } } },
     { id: 'capacitor', kind: 'passive', slot: 'passive', tags: ['energy'], unlock: 'capacitor', name: 'Capacitor', desc: 'Dash recharges 20% sooner and ends in a shockwave', color: '#7fd0ff', max: 3, mods: { dashCooldown: { mul: 0.8 }, dashNova: { add: 1 } } },
     // Evolutions: offered once both parents are at their max level. They take no slot.
-    { id: 'storm', kind: 'evolution', tags: [], requiresMax: ['multi', 'rate'], name: 'Storm Array', desc: 'EVOLUTION of Multishot + Rapid Fire: every volley also fires behind you', color: '#4de2c5', max: 1, mods: { rearFan: { add: 1 }, multishot: { add: 1 } }, weight: OFFER_WEIGHT.evolution },
-    { id: 'rail', kind: 'evolution', tags: [], requiresMax: ['pierce', 'dmg'], name: 'Rail Lance', desc: 'EVOLUTION of Lance Rounds + Heavy Rounds: a wide beam that pierces everything', color: '#8fe9ff', max: 1, mods: { pierce: { add: 40 }, shotWidth: { mul: 2.2 } }, weight: OFFER_WEIGHT.evolution },
+    { id: 'storm', kind: 'evolution', tags: [], requiresMax: ['multi', 'rate'], excludes: 'rail', name: 'Storm Array', desc: 'EVOLUTION of Multishot + Rapid Fire: every volley also fires behind you. The gun evolves once: not with Rail Lance', color: '#4de2c5', max: 1, mods: { rearFan: { add: 1 }, multishot: { add: 1 } }, weight: OFFER_WEIGHT.evolution },
+    { id: 'rail', kind: 'evolution', tags: [], requiresMax: ['pierce', 'dmg'], name: 'Rail Lance', desc: 'EVOLUTION of Lance Rounds + Heavy Rounds: a wide beam that pierces everything. The gun evolves once: not with Storm Array', color: '#8fe9ff', max: 1, mods: { pierce: { add: 40 }, shotWidth: { mul: 2.2 } }, weight: OFFER_WEIGHT.evolution },
     { id: 'halo', kind: 'evolution', tags: [], requiresMax: ['blade', 'speed'], name: 'Saw Halo', desc: 'EVOLUTION of Orbit Blades + Thrusters: two more blades on a wider, faster ring', color: '#dff3ff', max: 1, mods: { blades: { add: 2 }, bladeRadius: { mul: 1.45 }, bladeSpin: { mul: 1.7 } }, weight: OFFER_WEIGHT.evolution },
     { id: 'nova', kind: 'evolution', tags: [], requiresMax: ['pulse', 'magnet'], name: 'Gravity Well', desc: 'EVOLUTION of Pulse Coil + Magnet: a far wider pulse that pulls in every gem', color: '#c9a1ff', max: 1, mods: { pulseRadius: { mul: 1.6 }, pulseVacuum: { add: 1 } }, weight: OFFER_WEIGHT.evolution },
     { id: 'cluster', kind: 'evolution', tags: [], requiresMax: ['mines', 'capacitor'], name: 'Cluster Wake', desc: 'EVOLUTION of Wake Mines + Capacitor: mines drop faster and blast far wider', color: '#ffb347', max: 1, mods: { mines: { add: 2 }, mineRadius: { mul: 1.6 } }, weight: OFFER_WEIGHT.evolution },
@@ -152,8 +153,9 @@
   /**
    * XP needed to leave a level. The first pick comes within seconds, and a run that reaches the warden has made about
    * fourteen picks: enough to max one weapon and its partner (an evolution) or to spread across three synergies, not both.
+   * Past level 15 the price climbs steeply, so a build that kills everything cannot also level without end.
    */
-  const XP_TO_NEXT_LEVEL = Kit.curve.of([[1, 5], [2, 12], [3, 22], [4, 34], [5, 46], [10, 120], [20, 300]]);
+  const XP_TO_NEXT_LEVEL = Kit.curve.of([[1, 5], [2, 12], [3, 22], [4, 34], [5, 46], [10, 130], [15, 320], [20, 700], [30, 2400]]);
 
   /** Hero handling. Lengths in world units, times in seconds. */
   const HERO = {
@@ -245,7 +247,7 @@
     { id: 'bulwark', sides: 4, size: 0.9, hp: 12, speed: 1.6, touch: 8, xp: 4, color: 0x7fb2ff, from: 40, weight: 1, frontArmor: 0.25, stretch: 0.6 },
     { id: 'lancer', sides: 3, size: 0.7, hp: 6, speed: 2.6, touch: 9, xp: 3, color: 0xff9a3d, from: 46, weight: 1.2, stretch: 1.7, behavior: 'charge', charge: CHARGE.lancer },
     { id: 'wisp', sides: 10, size: 0.4, hp: 3, speed: 3.6, touch: 3, xp: 2, color: 0xe8fbff, from: 54, weight: 1.5, spin: 3, isBladeImmune: true, steer: path.scale(path.lissajous(0, 3.4), 0, 1.1) },
-    { id: 'warden', sides: 8, size: 2.6, hp: 320, speed: 1.5, touch: 14, xp: 40, color: 0xff3355, from: 0, weight: 0, spin: 0.5, isHeavy: true, isBoss: true, behavior: 'boss', charge: CHARGE.warden, knockbackScale: 0.08 },
+    { id: 'warden', sides: 8, size: 2.6, hp: 400, speed: 1.5, touch: 14, xp: 40, color: 0xff3355, from: 0, weight: 0, spin: 0.5, isHeavy: true, isBoss: true, behavior: 'boss', charge: CHARGE.warden, knockbackScale: 0.08 },
   ]);
 
   /**

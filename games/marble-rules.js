@@ -145,7 +145,7 @@
    * @property {number} pose  index into the part's poses.
    * @property {boolean} [fixed] part of a challenge board: it cannot be moved, turned or removed, and costs no pegs.
    */
-  /** The contraption free build opens with: every marble rings two bells, takes a bumper kick and lands (scratch/marble/tune.js). */
+  /** The contraption free build opens with: every marble rings two bells, takes a bumper kick and lands (checked by scratch/marble/prove.js). */
   const STARTER_LAYOUT = [
     { id: 1, kind: 'ramp', x: 1, y: 1, pose: 0 },
     { id: 2, kind: 'bell', x: 3, y: 3, pose: 0 },

@@ -262,6 +262,36 @@ machine at load 20 to 40, so only the ratios mean anything.
 - **Revisit if.** The owner's phone still cannot scroll the menu: open Components from the menu footer and report
   whether the readout moves; that separates "no pane scrolls on this device" from "the menu's frame is at fault".
 
+## Marble Works: wiring parts by placement
+
+- **Options.** Drawn wires between parts (explicit, but a second gesture and a wire editor on a phone). Colour
+  channels chosen by tapping (compact, but every emitter and receiver needs another pose axis and the player must
+  match colours). Proximity: an emitter drives every receiver within two cells (no UI at all; O(emitters x receivers)
+  per layout change, at most 10 x 10).
+- **Chosen.** Proximity. Placement is already the one verb of the game, and making it the wiring too means routing
+  and logic compete for the same cells, which is where the decisions come from. Wires are drawn so the rule is visible.
+- **Revisit if.** Players want two independent circuits side by side closer than two cells apart.
+
+## Marble Works: contacts resolved per physics step, not per frame
+
+- **Options.** Resolve part behaviours once per frame after `phys.step` (simplest; but a frame holds one step at
+  60 fps and three at 20 fps, so a bumper kick lands up to two steps late and the marble goes elsewhere: the same
+  contraption solved a board in node and failed it in a 9 fps browser). Resolve inside cannon's `postStep` event
+  (same result at any frame rate; the hopper beat and spinner phase are counted in whole steps on the same clock).
+- **Chosen.** `postStep`. `scratch/marble/prove.js` replays every recorded answer at 60 fps and at 20 fps and fails
+  if they disagree. Cost: nothing measurable (the same work, moved).
+- **Revisit if.** Kit.physics gains its own per-step hook; the game should then use that instead of reaching for the world.
+
+## Marble Works: rules in their own headless file, proven by replay
+
+- **Options.** One game file with a `lab` handle (what the first version did; tools had to load view code).
+  Rules and simulation in `games/marble-rules.js` with no DOM or THREE, the view in `games/marble.js`.
+- **Chosen.** The split. Boards and songs are content that can silently become unsolvable when a number changes, so
+  each has a recorded answer in `scratch/marble/solutions.json` that `prove.js` replays through the real rules, with
+  a control that must fail. Answers were found by seeded random search (`search.js`, about 50 ms a try under load);
+  the two logic boards needed a hand-built family because random placement almost never wires two parts together.
+- **Revisit if.** A shared simulator lands in tools/: `prove.js` and `curve.js` should move onto it.
+
 ## Open, for whoever picks them up (record the outcome here)
 
 - Renderer: three.js 0.147 classic scripts (works on the hosted page today) vs current three.js as ES modules vs

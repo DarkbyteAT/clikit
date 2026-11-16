@@ -37,6 +37,7 @@ share the machine; the load column says so.
 | 23 | Prism Garden | depth (shelf, 3 new rules, forge, daily, garden) + theme + file split | fable | not measured (the agent cannot read its own usage) | about 150 | 12+ agents, load average 35 | standard, theme, depth | 0 so far (amendments 14 to 19 arrived mid-task and were absorbed) | 14 proven beds, endless forged beds; kit/puzzle.js grew search.generate, search.difficulty, beam passes and one-way glass, level medals; `make sim GAME=prism` works |
 | 24 | Tower Smash | depth (sim split, generator, loadout, worlds, progression) | fable | not measured by the agent | not measured (about 75 by file times) | 12+ agents | standard, theme, depth | 0 so far | 3 files; headless solver clears 18/18; Agent tool not available to this session, so nothing was dispatched |
 | 25 | Component library (kit/ui/: 12 component files, menu, gallery), menu scroll root-cause, framework spike, tools/touch-scroll.js, tools/test-ui.js | new kit area + investigation + compatibility layer | fable (lead only: no Agent tool in this session, so nothing was dispatched) | not visible to the agent | not measured; one sitting | load 42 at the start, lighter later | standard, decisions, tests (5 pure, 49 in-browser checks) | 0 so far (amendment 20 arrived mid-task) | 12 browser runs; one self-inflicted break caught by the first smoke (Kit.ui.h overwritten); the menu failure did not reproduce, so the real-phone cause is still open |
+| 26 | Marble Works | depth (boards, songs, logic parts, marble kinds, profile) | fable | not visible to the agent | about 105 | 12+ agents | standard, theme, depth | 0 so far | lead did every piece: no Agent tool in the session, so nothing was dispatched; 2 kit additions; 9 boards and 8 songs proven headless |
 
 ## Orchestrated work (from amendment 17)
 
@@ -83,6 +84,8 @@ entries become the next tooling work.
 | Live tree broken at random instants by other agents | arena, marble, sling, prism | `make release` publishes from a frozen copy |
 | Script tags edited by hand, sometimes duplicated | prism, marble | closed: `new game` / `new module` insert the tag once; `check` and `tags [--fix]` validate; a duplicate id now throws in Kit.register |
 | No map of the kit | prism, marble, sling | kit steward: kit/README.md |
+| Node proof passed, browser failed: game logic ran per frame, not per physics step | marble | fixed in games/marble-rules.js; Kit.physics needs an `onStep` hook so no game repeats it |
+| Finding a recorded answer per board by random search: 2 to 4 minutes each under load | marble | open: a shared headless solver/simulator in tools/ |
 | Headless browser at 4 fps: a one-minute scripted playtest took 5 to 6 minutes of wall clock | souls | open: a `play` runner that fast-forwards a game's pure simulation between screenshots (souls does it by hand through `run.update`) |
 | No shared headless simulator for pacing: each game writes its own bot loop and report | souls | open: lift the career loop of scratch/souls/career.js into tools/ (policies in, curve and build table out) |
 | tools/test-kit.js is one shared file: other agents' failing tests hid whether mine passed, and a global rewrite changed my assertions | souls | open: one test file per kit module, run by a collector |

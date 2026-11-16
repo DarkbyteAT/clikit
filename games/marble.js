@@ -42,7 +42,7 @@
     top: HOPPER.y + 1,
     bottom: TRAY.y - TRAY.height / 2 - 0.15,
     width: 2 * HALF_WIDTH + 1.2,
-    reserve: { portrait: { top: 128, bottom: 84 }, landscape: { top: 16, bottom: 16 } },
+    reserve: { portrait: { top: 128, bottom: 84 }, landscape: { top: 16, bottom: 68 } }, // landscape: the HUD sits beside the board, only the button bar is below it
     cameraDistance: 30,
     cameraRise: 3, // the camera sits slightly above its target, so parts show their top faces (the 2.5D look)
   };
@@ -65,7 +65,7 @@
     gateOpenScale: 0.15, // an open gate's bar retracts to this fraction of its length
     carryLift: 0.7, // how far a carried part floats in front of the board
     pulseScale: 1.22, // squash applied to a part when a marble touches it
-    jarCapacity: 8, // marbles shown in the HUD jar (two rows above its paper label) before it is emptied
+    jarCapacity: 8, // marbles shown in the HUD jar (two rows under its paper label) before it is emptied
   };
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -255,13 +255,13 @@
       & .stat { transform: rotate(1.5deg); letter-spacing: 0.02em; }
       & .stat.jar { position: relative; transform: none; background: none; border: 0; box-shadow: none; padding: 0; min-width: 0; align-items: center; gap: 0; }
       & .jar-lid { width: 34px; height: 7px; border-radius: 3px 3px 0 0; background: #d9482b; box-shadow: inset 0 -2px 0 #8f2a16; }
-      & .jar-glass { width: 46px; height: 42px; border: 2px solid rgba(255, 255, 255, 0.75); border-radius: 5px 5px 13px 13px; background: linear-gradient(90deg, rgba(255,255,255,0.32), rgba(190,225,255,0.12) 40%, rgba(255,255,255,0.2)); display: flex; align-items: flex-end; padding: 2px 2px 19px; }
+      & .jar-glass { width: 46px; height: 42px; border: 2px solid rgba(255, 255, 255, 0.75); border-radius: 5px 5px 13px 13px; background: linear-gradient(90deg, rgba(255,255,255,0.32), rgba(190,225,255,0.12) 40%, rgba(255,255,255,0.2)); display: flex; align-items: flex-end; padding: 2px; }
       & .jar-marbles { display: flex; flex-wrap: wrap-reverse; gap: 1px; justify-content: center; width: 100%; }
       & .jar-marbles i { width: 9px; height: 9px; border-radius: 50%; box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.22), inset 1px 1px 0 rgba(255, 255, 255, 0.6); animation: jar-drop 0.3s cubic-bezier(.3, 1.6, .5, 1); }
       @keyframes jar-drop { from { transform: translateY(-34px); } }
-      & .stat.jar b { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); padding: 0 6px; border-radius: 3px; background: #fff4dc; color: #4a2f17; font-size: 14px; line-height: 15px; }
+      & .stat.jar b { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); padding: 0 6px; border-radius: 3px; background: #fff4dc; color: #4a2f17; font-size: 14px; line-height: 15px; }
       & .chip { font-family: var(--display); font-weight: 400; letter-spacing: 0.03em; }
-      & .checklist { position: absolute; left: 0; top: -26px; max-width: 58%; padding: 7px 11px; gap: 3px; background: #33413a; color: #f4efe0; border: 5px solid #a8743c; border-radius: 4px; box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.45), 0 3px 0 #7d5425; font: 15px/1.1 var(--chalk); }
+      & .checklist { position: absolute; left: 0; top: -6px; max-width: 58%; padding: 7px 11px; gap: 3px; background: #33413a; color: #f4efe0; border: 5px solid #a8743c; border-radius: 4px; box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.45), 0 3px 0 #7d5425; font: 15px/1.1 var(--chalk); }
       & .checklist .done, & .checklist div:not(.done) ~ div:not(.done) ~ div:not(.done) { display: none; }
       & .checklist i { flex: none; width: 11px; height: 11px; border: 1.5px solid rgba(244, 239, 224, 0.75); border-radius: 2px; }
       & .tune-card { position: absolute; right: 0; top: 6px; padding: 5px 9px 6px; background: #fff4dc; color: #4a2f17; border-radius: 3px; transform: rotate(-2deg); box-shadow: 0 2px 5px rgba(46, 28, 12, 0.45); font: 800 11px var(--body); display: flex; flex-direction: column; gap: 4px; align-items: center; }
@@ -274,7 +274,7 @@
       & .action { padding: 7px 4px 5px; border-color: var(--line); }
       & .action b { font: 400 16px var(--display); letter-spacing: 0.03em; white-space: nowrap; }
       & .action span:empty { display: none; }
-      & .hint { left: 128px; top: 44px; bottom: auto; box-sizing: border-box; max-width: 140px; padding: 6px 10px; background: #fff4dc; border: 0; border-radius: 3px; font: 14px/1.1 var(--chalk); color: #4a2f17; }
+      & .hint { left: 128px; top: 62px; bottom: auto; box-sizing: border-box; max-width: 140px; padding: 6px 10px; background: #fff4dc; border: 0; border-radius: 3px; font: 14px/1.1 var(--chalk); color: #4a2f17; }
       & .toast { font-weight: 900; color: #fff4dc; text-shadow: 0 3px 0 #4a2f17; }
       & .modal-card { padding: 20px 18px 18px; background: ${WOOD}; border: 3px solid #a8743c; border-radius: 10px; box-shadow: 0 6px 0 #7d5425, 0 14px 30px rgba(0, 0, 0, 0.5); }
       & .modal-card h2 { font-weight: 900; color: #4a2f17; }
@@ -573,7 +573,7 @@
         edit(EDITS.place(layout, held.kind, cell));
         sfx.play('thud', { vol: 0.5, pitch: 1.6 });
         if (held.kind === 'bell') ringBell(cell.x);
-        goals.track('place');
+        if (!board) goals.track('place');
       },
       move: ({ held, cell }) => {
         edit(EDITS.move(layout, held.piece.id, cell));
