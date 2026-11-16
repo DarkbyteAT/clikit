@@ -154,7 +154,8 @@ function parseSmokeOutput(output) {
     if (tagged && tagged[1] === 'ERROR') resultOf(tagged[2]).errors.push(tagged[3]);
     if (tagged && tagged[1] === 'WARN') resultOf(tagged[2]).warnings.push(tagged[3]);
     if (tagged && tagged[1] === 'PROBE') resultOf(tagged[2]).probe = JSON.parse(tagged[3]);
-    if (summary) resultOf(summary[1]).summary = summary[2];
+    // The first line a target prints is its summary; later lines (the menu's scroll report) are appended to it.
+    if (summary) resultOf(summary[1]).summary = resultOf(summary[1]).summary ? `${resultOf(summary[1]).summary} | ${summary[2]}` : summary[2];
   });
   return results;
 }

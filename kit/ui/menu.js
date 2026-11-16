@@ -24,8 +24,8 @@
   /** A game's accent as a CSS colour: definitions give either a CSS string or a 0xRRGGBB number. */
   const cssColorOf = (color) => (typeof color === 'number' ? '#' + color.toString(16).padStart(HEX_DIGITS, '0') : color || DEFAULT_CARD_COLOR);
 
-  /** Games shown on the menu, in menu order (the shell sorted them); `hidden` ones are reached another way. */
-  const listedGames = Kit.games.filter((game) => !game.hidden).map((game, index) => ({ ...game, number: index + 1 }));
+  /** Everything registered, in menu order (the shell sorted it), numbered as shown. */
+  const listedGames = Kit.games.map((game, index) => ({ ...game, number: index + 1 }));
   const query = signal('');
 
   const gameCard = (game) =>
@@ -35,7 +35,7 @@
   const Menu = () => {
     const matches = searchRows(listedGames, query.value, SEARCH_FIELDS);
     return html`
-      <${TextField} id="menu-search" type="search" label="Find a game" hideLabel placeholder=${`Search ${listedGames.length} games`} value=${query} />
+      <${TextField} id="menu-search" type="search" label="Find a game" hideLabel placeholder=${`Search ${listedGames.length} entries`} value=${query} />
       <${ScrollPane} fill id="menu-list" label="Games">
         ${matches.length
           ? html`<div id="cards">${matches.map(gameCard)}</div>`

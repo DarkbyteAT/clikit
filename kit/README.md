@@ -79,6 +79,40 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `bodies.js` | compound bodies, per-step rules, collision layers, sensors and surfaces for `Kit.physics` |
 | `pixel.js` | `Kit.pixel`: pixel art as data, baked to paper cut-out sprites |
 
+### Component library (`kit/ui/`, needs a browser)
+
+Preact + htm + signals over native elements (see "UI components" in `../DECISIONS.md`). A component is a function
+from props to an `html` template; any prop may be a plain value or a signal. Build new interface from these, never
+from hand-rolled scroll areas or click-only divs. See them all in every state under every skin: `Kit.play('gallery')`.
+
+```js
+const { html, signal, bind, ScrollPane, Card, Meter } = Kit.ui;
+const heat = signal(0);                                   // or: bind(wallet, (wallet) => wallet.get())
+ctx.ui.mount(html`<${Meter} label="Heat" value=${heat} />`);   // removed with the HUD when the game ends
+heat.value = 0.7;                                         // writes one style property; no re-render
+const pick = await ctx.ui.dialog({ title: 'Bait', variant: 'sheet', body: (close) => html`...` });   // pauses the game
+```
+
+| File | Owns |
+|---|---|
+| `ui/logic.js` | pure. `Kit.uiLogic`: notice queue, roving focus, selection, row search, popover placement |
+| `ui/core.js` | `Kit.ui.html`, `signal` / `computed` / `effect` / `batch`, `bind` (Kit model in, signal out), `mount`, `css`, the `--ui-*` tokens |
+| `ui/scroll.js` | `ScrollPane`, `scrollable(element)`: native scrolling, contained overscroll, snap, fade edges, keyboard, safe area |
+| `ui/button.js` | `Button`: variants; pressed, disabled and busy states |
+| `ui/layout.js` | `Stack` (container-query row), `Cluster`, `Empty` |
+| `ui/meter.js` | `Meter`, `Progress`, `Stat`, `Pips` |
+| `ui/tabs.js` | `Tabs` |
+| `ui/collection.js` | `Card`, `List`, `Grid` (single and multiple selection) |
+| `ui/field.js` | `TextField`, `Toggle`, `Slider` |
+| `ui/dialog.js` | `Dialog`, `Sheet`, `openDialog` (native `<dialog>`: focus trap, Escape, backdrop, focus returned) |
+| `ui/notice.js` | `notify` (toast queue), `announce` (banner queue) |
+| `ui/popover.js` | `Popover`, `Tooltip` |
+| `ui/gallery.js` | the component gallery screen |
+| `ui/menu.js` | loaded after the shell: the main menu's search field and scrolling list of cards |
+
+Checks: `bun tools/test-ui.js` (behaviour in a real browser: finger drags, focus, keys, 44px targets) and
+`bun tools/touch-scroll.js <selector>` ("this element scrolls under a real touch drag"; `--self-test` proves the check).
+
 ### Adapters and shell
 
 | File | Owns |
@@ -92,11 +126,14 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 A file may only use what is loaded before it. The order in `index.html` is:
 
 ```
+preact  hooks  htm  signals-core  signals   (CDN; the component library's runtime)
 core  model  meta  flow  lanes  scrub  span  blend  space  hash  music  place  puzzle  route  timer
 loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
-input  fx  sfx  make  theme  ui  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
-games/*.js
+input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
+ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
+games/*.js  ui/gallery
 shell
+ui/menu
 ```
 
 (`index.html` is the source of truth; if the two disagree, fix this page.)

@@ -235,11 +235,11 @@ test('simulate: policies differ, time advances, and the analysis flags dead stre
 });
 
 test('check: tool outputs parse into rows; scope separates my failures from other files', () => {
-  const smoke = parseSmokeOutput(['menu: games registered = [miner, runner]', 'miner: ~22 fps (software GL) | hud: DEPTH 3', '  PROBE [miner] {"frames":30,"frameMs":[40,60,90],"calls":120,"triangles":5000,"meshes":80}', '  WARN [miner] miner: 4 stats in the top row', '  ERROR [runner] pageerror: boom', 'FAILED with 1 error(s)'].join('\n'));
+  const smoke = parseSmokeOutput(['menu: games registered = [miner, runner]', 'menu: finger drag moved the list 80px', 'miner: ~22 fps (software GL) | hud: DEPTH 3', '  PROBE [miner] {"frames":30,"frameMs":[40,60,90],"calls":120,"triangles":5000,"meshes":80}', '  WARN [miner] miner: 4 stats in the top row', '  ERROR [runner] pageerror: boom', 'FAILED with 1 error(s)'].join('\n'));
   assert.strictEqual(smoke.miner.probe.calls, 120);
   assert.deepStrictEqual(smoke.miner.warnings, ['miner: 4 stats in the top row']);
   assert.deepStrictEqual(smoke.runner.errors, ['pageerror: boom']);
-  assert.ok(smoke.menu.summary.startsWith('games registered'));
+  assert.strictEqual(smoke.menu.summary, 'games registered = [miner, runner] | finger drag moved the list 80px', 'a second menu line does not hide the registered list');
   assert.deepStrictEqual(checkBudgets({ calls: 10, triangles: 10, meshes: 10 }), []);
   assert.ok(checkBudgets({ calls: BUDGETS.calls.limit + 1, triangles: 10, meshes: 10 })[0].startsWith(`${BUDGETS.calls.limit + 1} draw calls (budget ${BUDGETS.calls.limit})`));
   const rows = scopedRows('lint', [{ file: 'games/miner.js', text: 'mine' }, { file: 'kit/ui.js', text: 'theirs' }], (file) => file.startsWith('games/miner'), 'clean');

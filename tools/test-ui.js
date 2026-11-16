@@ -66,10 +66,10 @@ async function main() {
   const menuFacts = await read(`(() => {
     const cards = [...document.querySelectorAll('#cards .ui-card')];
     const tagline = cards[0] && cards[0].querySelector('.ui-card-body span');
-    return { count: cards.length, listed: Kit.games.filter((game) => !game.hidden).length, shortest: Math.min(...cards.map((card) => card.getBoundingClientRect().height)),
+    return { count: cards.length, listed: Kit.games.length, shortest: Math.min(...cards.map((card) => card.getBoundingClientRect().height)),
       taglineShown: Boolean(tagline && tagline.getBoundingClientRect().height > 0), gallery: Boolean(document.getElementById('card-gallery')), pageScroll: document.scrollingElement.scrollHeight - innerHeight };
   })()`);
-  check('menu: one card per listed game, the gallery is not listed', menuFacts.count === menuFacts.listed && !menuFacts.gallery, menuFacts);
+  check('menu: one card per registered entry, the gallery among them', menuFacts.count === menuFacts.listed && menuFacts.gallery, menuFacts);
   check('menu: every card shows its tagline and is at least 44px tall', menuFacts.taglineShown && menuFacts.shortest >= MIN_HIT_PX, menuFacts);
   check('menu: the page itself does not scroll (one screen)', menuFacts.pageScroll <= 0, menuFacts.pageScroll);
   await page.fill('#menu-search', 'zzzz-no-such-game');

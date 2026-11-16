@@ -245,7 +245,7 @@
     { id: 'bulwark', sides: 4, size: 0.9, hp: 12, speed: 1.6, touch: 8, xp: 4, color: 0x7fb2ff, from: 40, weight: 1, frontArmor: 0.25, stretch: 0.6 },
     { id: 'lancer', sides: 3, size: 0.7, hp: 6, speed: 2.6, touch: 9, xp: 3, color: 0xff9a3d, from: 46, weight: 1.2, stretch: 1.7, behavior: 'charge', charge: CHARGE.lancer },
     { id: 'wisp', sides: 10, size: 0.4, hp: 3, speed: 3.6, touch: 3, xp: 2, color: 0xe8fbff, from: 54, weight: 1.5, spin: 3, isBladeImmune: true, steer: path.scale(path.lissajous(0, 3.4), 0, 1.1) },
-    { id: 'warden', sides: 8, size: 2.6, hp: 230, speed: 1.5, touch: 14, xp: 40, color: 0xff3355, from: 0, weight: 0, spin: 0.5, isHeavy: true, isBoss: true, behavior: 'boss', charge: CHARGE.warden, knockbackScale: 0.08 },
+    { id: 'warden', sides: 8, size: 2.6, hp: 320, speed: 1.5, touch: 14, xp: 40, color: 0xff3355, from: 0, weight: 0, spin: 0.5, isHeavy: true, isBoss: true, behavior: 'boss', charge: CHARGE.warden, knockbackScale: 0.08 },
   ]);
 
   /**
@@ -366,6 +366,7 @@
    * @property {string} name
    * @property {string} desc
    * @property {number} hpScale       on every enemy's hit points
+   * @property {number} xpScale       on every gem: tougher enemies pay more, so a higher tier does not starve the build of levels
    * @property {number} speedScale    on every enemy's speed
    * @property {number} touchScale    on contact and blast damage
    * @property {number} affixCount    affixes each elite carries
@@ -375,10 +376,10 @@
 
   /** @type {Tier[]} */
   const TIERS = Kit.table([
-    { id: 'tier1', rank: 1, name: 'Threat I', desc: 'Plain elites. One warden.', hpScale: 1, speedScale: 1, touchScale: 1, affixCount: 0, levelHealScale: 1, bossCount: 1 },
-    { id: 'tier2', rank: 2, name: 'Threat II', desc: 'Elites carry an affix. Tougher swarm.', hpScale: 1.4, speedScale: 1.1, touchScale: 1.15, affixCount: 1, levelHealScale: 1, bossCount: 1 },
-    { id: 'tier3', rank: 3, name: 'Threat III', desc: 'Two affixes. Level-ups heal half.', hpScale: 1.9, speedScale: 1.2, touchScale: 1.3, affixCount: 2, levelHealScale: 0.5, bossCount: 1 },
-    { id: 'tier4', rank: 4, name: 'Threat IV', desc: 'Two wardens. Level-ups do not heal.', hpScale: 2.5, speedScale: 1.3, touchScale: 1.5, affixCount: 2, levelHealScale: 0, bossCount: 2 },
+    { id: 'tier1', rank: 1, name: 'Threat I', desc: 'Plain elites. One warden.', hpScale: 1, xpScale: 1, speedScale: 1, touchScale: 1, affixCount: 0, levelHealScale: 1, bossCount: 1 },
+    { id: 'tier2', rank: 2, name: 'Threat II', desc: 'Elites carry an affix. Tougher swarm.', hpScale: 1.4, xpScale: 1.3, speedScale: 1.1, touchScale: 1.15, affixCount: 1, levelHealScale: 1, bossCount: 1 },
+    { id: 'tier3', rank: 3, name: 'Threat III', desc: 'Two affixes. Level-ups heal half.', hpScale: 1.9, xpScale: 1.7, speedScale: 1.16, touchScale: 1.3, affixCount: 2, levelHealScale: 0.5, bossCount: 1 },
+    { id: 'tier4', rank: 4, name: 'Threat IV', desc: 'Two wardens. Level-ups do not heal.', hpScale: 2.3, xpScale: 2, speedScale: 1.24, touchScale: 1.5, affixCount: 2, levelHealScale: 0, bossCount: 2 },
   ]);
 
   /**
@@ -390,10 +391,10 @@
     { id: 'close-calls', text: 'Graze 250 enemies', stat: 'grazes', target: 250, unlocks: 'capacitor', reward: 'Capacitor joins the upgrade pool' },
     { id: 'hunter', text: 'Destroy 10 elites', stat: 'elites', target: 10, unlocks: 'anvil', reward: 'New ship: Anvil' },
     { id: 'veteran', text: 'Reach level 12 in one run', stat: 'bestLevel', target: 12, unlocks: 'rift', reward: 'New arena: Collapse' },
-    { id: 'collector', text: 'Collect 3000 gems', stat: 'gems', target: 3000, unlocks: 'mines', reward: 'Wake Mines join the upgrade pool' },
+    { id: 'collector', text: 'Collect 6000 gems', stat: 'gems', target: 6000, unlocks: 'mines', reward: 'Wake Mines join the upgrade pool' },
     { id: 'warden-down', text: 'Defeat a warden', stat: 'bosses', target: 1, unlocks: 'prism', reward: 'New ship: Prism' },
     { id: 'evolved', text: 'Evolve a weapon', stat: 'evolutions', target: 1, unlocks: 'reactor', reward: 'Glass Reactor joins the upgrade pool' },
-    { id: 'surge', text: 'Clear Threat II', stat: 'tier', target: 2, unlocks: 'gauntlet', reward: 'New arena: Surge' },
+    { id: 'surge', text: 'Clear Threat III', stat: 'tier', target: 3, unlocks: 'gauntlet', reward: 'New arena: Surge' },
     { id: 'breaker', text: 'Destroy 5000 enemies', stat: 'kills', target: 5000, reward: 'Trophy' },
     { id: 'ace', text: 'Clear Threat IV', stat: 'tier', target: 4, reward: 'Trophy' },
   ];

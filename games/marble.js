@@ -65,7 +65,7 @@
     gateOpenScale: 0.15, // an open gate's bar retracts to this fraction of its length
     carryLift: 0.7, // how far a carried part floats in front of the board
     pulseScale: 1.22, // squash applied to a part when a marble touches it
-    jarCapacity: 12, // marbles shown in the HUD jar before it is emptied
+    jarCapacity: 8, // marbles shown in the HUD jar (two rows above its paper label) before it is emptied
   };
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -238,7 +238,7 @@
       '--label-spacing': '0.04em',
       '--floater': '#fff4dc',
     },
-    layout: { stats: 'top-right', actions: 'bottom-right' },
+    layout: { stats: 'top-right', actions: 'bottom' },
     components: {
       // The score is a glass jar that fills with the marbles that landed; every other stat is a painted wooden tag.
       stat: ({ label, value, h }) => {
@@ -253,13 +253,13 @@
     css: `
       & #stats { align-items: flex-start; }
       & .stat { transform: rotate(1.5deg); letter-spacing: 0.02em; }
-      & .stat.jar { transform: none; background: none; border: 0; box-shadow: none; padding: 0; min-width: 0; align-items: center; gap: 0; }
+      & .stat.jar { position: relative; transform: none; background: none; border: 0; box-shadow: none; padding: 0; min-width: 0; align-items: center; gap: 0; }
       & .jar-lid { width: 34px; height: 7px; border-radius: 3px 3px 0 0; background: #d9482b; box-shadow: inset 0 -2px 0 #8f2a16; }
-      & .jar-glass { width: 46px; height: 42px; border: 2px solid rgba(255, 255, 255, 0.75); border-radius: 5px 5px 13px 13px; background: linear-gradient(90deg, rgba(255,255,255,0.32), rgba(190,225,255,0.12) 40%, rgba(255,255,255,0.2)); display: flex; align-items: flex-end; padding: 2px; }
+      & .jar-glass { width: 46px; height: 42px; border: 2px solid rgba(255, 255, 255, 0.75); border-radius: 5px 5px 13px 13px; background: linear-gradient(90deg, rgba(255,255,255,0.32), rgba(190,225,255,0.12) 40%, rgba(255,255,255,0.2)); display: flex; align-items: flex-end; padding: 2px 2px 19px; }
       & .jar-marbles { display: flex; flex-wrap: wrap-reverse; gap: 1px; justify-content: center; width: 100%; }
       & .jar-marbles i { width: 9px; height: 9px; border-radius: 50%; box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.22), inset 1px 1px 0 rgba(255, 255, 255, 0.6); animation: jar-drop 0.3s cubic-bezier(.3, 1.6, .5, 1); }
       @keyframes jar-drop { from { transform: translateY(-34px); } }
-      & .stat.jar b { margin-top: 3px; padding: 0 8px; border-radius: 4px; background: #fff4dc; color: #4a2f17; font-size: 17px; box-shadow: 0 2px 0 rgba(46, 28, 12, 0.3); }
+      & .stat.jar b { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); padding: 0 6px; border-radius: 3px; background: #fff4dc; color: #4a2f17; font-size: 14px; line-height: 15px; }
       & .chip { font-family: var(--display); font-weight: 400; letter-spacing: 0.03em; }
       & .checklist { position: absolute; left: 0; top: -26px; max-width: 58%; padding: 7px 11px; gap: 3px; background: #33413a; color: #f4efe0; border: 5px solid #a8743c; border-radius: 4px; box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.45), 0 3px 0 #7d5425; font: 15px/1.1 var(--chalk); }
       & .checklist .done, & .checklist div:not(.done) ~ div:not(.done) ~ div:not(.done) { display: none; }
@@ -271,7 +271,7 @@
       & .tune-card::before { content: ''; position: absolute; top: -5px; width: 9px; height: 9px; border-radius: 50%; background: #d9482b; box-shadow: 0 1px 0 #8f2a16; }
       & .tune-card div { display: flex; gap: 4px; }
       & .tune-card i { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 400 11px var(--display); color: #fff; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2); }
-      & .action { flex: 0 1 auto; min-width: 0; padding: 7px 11px 5px; border-color: var(--line); }
+      & .action { padding: 7px 4px 5px; border-color: var(--line); }
       & .action b { font: 400 16px var(--display); letter-spacing: 0.03em; white-space: nowrap; }
       & .action span:empty { display: none; }
       & .hint { left: 128px; top: 44px; bottom: auto; box-sizing: border-box; max-width: 140px; padding: 6px 10px; background: #fff4dc; border: 0; border-radius: 3px; font: 14px/1.1 var(--chalk); color: #4a2f17; }

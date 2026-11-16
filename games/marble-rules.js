@@ -67,7 +67,15 @@
   const WALL = { thickness: 0.3, height: 2 * HALF_HEIGHT + 3 };
 
   /** Strengths of the parts that change a marble's velocity (units per second, for a marble of impulseScale 1). */
-  const FORCES = { bumperKick: 8, boosterSpeed: 10, splitterPush: 3.2, splitterHop: 2.2, spinnerRate: 2.6 };
+  const FORCES = {
+    bumperKick: 8,
+    boosterSpeed: 10,
+    splitterPush: 3.2,
+    splitterHop: 2.2,
+    // Half a turn per hopper drop: a four-armed spinner then shows every marble on the beat the same face, so a
+    // contraption with a spinner is repeatable, and a marble tapped in off the beat meets it differently.
+    spinnerRate: Math.PI / TUNING.dropInterval,
+  };
 
   /**
    * @typedef {Object} MarbleKind
@@ -175,9 +183,9 @@
     { id: 'skip', name: 'Skipping stone', degrees: [1, 3, 5], bonus: 40 },
     { id: 'return', name: 'There and back', degrees: [1, 3, 2], bonus: 50 },
     { id: 'lullaby', name: 'Workshop lullaby', degrees: [1, 2, 4, 5], bonus: 80 },
-    { id: 'reel', name: 'Tinker reel', degrees: [2, 4, 3, 5], bonus: 100 },
-    { id: 'cascade', name: 'Cascade', degrees: [1, 3, 5, 4, 2], bonus: 150 },
-    { id: 'march', name: 'Marble march', degrees: [2, 3, 5, 6, 4], bonus: 200 },
+    { id: 'reel', name: 'Tinker reel', degrees: [1, 2, 4, 3], bonus: 100 },
+    { id: 'cascade', name: 'Cascade', degrees: [1, 3, 2, 0, 0], bonus: 150 },
+    { id: 'march', name: 'Marble march', degrees: [1, 2, 5, 5, 6], bonus: 200 },
   ];
 
   /**
@@ -211,14 +219,14 @@
   /** @type {BoardRow[]} */
   const BOARDS = [
     { id: 'drop', name: 'First drop', bench: 'basics', brief: 'Land 3 marbles in a row', pattern: ['glass'], fixed: [], tray: ['ramp', 'bell'], budget: 3, par: 1, streak: 3, needs: {} },
-    { id: 'chimes', name: 'Two chimes', bench: 'basics', brief: 'Land 3 in a row, each ringing 2 bells', pattern: ['glass'], fixed: [], tray: ['ramp', 'bell', 'bumper'], budget: 5, par: 3, streak: 3, needs: { bells: 2 } },
-    { id: 'detour', name: 'The long way', bench: 'basics', brief: 'Land 3 in a row past the shelf, each touching 3 kinds of part', pattern: ['glass'], fixed: [fixedPiece(1, 'ramp', 4, 5, 4), fixedPiece(2, 'ramp', 5, 5, 4)], tray: ['ramp', 'bell', 'bumper'], budget: 7, par: 5, streak: 3, needs: { chain: 3 } },
-    { id: 'freight', name: 'Mixed freight', bench: 'motion', brief: 'Glass and steel take turns. Land 4 in a row, each off a bumper', pattern: ['glass', 'steel'], fixed: [], tray: ['ramp', 'bell', 'bumper', 'funnel'], budget: 7, par: 3, streak: 4, needs: { touch: ['bumper'] } },
-    { id: 'whirl', name: 'Whirligig', bench: 'motion', brief: 'Land 3 in a row, each through the spinner', pattern: ['glass'], fixed: [fixedPiece(1, 'spinner', 3, 3, 0)], tray: ['ramp', 'bell', 'funnel', 'booster'], budget: 7, par: 4, streak: 3, needs: { touch: ['spinner'] } },
-    { id: 'sorter', name: 'Sorting office', bench: 'motion', brief: 'Steel in the bucket, glass anywhere else: 6 in a row', pattern: ['glass', 'steel'], fixed: [], tray: ['ramp', 'bumper', 'funnel', 'booster'], budget: 7, par: 4, streak: 6, needs: { land: ['steel'] } },
-    { id: 'doorbell', name: 'Doorbell', bench: 'logic', brief: 'A shelf covers the bucket and its gate is shut. Land 3 in a row', pattern: ['glass'], fixed: [fixedPiece(1, 'ramp', 3, 7, 4), fixedPiece(2, 'gate', 4, 7, 0), fixedPiece(3, 'gate', 5, 7, 0), fixedPiece(4, 'ramp', 6, 7, 4)], tray: ['ramp', 'bell', 'bumper', 'funnel'], budget: 6, par: 3, streak: 3, needs: {} },
-    { id: 'third', name: 'Every third', bench: 'logic', brief: 'Only every third marble may land: 6 in a row', pattern: ['glass'], fixed: [], tray: ['ramp', 'bumper', 'funnel', 'gate', 'counter'], budget: 8, par: 5, streak: 6, needs: { landEvery: 3 } },
-    { id: 'bounce', name: 'Rubber room', bench: 'logic', brief: 'Rubber and steel take turns. Land 4 in a row, each touching 3 kinds of part', pattern: ['rubber', 'steel'], fixed: [], tray: ['ramp', 'funnel', 'gate', 'counter', 'splitter'], budget: 8, par: 5, streak: 4, needs: { chain: 3 } },
+    { id: 'chimes', name: 'Two chimes', bench: 'basics', brief: 'Land 3 in a row, each ringing 2 bells', pattern: ['glass'], fixed: [], tray: ['ramp', 'bell', 'bumper'], budget: 4, par: 2, streak: 3, needs: { bells: 2 } },
+    { id: 'detour', name: 'The long way', bench: 'basics', brief: 'Land 3 in a row past the shelf, each touching 3 kinds of part', pattern: ['glass'], fixed: [fixedPiece(1, 'ramp', 4, 5, 4), fixedPiece(2, 'ramp', 5, 5, 4)], tray: ['ramp', 'bell', 'bumper'], budget: 6, par: 4, streak: 3, needs: { chain: 3 } },
+    { id: 'freight', name: 'Mixed freight', bench: 'motion', brief: 'Glass and steel take turns. Land 4 in a row, each off a bumper', pattern: ['glass', 'steel'], fixed: [], tray: ['ramp', 'bell', 'bumper', 'funnel'], budget: 8, par: 7, streak: 4, needs: { touch: ['bumper'] } },
+    { id: 'whirl', name: 'Whirligig', bench: 'motion', brief: 'Land 3 in a row, each through the spinner', pattern: ['glass'], fixed: [fixedPiece(1, 'spinner', 3, 3, 0)], tray: ['ramp', 'bell', 'funnel', 'booster'], budget: 6, par: 3, streak: 3, needs: { touch: ['spinner'] } },
+    { id: 'sorter', name: 'Sorting office', bench: 'motion', brief: 'Steel in the bucket, glass anywhere else: 6 in a row', pattern: ['glass', 'steel'], fixed: [], tray: ['ramp', 'bumper', 'funnel', 'booster'], budget: 6, par: 3, streak: 6, needs: { land: ['steel'] } },
+    { id: 'doorbell', name: 'Doorbell', bench: 'logic', brief: 'A shelf covers the bucket and its gate is shut. Land 3 in a row', pattern: ['glass'], fixed: [fixedPiece(1, 'ramp', 3, 7, 4), fixedPiece(2, 'gate', 4, 7, 0), fixedPiece(3, 'gate', 5, 7, 0), fixedPiece(4, 'ramp', 6, 7, 4)], tray: ['ramp', 'bell', 'bumper', 'funnel'], budget: 5, par: 2, streak: 3, needs: {} },
+    { id: 'third', name: 'Every third', bench: 'logic', brief: 'Only every third marble may land: 6 in a row', pattern: ['glass'], fixed: [], tray: ['ramp', 'bumper', 'funnel', 'gate', 'counter'], budget: 8, par: 7, streak: 6, needs: { landEvery: 3 } },
+    { id: 'bounce', name: 'Rubber room', bench: 'logic', brief: 'Rubber and steel take turns. Land 4 in a row, each touching 3 kinds of part', pattern: ['rubber', 'steel'], fixed: [], tray: ['ramp', 'funnel', 'gate', 'counter', 'splitter'], budget: 9, par: 8, streak: 4, needs: { chain: 3 } },
   ];
 
   /**
@@ -504,10 +512,12 @@
     const partsById = new Map();
     const marbleByBody = new Map();
     const pendingTouches = [];
-    const pendingEvents = []; // drops asked for between steps (the hopper's rhythm and the player's taps) are reported by the next step
+    const pendingEvents = []; // everything that happened since the last step() call, in order
     let hopperPattern = pattern;
+    // The clock counts whole physics steps, so the hopper's beat and the spinners' turning never drift apart.
+    let stepCount = 0;
     let time = 0;
-    let sinceDrop = TUNING.dropInterval; // the first marble drops at once, so the board is never silent on arrival
+    let lastDropStep = -Infinity; // the first marble drops on the first step, so the board is never silent on arrival
     let dropCount = 0;
 
     const asPart = (body) => surfaces.scenery(layers.assign(body, 'part', ['marble']));
@@ -530,7 +540,8 @@
       const row = PART_TABLE.byId(piece.kind);
       const pose = row.poses[piece.pose];
       const centre = cellCentre(piece);
-      const body = asPart(Kit.physics.compound(phys, null, toColliders(row), { at: [centre.x, centre.y, 0], angle: pose.angle * DEGREES, spin: pose.spin || 0 }));
+      // A turning part starts where it would be had it turned since the clock began, so when it was placed does not matter.
+      const body = asPart(Kit.physics.compound(phys, null, toColliders(row), { at: [centre.x, centre.y, 0], angle: pose.angle * DEGREES + (pose.spin || 0) * time, spin: pose.spin || 0 }));
       if (row.isSensor) Kit.physics.sensor(body);
       const part = { piece, row, body, side: 1, count: 0, lastCounted: 0, pulsedUntil: -Infinity, isOpen: false, targets: [] };
       // Contacts are only queued here: changing velocities or teleporting mid-step would fight the solver.
@@ -594,18 +605,22 @@
       return [{ type: fate, marble, outcome: { fate, kind: marble.kind.id, ordinal: marble.id, kinds: [...marble.kinds], notes: marble.notes.slice() } }];
     };
 
+    // Everything that reacts to contacts runs once per physics step, not once per frame: a frame may hold several
+    // steps on a slow phone, and a bumper kick applied two steps late sends the marble somewhere else. Doing it here
+    // makes a contraption behave the same at 20 fps as at 60 (scratch/marble/prove.js checks exactly that).
+    phys.world.addEventListener('postStep', () => {
+      stepCount += 1;
+      time = stepCount * phys.world.dt;
+      // When the board is full the beat is missed and the next marble drops the moment there is room.
+      const isDropDue = stepCount - lastDropStep >= Math.round(TUNING.dropInterval / phys.world.dt);
+      if (isDropDue && dropMarble()) lastDropStep = stepCount;
+      pendingEvents.push(...pendingTouches.splice(0).flatMap(resolveTouch), ...[...partsById.values()].filter((part) => part.row.id === 'gate').flatMap(refreshGate));
+    });
+
     const step = (dt) => {
-      time += dt;
-      sinceDrop += dt;
-      // When the board is full the timer keeps running, so the next marble drops the moment there is room.
-      if (sinceDrop >= TUNING.dropInterval && dropMarble()) sinceDrop = 0;
       phys.step(dt);
-      return [
-        ...pendingEvents.splice(0),
-        ...pendingTouches.splice(0).flatMap(resolveTouch),
-        ...[...partsById.values()].filter((part) => part.row.id === 'gate').flatMap(refreshGate),
-        ...[...marbleByBody.values()].flatMap((marble) => settleMarble(marble, dt)),
-      ];
+      // Fates are judged per frame: a marble below the bucket floor touches nothing, so a frame's delay changes no outcome.
+      return [...pendingEvents.splice(0), ...[...marbleByBody.values()].flatMap((marble) => settleMarble(marble, dt))];
     };
 
     setLayout(initialLayout);

@@ -167,7 +167,7 @@
   .card em { font-style: normal; font-size: 11px; color: var(--c); letter-spacing: .04em; }
   #menu footer { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--dim); font-size: 12px; }
   #menu footer div { display: flex; gap: 16px; }
-  #menu footer button { min-height: 44px; text-decoration: underline; text-underline-offset: 3px; }
+  #menu footer button { min-height: 44px; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
   /* A phone on its side has no height to spare: title and footer move beside the list. */
   @media (orientation: landscape) and (max-height: 520px) {
     #menu { display: grid; grid-template-columns: minmax(200px, 34%) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; column-gap: 20px; row-gap: 4px; }

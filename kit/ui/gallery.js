@@ -6,8 +6,8 @@
  *        pane really moved under a finger (useful on a real phone, where the automated touch test cannot go).
  * Does not own: the components (the files beside this one). A new component is added here in the same change.
  *
- * It is registered as a hidden game, so the shell gives it a HUD, a back button and clean-up, and
- * `bun tools/smoke.js gallery` plays it like any other.
+ * It is registered like a game (last on the menu), so the shell gives it a HUD, a back button and clean-up, and
+ * `bun tools/smoke.js gallery` and the play tools reach it like any other.
  */
 (() => {
   if (!Kit.ui.html) return;
@@ -246,7 +246,8 @@
     id: 'gallery',
     name: 'Components',
     tagline: 'Every clikit component in every state',
-    hidden: true,
+    hook: 'Switch skins; judge every state',
+    color: '#9aa6cf',
     order: 999,
     theme: { skin: 'glass' },
     create(ctx) {

@@ -206,199 +206,61 @@ machine at load 20 to 40, so only the ratios mean anything.
   gates" evaluated in two passes. **Chosen:** two passes. Opening a gate only lets light travel further, so the result
   of the second pass is stable. Revisit if a rule is added where light can remove light.
 
-## UI components: Preact + htm + signals on native HTML (proposed; the UI lead confirms or overturns by spike)
+## UI components: Preact + htm + signals on native HTML (confirmed by spike; implemented in `kit/ui/`)
 
-- **Problem.** The HUD is hand-built DOM with a hyperscript helper. There is no component library, no proper scroll
-  pane, and state is pushed into elements by hand. The menu failed to scroll on a phone and nobody could say why.
-- **Options.**
-  - Keep hand-built DOM (`ui.h`): no dependency; every view re-implements updating, focus and scrolling. What we have.
-  - Web Components (custom elements, optionally Lit, about 6 KB): native, encapsulated, framework-free to consume;
-    shadow DOM complicates per-game theming beyond tokens, and state plumbing is still manual without Lit.
-  - Preact + htm + @preact/signals (about 5 KB together, UMD builds on the allowed CDNs): declarative components,
-    no build step (tagged templates), JSX later via `bun build` with no rewrite; signals update only the node that
-    reads them, so a HUD bound to a model costs O(changed values) per update rather than a re-render.
-  - React or Vue: far larger, need a build step, more than a HUD needs.
-  - Svelte or Solid: excellent output, but compile-only, which the loose-file page cannot use today.
-- **Proposed.** Preact + htm + signals for composition and state; native elements for behaviour (`overflow` scrolling
-  with `overscroll-behavior` and scroll snap, `<dialog>`, popover, `<details>`, `<meter>` / `<progress>`, container
-  queries, view transitions); theme tokens unchanged; existing `ctx.ui.*` calls kept as wrappers.
-- **Revisit if.** The spike shows a CSP or load problem on the hosted page, signals fight the game loop, or the
-  wrappers cannot keep the current calls working.
+- **Problem.** The HUD was hand-built DOM with a hyperscript helper: no component library, no proper scroll pane,
+  state pushed into elements by hand. The menu was reported not to scroll on a phone and nobody could say why.
+- **Options, and what the spike found** (`scratch/ui/spike.js`: a 12-stat HUD, every value set each frame, two of
+  them changing; headless Chromium on the loaded shared machine, so compare the ratios, not the absolutes).
 
-## Ferry Lines: how a drawn stroke becomes a route (`Kit.route.capture`)
+  | Option | Cost per frame | Weight (gzip) | Hosted page | Theming and today's calls |
+  |---|---|---|---|---|
+  | Hand-built DOM (`ui.h`, what we had) | 67 us (reads `textContent` back to compare) | 0 | fine | fine, but every view re-implements updating, focus and scrolling |
+  | Preact + htm + signals | 3.4 us (a signal writes one text node) | 9.9 KB in five UMD files | all five are classic scripts on cdnjs / jsDelivr, no eval | plain light DOM: tokens and scoped game CSS reach it |
+  | Preact, re-render each frame (no signals) | 185 us | 6.3 KB | same | same |
+  | Web Components (light-DOM custom elements) | 17 us (attribute in, text out) | 0 | fine | shadow DOM would block `theme.css`; light DOM works but state plumbing and templating stay manual |
+  | Lit | not measured | about 6 KB | **cannot load**: `lit@3` on npm is ES modules with bare imports, no classic-script build on the allowed hosts, and a module script would run after `kit/shell.js` | - |
+  | React, Vue; Svelte, Solid | not measured | far larger; or compile-only | need a build step the loose-file page does not have | - |
 
-- **Options.** Clean the whole stroke at once, then look for docks near the result (simplest; but corner smoothing
-  pulls the line off any dock drawn through at a bend, so hub lines silently lost stops: the pacing bots failed 768
-  of their hub strokes this way). Skip smoothing (stops stay exact; routes look jagged and boats turn sharply). Pin
-  the stroke to every anchor it passes, clean each section between two anchors on its own, join the sections.
-- **Chosen.** Pin and clean per section: O(points x anchors) time, O(points) space, stops lie exactly on the joints
-  by construction. Covered by a test with a control case showing the whole-stroke clean drifting off the dock.
-- **Revisit if.** Strokes get long enough (thousands of points) or anchors numerous enough for the product to matter.
+- **Decision.** Preact 10.24.3 + htm 3.1.1 + @preact/signals 1.3.0 for composition and state; native elements for
+  behaviour (overflow scrolling with `overscroll-behavior` and scroll snap, `<dialog>` with `showModal()`, the
+  popover API, native inputs, container queries). A component is a function from props to an `html` template; any
+  prop may be a signal; `Kit.ui.bind(model, select)` turns a Kit model into one.
+- **What it costs.** Five script tags (and vendor copies plus URL swaps in `tools/smoke.js` and
+  `tools/dev/browser.js`); the page now depends on a CDN for its menu, so `kit/ui/core.js` degrades: without the
+  libraries it warns once and the shell-built menu and the whole legacy HUD still work.
+- **JSX later.** htm templates and JSX both compile to the same `h(Component, props, children)` calls, so
+  `bun build --jsx-factory=h` can be offered for component files without touching a component that exists.
+- **Today's `ctx.ui.*` calls are kept as they are, not re-rendered through Preact.** Their markup is a contract
+  (ten game themes style `.stat`, `.action`, `#modal .modal-card`, `.sheet-body`; `theme.components` hands live
+  elements to games; tools read `#stats > *`), and mounting each through its own Preact root would have added a
+  wrapper element between `#stats` and `.stat`. So `kit/ui.js` is the compatibility layer: same calls and markup,
+  with the modal host now a native `<dialog>`, `ui.panel`'s body the kit's scroll pane, `stat.set` comparing against
+  a cached string (the spike's 67 us), and `ui.mount` / `ui.dialog` / `ui.html` opening the library to games.
+- **Revisit if.** The hosted page blocks one of the five files (then inline them: 23 KB raw), or a game needs
+  hundreds of bound values per frame (measure before assuming).
 
-## Ferry Lines: right of way and berths without a spatial index
+## The menu "would not scroll on a phone": not reproduced; the first reproduction was the instrument
 
-- **Options.** All-pairs check each step, O(boats squared). Spatial hash, O(boats) per step but more code and state.
-- **Chosen.** All-pairs: a fleet is at most five boats (25 distance checks a step), far below where a hash pays.
-- **Revisit if.** Several boats per route or fleets beyond a few dozen are added.
-
-## Ferry Lines: proving pacing
-
-- **Options.** Assert the pacing from the tables (cheap, and wrong: the first tables unlocked everything in ten
-  minutes and killed every bot at two minutes whatever it did). Scripted browser bots (real input path; minutes per
-  watch on the shared machine). Headless bots on the pure simulation (`scratch/ferry/pacing.js`: three hours of play
-  for two careers of four bots in about 25 seconds).
-- **Chosen.** Headless bots, with the game's rules, shipyard and record shared between page and script
-  (`games/ferry-sim.js`) so the proof runs the shipped code. A shared simulator in `tools/` is the next step once a
-  second game needs one.
-
-## Core Miner: where the economy lives and how its pacing is proved
-
-- **Options.** Rules inside the game's `create(ctx)` closure (what it was: untestable, unsimulable). Closed-form
-  expected-value maths for the curve (fast; cannot see heat, overheating, forks or stalls, which are the game).
-  A pure rules module driven tap by tap by bots (`games/miner-rules.js` + `scratch/miner/sim.js`).
-- **Chosen.** The pure module: `createModel` wires the kit models once, the page and the script both call it, and the
-  script plays every tap. Cost: O(hours x 36,000) ticks, each O(upgrades); 8 hours for 4 bots runs in about a
-  minute. It paid for itself on the first run: the first tables reached depth 50 in 8 minutes and finished the tree
-  inside an hour.
-- **Revisit if.** `make sim` lands: the bots and report should move onto it and only the policies stay here.
-
-## Core Miner: gear as Kit.inventory items, kept through a collapse
-
-- **Options.** Gear as `Kit.upgrades` rows with max 1 (one currency per row, so no two-ore alloys; no slots). A
-  private owned / worn map (a fork of what the kit has). `Kit.inventory` with recipe rows as items, paid for with the
-  new `wallet.spendAll` (slots, stat feeding, saving and compare come free; `Kit.synergy` reads the worn items' tags).
-- **Chosen.** `Kit.inventory`. Gear and chunks survive a collapse: the simulation showed that with a reset the forge
-  was never used (a run lasts minutes, a recipe takes dozens of ores), and kept gear makes the loadout a decision at
-  every fork.
-- **Revisit if.** Gear should come in rolled rarities (then `Kit.loot` generates the items instead of a table).
-
-## Lint: Biome for generic rules, a small custom lint for project rules; format not enforced yet
-
-- **Options.** Biome 2.6.8 (one binary, lint + format). ESLint 10 + Prettier (largest rule set; two tools, slower
-  start, more config; not measured here because Biome already covered the generic rules). The regex-and-tokenizer
-  lint alone (no install; cannot see scopes, so no unused or undeclared names).
-- **Measured.** Biome lints all 74 files in 0.55-0.63 s. With the recommended set it found real defects the custom
-  lint cannot: an undeclared variable in `kit/model.js` (someone's edit in flight), four uses before declaration in
-  `kit/puzzle.js`, a shadowed `valueOf`, 13 accumulating spreads (accidental O(n^2)). Its `noMagicNumbers` raised
-  2,491 warnings (it flags every literal, table rows included) against about 215 from the custom "used more than
-  once and unnamed" rule; it has no rule for file headers, JSDoc on `Kit.*` exports, `@complexity`, single-letter
-  names, leftover notes, commented-out code, the depth plan, or the kit's own bans (raw timers, raw `THREE.Color`).
-- **Chosen.** Both, split by what each can express: Biome (`biome.json`) for scope-aware generic rules, with the
-  rules that fight this codebase's idioms or its ES2019 target switched off (optional chaining, template-only
-  strings, assignment in arrows, `forEach` callbacks that return); `tools/dev/lint.js` (about 300 lines, O(tokens)
-  per file, unit-tested) only for the project rules above. `check` fails on Biome errors and on the custom lint's
-  exact rules; heuristic rules warn.
-- **Format.** Biome's formatter would rewrite 58 of 75 files at line width 200 (74 at 120). With a dozen agents
-  editing the same files that is a merge hazard and breaks "never reformat a shared file", so it is offered per file
-  (`make format FILES=...`) and not enforced. **Revisit** when the tree is quiet: one formatting commit, then enforce.
-
-## Types: `tsc --checkJs` 5.9 as a per-file ratchet; not TypeScript 7 yet, not a TypeScript migration
-
-- **Options.** `tsc --checkJs` over the JSDoc we already write (no syntax change, no build step). Migrating to
-  TypeScript (stronger; needs a build step for a page that today has none). None.
-- **Measured.** TypeScript 7.0.2 (native) checks the tree in 0.47 s but rejects the Closure-style JSDoc types the kit
-  uses throughout (`function(number): number`, `*`): it stops at three syntax errors and checks nothing else.
-  TypeScript 5.9.3 parses them: 3.3 s, 245-307 errors across about 40 files depending on the minute, with `Kit`,
-  `THREE` and `CANNON` declared loosely (`tools/dev/types/globals.d.ts`). Many are real docstring drift.
-- **Chosen.** 5.9.3 with a baseline (`tools/dev/types-baseline.json`): `check` fails when a file has more type errors
-  than its recorded count, and a new file is allowed none, so docstrings are load-bearing for new code without
-  turning the whole tree red mid-flight. `node tools/dev.js types <file>` lists a file's errors; `--update` lowers
-  the baseline. Cost: 3 s per check, 23 MB of dev-only install.
-- **Revisit.** Move to TypeScript 7 (7x faster) once JSDoc function types are rewritten in TS syntax
-  (`(value: number) => number`), which is mechanical work for a low tier; type `Kit` itself only if the loose
-  global starts hiding real mistakes.
-
-## Unit tests: keep `tools/test-kit.js`; do not migrate to `bun test` now
-
-- **Options.** `bun test` (watch, filter, coverage). The hand-rolled runner (one file, one shared sandbox that
-  loads kit files in order, about 180 tests, appended to by every agent).
-- **Measured.** The whole suite takes 3.7 s under Bun and 5.1 s under Node on the loaded machine, so speed is not a
-  reason. A migration means rewriting every test's harness (`import { test } from 'bun:test'`, per-file sandboxes)
-  in a file a dozen agents are appending to, and `node tools/test-kit.js` would stop working for them.
-- **Chosen.** Keep it. New tool tests follow the same shape (`tools/test-dev.js`). **Revisit** when the suite is
-  slow enough to want filtering, or when the tree is quiet enough to split the file per module.
-
-## Shipping: loose files while building; minified bundle proposed for release, not implemented
-
-- **Measured.** The page loads 73 local scripts: 1.91 MB, 588 KB gzipped. Concatenated in tag order and run through
-  `bun build --minify` (0.4 s): 0.71 MB, 263 KB gzipped (63% and 55% smaller) and it parses.
-- **Not verified.** That the bundle runs: files share globals as classic scripts, and a bundler's module scope can
-  break a top-level `const` shared between a game's files. It needs a smoke run of the bundled page.
-- **Chosen for now.** Loose files (debuggable; each agent's edit is one file). **Next step,** for whoever owns
-  `tools/release.js`: bundle inside the frozen copy and smoke that copy before staging it.
-
-## Progression simulator: a four-function interface over the game's own state
-
-- **Options.** (a) Each game writes its own simulator script (what existed: one per game, different shapes, not
-  comparable). (b) A generic simulator that drives the page headlessly (uses the real game, but minutes of browser
-  time per simulated hour, and it measures the bot's reflexes rather than the economy). (c) A declarative economy
-  description (tables of costs and incomes) that a tool interprets (uniform, but cannot express a game's real
-  rules, so it would drift from them). (d) A small interface the game implements over its own pure rules.
-- **Chosen.** (d): `headless.progression = { createState, actions, apply, summary }` (AGENTS.md "Headless model").
-  The game reuses its real models (`Kit.upgrades`, `Kit.wallet`, `Kit.profile`), so the simulation cannot drift
-  from the game; policies are plain functions `(actions, random) => action`, so greedy, random and saver work on
-  every game and a custom one is a ten-line file. Cost: O(steps x actions on offer) time, O(purchases + samples)
-  memory; two simulated hours of the scaffold run in well under a second.
-- **Limits.** The curve is only as honest as the game's stand-in player (its skill is a number the game chooses).
-  Warnings are thresholds (10 minutes without anything new, 20x the dearest price in hand), not judgements of fun.
-
-## Benchmarks and frame budgets: what is trusted and what is not
-
-- **Micro-benchmarks** (`make bench`): scores are relative to a calibration loop timed in alternating rounds, with
-  the fastest sample of each kept, and each runtime has its own baseline (Bun and Node differ 2-3x in relative
-  terms). **Measured noise** on this machine with about ten browsers running: identical runs differ by up to
-  +/-100% under Bun and about +/-35% under Node. So a "SLOWER" flag (more than 50% below baseline) is advisory and
-  only a change of algorithmic size is trusted; `--strict` exists for a quiet machine.
-- **Frame budgets** (`tools/dev/budgets.js`, checked by `check`): draw calls (300), triangles (300k) and live meshes
-  (200, from the brief) are properties of the scene and the same on every machine, so they fail the check. Frame
-  time is printed but never budgeted: under software GL it was 130-570 ms a frame, which says nothing about a phone.
-
-## Play runner input: mouse by default, real touch on request
-
-- **Measured.** Chrome DevTools touch events reach the page as a real finger (touchstart, pointer events with
-  pointerType "touch"), but Chromium delivers them aligned to rendered frames: on the loaded machine a tap's
-  pointerdown and pointerup arrived 1.2 s apart, outside the 280 ms `Kit.input` allows a tap, so the tap was lost.
-  Mouse events are not frame-aligned and worked every time.
-- **Chosen.** Mouse by default; `--touch` (or `"touch": true` in a script) for scroll panes and touch-only code.
-- **Proposed to the kit steward** (not done; `kit/input.js` is theirs): time a tap from `event.timeStamp` rather
-  than `performance.now()` in the handler. That fixes the headless case and, more to the point, a real phone that
-  drops a few frames during a tap.
-
-## Tower Smash: the shot is a headless simulation; the presenter only listens
-
-- **Options.** (a) Rules inside the game file, driven by the frame loop (what the first rewrite had: nothing could be
-  checked without a browser). (b) A pure reducer over plain data, as Soulwake does (not possible: the state is a
-  cannon.js world). (c) A simulation object that owns the physics world and the rules, takes optional mesh factories
-  and emits events (`games/sling-sim.js`), with data in `games/sling-data.js`.
-- **Chosen.** (c). The same code runs in the page and in node, so `scratch/sling/solve.js` searches aims per level
-  (about 110 simulated shots per shot taken, 20 s a level) and `tools/test-kit.js` tests chains, counters and preview
-  accuracy against the real engine. Cost: collide callbacks may only schedule; `step()` applies. Memory O(blocks).
-- **Revisit if.** cannon.js is replaced (the event names are the contract; only the sim changes).
-
-## Tower Smash: aim search restarts from a snapshot of settled rubble, not by replaying shots
-
-- **Options.** Replay every earlier shot before each candidate (exact, O(shots squared x candidates) simulated shots).
-  Clone the cannon world (no supported way). Rebuild a fresh world from where the surviving blocks came to rest
-  (`sim.snapshot()` / `createSim({ startFrom })`: O(blocks) per candidate, loses sub-sleep-speed velocities).
-- **Chosen.** Snapshot. Blocks are asleep when a shot is over, so what is lost is below the sleep threshold.
-
-## Tower Smash: levels beyond the hand-made ones are generated from modules, rated, then given shots and budget
-
-- **Options.** Hand-make every level (best quality, does not scale, no endless mode). Fully random block soup
-  (unreadable towers). Modules (tower, steps, arch, crib, keg stand, shielded gem) laid side by side, dressed in the
-  world's materials by seeded chance, then a rating formula sets shots, loadout budget and chain par.
-- **Chosen.** Modules plus rating, O(modules + blocks). The rating formula is a guess checked by the solver: a grid-search
-  bot with only the heavy ball clears all 18 campaign levels, so the formula is not too stingy; whether it is too
-  generous for a human thumb is unmeasured.
-
-## Physics surfaces: pairwise `phys.surface` / `phys.contact` beside `Kit.physics.surfaces`
-
-- **Options.** `Kit.physics.surfaces(phys, rows)` in kit/bodies.js (one row per moving thing against one kind of
-  scenery: simple, enough for marbles). Pairwise named surfaces (`phys.surface(body, name)`,
-  `phys.contact(a, b, { restitution })`): any pair, needed here because a ball meets two kinds of scenery (solid and
-  bumper) and the rubber ball bounces off both differently.
-- **Chosen.** Added the pairwise primitive to kit/physics.js. The two overlap: `surfaces` could be rewritten as a few
-  `contact` calls. Left for the kit steward to merge; neither changes the other's behaviour.
+- **What was claimed.** In an emulated iPhone the menu (1175px of content in 664px, `overflow-y: auto`) ignored a
+  finger. Two mitigations shipped unverified: the menu scrolled as the document, and phones got two compact columns.
+- **What a trusted test shows.** `tools/touch-scroll.js` sends a real touch sequence (CDP `Input.dispatchTouchEvent`)
+  and first proves itself on four control pages (`--self-test`: an `overflow: auto` box scrolls 279px; `overflow:
+  hidden`, `touch-action: none` and a `preventDefault` on touchmove each move 0px). Run against the layout as it
+  was when the failure was reported (`scratch/ui/root-cause.js`, iPhone 13 emulation), the menu **scrolled 225px
+  under a 240px drag**, and did so in every variant tried: the host's safe-area shell, with and without the WebGL
+  canvas, backdrop filters, `touch-action`, `overscroll-behavior`. The earlier "repro" was its swipe simulation
+  (`Input.synthesizeScrollGesture`) failing, not the page.
+- **So the cause on the owner's phone is still unknown**, and cannot be found from this machine: it is specific to a
+  real device or to the host's frame (the leading suspects are a WebKit quirk with a `position: fixed` flex
+  container that is itself the scroller, and the cost of twelve `backdrop-filter` cards over a live WebGL canvas).
+- **What was done instead of guessing.** The mitigations are gone (document scrolling broke the one-screen layout
+  and used `100vh`, which ignores the host's safe-area padding; the compact cards hid every tagline). The menu list
+  is now the kit's `ScrollPane`: a plain block scroller inside a fixed-height column, no blur inside it, nothing
+  listening to touch events, `overscroll-behavior: contain`. `bun tools/smoke.js menu` drags it with a finger on
+  every run, and the component gallery shows a live "Scrolled Npx" readout so one look on the real phone settles it.
+- **Revisit if.** The owner's phone still cannot scroll the menu: open Components from the menu footer and report
+  whether the readout moves; that separates "no pane scrolls on this device" from "the menu's frame is at fault".
 
 ## Open, for whoever picks them up (record the outcome here)
 
@@ -418,3 +280,36 @@ machine at load 20 to 40, so only the ratios mean anything.
   append-only shared files, handled by keeping those edits small.
 - **Follow-up this enables:** one test file per module and script tags generated from the directory
   listing (`make tags FIX=1`) would remove most of the remaining conflicts.
+
+## Swarm Arena: neighbour queries through `Kit.spatialHash`, although all-pairs is faster at its crowd size
+
+- **Options.** All pairs per frame (separation, shots against enemies, blades, blasts: O(n squared) and O(shots x n),
+  no memory, no code). `Kit.spatialHash` (kit/hash.js: O(n) to file, O(cells + k) per query, visitor-based so a
+  query allocates nothing). `Kit.crowd.buckets` (kit/crowd.js, written by another agent at the same time: same
+  idea, but `near` returns a new array per query and `fill` drops its buckets each frame). A dense grid over the
+  bounded arena (typed arrays, no Map lookups; fastest, but fixed bounds and more code).
+- **Measured** (scratch/arena/simulate.js bench, one separation pass, shared machine, microseconds per frame):
+  110 bodies: all pairs 20, spatialHash 75, crowd.buckets 105. 400 bodies: 150 / 194 / 456. 1600 bodies:
+  3018 / 1143 / 1461. So at the game's cap of 120 enemies the hash is about 55 microseconds a frame SLOWER than
+  all pairs for separation; it breaks even near 500 bodies and wins 2.6x at 1600. A whole simulated frame (every
+  system, about 100 enemies) costs about 120 microseconds in Bun.
+- **Chosen.** The hash, because the owner asked for it, because seven different queries (separation, nearest
+  target, shots, blades, pulse and nova, mines, dash ram) share one structure and one padding rule, and because the
+  cost at today's cap is under half a percent of a 16 ms frame while the cap can now rise without a rewrite.
+  It is not an optimisation at 120 bodies and must not be reported as one.
+- **Revisit if.** The enemy cap stays at 120 and a phone profile shows simulation time matters: all pairs for
+  separation alone would win back the 55 microseconds. Or if the cap rises past about 500: then the dense grid is
+  the next brick.
+- **Open: two spatial hashes in the kit.** `Kit.spatialHash` and `Kit.crowd.buckets` were written in parallel.
+  Proposal for the kit steward: keep `Kit.spatialHash` as the primitive and make `Kit.crowd.buckets` a thin wrapper
+  (`fill` = clear + insert, `near` = query into an array), so there is one implementation.
+
+## Swarm Arena: build depth from four kit rules, not a bespoke system
+
+- **Options.** A hand-written build system inside the game (slots, exclusions and evolutions as game code). Three
+  small gates on `Kit.upgrades` rows (`slot` with `options.slots`, `excludes`, `requiresMax`) plus `Kit.synergy`
+  for tag sets and `Kit.profile` for the long arc.
+- **Chosen.** The kit gates: each is a few lines, off unless a row uses it, and any game with level-up picks gets
+  weapon slots, either-or choices and evolutions by adding fields to rows. `offer`, `canBuy` and the shop adapters
+  honour them without change.
+- **Revisit if.** A game needs a slot that an upgrade frees again, or exclusions between groups rather than rows.

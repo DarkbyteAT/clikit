@@ -408,14 +408,14 @@
   // =====================================================================================================================
 
   /**
-   * Banks experience (scaled by the arena) and records any level-ups for the presentation to offer.
+   * Banks experience (scaled by the arena and the threat tier) and records any level-ups for the presentation to offer.
    * @param {Run} run
    * @param {number} amount
    * @param {Object} cues
    */
   const gainExperience = (run, amount, cues) => {
     const { world } = run;
-    const result = addExperience(world.level, world.xp, amount * run.arena.xpScale);
+    const result = addExperience(world.level, world.xp, amount * run.arena.xpScale * run.tier.xpScale);
     world.level = result.level;
     world.xp = result.xp;
     world.pendingLevels += result.levelsGained;

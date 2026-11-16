@@ -36,6 +36,7 @@ share the machine; the load column says so.
 | 22 | Ferry Lines (new game) + kit/route.js, kit/timer.js | pick-up from a cancelled agent: new game + standard + theme + depth | fable (no leaves: this agent had no Agent tool, so amendment 17 could not be followed) | not measured (the agent cannot read its own usage) | not measured; long, one sitting | 10+ agents | standard (22 lint magic-number notes left in the 3D model dimensions), theme, depth (simulated: 3 h x 3 seeds x 4 bots) | 1 inside the task: the first build was a one-minute slice, rebuilt when depth arrived | 9 amendments arrived mid-task; 8 browser runs, 1 foreign page error (prism); the pacing simulation overturned the first tables twice |
 | 23 | Prism Garden | depth (shelf, 3 new rules, forge, daily, garden) + theme + file split | fable | not measured (the agent cannot read its own usage) | about 150 | 12+ agents, load average 35 | standard, theme, depth | 0 so far (amendments 14 to 19 arrived mid-task and were absorbed) | 14 proven beds, endless forged beds; kit/puzzle.js grew search.generate, search.difficulty, beam passes and one-way glass, level medals; `make sim GAME=prism` works |
 | 24 | Tower Smash | depth (sim split, generator, loadout, worlds, progression) | fable | not measured by the agent | not measured (about 75 by file times) | 12+ agents | standard, theme, depth | 0 so far | 3 files; headless solver clears 18/18; Agent tool not available to this session, so nothing was dispatched |
+| 25 | Component library (kit/ui/: 12 component files, menu, gallery), menu scroll root-cause, framework spike, tools/touch-scroll.js, tools/test-ui.js | new kit area + investigation + compatibility layer | fable (lead only: no Agent tool in this session, so nothing was dispatched) | not visible to the agent | not measured; one sitting | load 42 at the start, lighter later | standard, decisions, tests (5 pure, 49 in-browser checks) | 0 so far (amendment 20 arrived mid-task) | 12 browser runs; one self-inflicted break caught by the first smoke (Kit.ui.h overwritten); the menu failure did not reproduce, so the real-phone cause is still open |
 
 ## Orchestrated work (from amendment 17)
 
@@ -54,6 +55,7 @@ One row per piece a lead dispatched or kept. This is what tests whether tiered, 
 | Core Miner | Curve tuning from simulation output (3 rounds) | would be opus | medium | not metered | n/a | done by the lead; each round is one table edit and one 60 s run |
 | Core Miner | Rules tests in tools/test-kit.js | would be sonnet | low | not metered | n/a | done by the lead |
 | Core Miner | Tap feel, weak point, heat gauge, forks, Camp sheet, theme, QA | fable | medium | not metered | n/a | kept by the lead by rule (feel, layout, QA) |
+| UI lead (kit/ui/) | all pieces | fable | high | not measured | n/a | kept by the lead: no Agent tool. Would have routed: logic.js + tests, field.js, meter.js, layout.js to sonnet/low from the written component contract; README table and script tags to haiku/low; scroll pane, dialog, compatibility layer, root cause and QA stay with the lead |
 
 ## What the ledger says so far
 
@@ -114,6 +116,9 @@ entries become the next tooling work.
 | No API reference; docstrings drift from code | prism, marble, sling | partly closed: generated kit/API.md; `types` ratchet stops new drift, 300 old errors remain |
 | Whole-file rewrites of shared files race with other agents' appends | steward | tool exists: `snapshot` / `replace` (promoted from scratch/steward); `new module` itself still rewrites tools/test-kit.js in one step |
 | Touch taps lost in headless runs under load (frame-aligned delivery, 1.2 s between down and up) | tooling | open: proposal to time taps from event.timeStamp in kit/input.js |
+| A scroll failure "reproduced" with an input simulation nobody had tested; two mitigations shipped on it | UI lead | closed: `tools/touch-scroll.js --self-test` proves the finger drag on control pages; menu smoke and `tools/test-ui.js` use it |
+| Vendor URL swaps are duplicated in tools/smoke.js and tools/dev/browser.js; a new CDN library must be added to both or dev tools load nothing | UI lead | worked around (added to both); open: one shared swap table |
+| Tools reach a screen only by pressing `#card-<id>`, so a screen that is not a menu card cannot be smoked | UI lead | worked around (the gallery is a listed entry); open: tools should call `Kit.play(id)` |
 | Micro-benchmark noise of +/-100% on the shared machine | tooling | open: needs a quiet machine or a dedicated core |
 | The file-edit guard refuses to overwrite a file changed by a script since it was last read, after the whole new file had been sent (about 700 lines re-sent once) | ferry | habit: write a new file beside it and move it; a `tools/dev.js replace-file` would make that one step |
 | Appending tests to the shared tools/test-kit.js: a block inserted "before the last line" was no longer last an hour later, a scripted replace of it failed half-way and the suite was red for about a minute | ferry | open: one test file per kit module or game (`tests/<name>.test.js`) that the runner globs, so nobody edits a shared file |
