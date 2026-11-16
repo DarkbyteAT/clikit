@@ -225,7 +225,9 @@
    *   changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is
    *   still moving (a dial being dragged): the sculpted surfaces are bent to the new proportions by the skeleton
    *   at once, and sculpted again by `settle()`
-   * @property {function(): boolean} settle sculpts the surfaces for the bake shown if they were only bent to it; true when it did
+   * @property {function(number=): boolean} settle sculpts the surfaces for the bake shown if they were only bent to it (or,
+   *   built with `sculpt: 'steps'`, not sculpted yet); true when it did. With a number it works for about that many
+   *   milliseconds and returns false until the work, spread over as many calls as it takes, is done
    * @property {function(): boolean} isSettled false while the surfaces wait for `settle()`
    * @property {function(number): Object} frame a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
    * @property {function(): {meshes: number, skinned: number, materialsCreated: number, geometriesCreated: number}} counters `meshes`:
@@ -237,13 +239,14 @@
    * Builds a figure in a view.
    * @param {Object} view from `Kit.look.view`
    * @param {Object} bake from a bakery (kit/body-recipe.js), or a part alone `{ plan, boneRamp, ramps }`
-   * @param {{level?: string, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, sculpt?: boolean, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
+   * @param {{level?: string, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, sculpt?: boolean|string, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
    *   `level` of detail (default 'high'); `cache` shared between figures (default one per module); `rows`: a
    *   block from `loadRows` to share (default: the figure loads its own, and frees it on `dispose`); `ground`:
    *   stand the body's lowest point at rest on y = 0 (default true); `center`: turn about the middle of the
    *   footprint rather than the plan's origin (default true); `sculpt`: draw the body as blended, skinned
    *   surfaces with its garments as layers (kit/figure-sculpt.js; default true), false: one rigid piece per bone
-   *   shape, as `crowd` draws; `featuresOf` and `regionMapOf`: the two extension
+   *   shape, as `crowd` draws; 'steps': sculpted, but never inside `build` or `setBake`: the rigid pieces (or the
+   *   last surfaces, bent) are shown until `settle(milliseconds)`, called every frame, has done the work; `featuresOf` and `regionMapOf`: the two extension
    *   points of `Kit.figure.layout` (default: the body system's, so a bake with a face and clothes shows them;
    *   null draws the bare bones)
    * @returns {Figure}
@@ -269,6 +272,10 @@
     let shownLayout = Kit.figure.layout(bake, layoutOptions);
     const offset = { x: 0, y: 0, z: 0 };
     const shouldSculpt = options.sculpt !== false && Boolean(Kit.figure.sculptLayers);
+    /** Sculpting is spread over frames by `settle(milliseconds)`; until it is done the body is its rigid pieces, or the surfaces it had, bent. */
+    const isStepped = options.sculpt === 'steps';
+    /** The sculpt under way for the bake shown (kit/figure-sculpt.js `sculptTask`), when it is done in steps. */
+    let task = null;
     /** The skinned surfaces standing in for the body's rigid pieces (kit/figure-sculpt.js); null when not sculpted. */
     let skin = null;
     /** The surfaces were sculpted for an earlier bake and are being bent to this one by the skeleton (see `setBake`). */
@@ -287,8 +294,7 @@
       skin = null;
     };
     /** Sculpts the bake shown now and binds each layer to a skeleton whose bone matrices `pose()` writes. */
-    const addSkin = () => {
-      const sculpted = Kit.figure.sculptLayers(shown, shownLayout);
+    const addSkin = (sculpted = Kit.figure.sculptLayers(shown, shownLayout)) => {
       const bones = Array.from({ length: shown.plan.boneCount }, () => {
         const bone = new THREE.Bone();
         bone.matrixAutoUpdate = false;
@@ -317,9 +323,10 @@
      * Makes the sculpted surfaces match the bake shown now, and the rigid pieces match what the surfaces leave
      * to them (a solid too thin to sculpt at this size is a rigid piece; a dial can move it either way).
      */
-    const resculpt = () => {
+    const resculpt = (sculpted) => {
       removeSkin();
-      addSkin();
+      addSkin(sculpted);
+      task = null;
       entries.filter((entry) => isReplaced(entry.piece)).forEach(removeEntry);
       entries = entries.filter((entry) => !isReplaced(entry.piece));
       const drawn = new Set(entries.map((entry) => entry.piece));
@@ -413,9 +420,16 @@
           // (a garment, a species, a caller that does not say) sculpts now.
           const isSame = skin && skin.signature === Kit.figure.sculptSignature(next, nextLayout);
           const canBend = skin && settleOptions.settle === false && next.plan === previousPlan && changes && !changes.rebuild && !(changes.sockets || []).length;
+          task = null;
           if (isSame) isStale = false;
           else if (canBend) isStale = true;
-          else resculpt();
+          else if (isStepped && !Kit.figure.sculptTask(next, nextLayout).isDone()) {
+            // Other bones or other parts: the old surfaces cannot be bent to them, so the rigid pieces stand in until `settle` is done.
+            removeSkin();
+            const drawn = new Set(entries.map((entry) => entry.piece));
+            nextLayout.pieces.filter((piece) => !drawn.has(piece)).forEach(addPiece);
+            isStale = true;
+          } else resculpt();
         }
         if (update.recolor) view.atlas.write(block, paddedRamps(next.ramps));
         if (next.plan !== previousPlan) {
@@ -429,9 +443,15 @@
         figure.pose();
         return { kept: update.keep.length, added: update.add.length, removed: update.remove.length, recolored: update.recolor, remeasured: update.remeasure, settled: !isStale };
       },
-      settle() {
+      settle(milliseconds) {
         if (!isStale) return false;
-        resculpt();
+        if (milliseconds === undefined) resculpt();
+        else {
+          task = task || Kit.figure.sculptTask(shown, shownLayout);
+          if (!task.step(milliseconds)) return false;
+          resculpt(task.result);
+        }
+        isStale = false;
         figure.pose();
         return true;
       },
@@ -447,7 +467,8 @@
         if (!options.rows && view.atlas.free) view.atlas.free(block);
       },
     };
-    if (shouldSculpt) addSkin();
+    if (shouldSculpt && isStepped && !Kit.figure.sculptTask(shown, shownLayout).isDone()) isStale = true;
+    else if (shouldSculpt) addSkin();
     shownLayout.pieces.forEach(addPiece);
     remeasure();
     figure.rest();

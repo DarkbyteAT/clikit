@@ -227,7 +227,8 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     body.catalog(sampleVariant((spec) => (spec.nodes.human.set.dials = { jawWidth: { max: 1.3 } }), SHAPED)); // control: inside the limit
   });
   test('shape dials: mistakes are named (no such number in the shape, a default capsule, a bad mode, a feature without param)', () => {
-    const plan = body.samples.PLANS.biped;
+    // The cases are about a ball head (a shape with a radius and no profile); the sample biped's head is now a turned profile, so the ball is stated here.
+    const plan = { ...body.samples.PLANS.biped, bones: body.samples.PLANS.biped.bones.map((bone) => (bone.name === 'head' ? { ...bone, shape: { kind: 'sphere', radius: 0.12, at: [0, 0.11, 0] } } : bone)) };
     const biped = body.plan({ ...plan, id: 'biped' });
     throwsWith(
       () => body.dials(biped, [{ id: 'jaw', min: 0.5, max: 2, affects: [{ bones: ['head'], shape: 'profile.1.0' }] }]),

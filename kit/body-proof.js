@@ -204,8 +204,8 @@
   const ATLAS_ROWS = 512;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
   /** Room round a figure in its cell, as shares of the largest figure's size; `head` shows this share of the height, from the top. */
-  /** `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail). */
-  const CELL = Object.freeze({ sideMargin: 1.15, topMargin: 1.22, headShare: 0.42, headTop: 0.12, leastWidth: 0.5, figureShare: 1.3 });
+  /** `figureShare`: about how tall a standing body is drawn, in cell widths (for choosing its level of detail); `mostAspect`: the widest a cell is made for a long body, in body heights. */
+  const CELL = Object.freeze({ sideMargin: 1.15, topMargin: 1.22, headShare: 0.42, headTop: 0.12, leastWidth: 0.5, figureShare: 1.3, mostAspect: 1.3 });
 
   Kit.register({
     id: 'proof',
@@ -265,8 +265,20 @@
           figure.root.rotation.y = cell.yaw * TURN;
           return { figure, cell, refusal };
         });
-        const tallest = Math.max(...shown.map((entry) => entry.figure.measured.highestY), 0.1);
-        const widest = Math.max(...shown.map((entry) => entry.figure.measured.reach * 2), CELL.leastWidth);
+        // Each species is framed to its own bounds: a hound is drawn as large in its cell as a person in theirs.
+        // Individuals of one species keep their sizes against each other (a height dial still shows).
+        const sizes = new Map();
+        shown.forEach((entry) => {
+          const size = sizes.get(entry.cell.recipe.species) || { height: 0.1, width: CELL.leastWidth };
+          sizes.set(entry.cell.recipe.species, { height: Math.max(size.height, entry.figure.measured.highestY), width: Math.max(size.width, entry.figure.measured.reach * 2) });
+        });
+        const tallest = Math.max(...[...sizes.values()].map((size) => size.height));
+        const widest = Math.min(Math.max(...[...sizes.values()].map((size) => size.width)), tallest * CELL.mostAspect);
+        shown.forEach((entry) => {
+          const size = sizes.get(entry.cell.recipe.species);
+          entry.scale = Math.min(tallest / size.height, widest / size.width);
+          entry.figure.root.scale.setScalar(entry.scale);
+        });
         const isHead = framing === 'head';
         const cellHeight = isHead ? tallest * CELL.headShare : tallest * CELL.topMargin;
         const cellWidth = isHead ? cellHeight : widest * CELL.sideMargin;
@@ -277,7 +289,7 @@
           const cellBottom = (rows - 1 - row) * cellHeight;
           entry.figure.root.position.x = (column - (columns - 1) / 2) * cellWidth;
           // Body: feet near the cell's floor. Head: the crown a little under the cell's top.
-          entry.figure.root.position.y = isHead ? cellBottom + cellHeight * (1 - CELL.headTop) - entry.figure.measured.highestY : cellBottom + cellHeight * 0.04;
+          entry.figure.root.position.y = isHead ? cellBottom + cellHeight * (1 - CELL.headTop) - entry.figure.measured.highestY * entry.scale : cellBottom + cellHeight * 0.04;
         });
         labels.value = { columns, rows, texts: shown.map((entry) => (entry.refusal ? `${entry.cell.label} (cannot)` : entry.cell.label)) };
         return { pages, cells: shown.length, columns, rows, framing, aspect: (columns * cellWidth) / (rows * cellHeight), refusals };

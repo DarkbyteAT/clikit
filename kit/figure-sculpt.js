@@ -45,14 +45,14 @@
     mostOpen: 0.7,
     clearSteps: 14,
     /**
-     * A worn object (a hat, a horn, a skirt: a bone row with `wear`) is meshed on the body's own cell, so it costs
-     * what its area costs and no more. A solid of it thinner than the grid can hold (a cloak's panel, a visor) is
+     * Everything is meshed on the body's one cell, so a part costs what its area costs and no more. A solid
+     * thinner than the grid can hold (a cloak's panel, a visor, a fin) is
      * thickened to `thickenedCells` cells: cloth and brims then have a rounded edge at any size instead of
      * falling between samples, and a coarser level draws them chunkier, as it does everything. One thinner
      * than `leastThinShare` of that (a wire) stays a rigid piece.
      */
     thickenedCells: 1.9,
-    leastThinShare: 0.22,
+    leastThinShare: 0.4,
     /** A draped object's vertex is shared between the body solids within this many metres of being its nearest. */
     drapeSpread: 0.16,
     /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
@@ -200,7 +200,11 @@
     const free = limbs.filter((limb) => !limb.key.startsWith('legs'));
     const isClear = (limb, angle) => {
       const { world } = openedPose(bake, [limb], () => angle);
-      return limb.bones.every((bone) => trunkDistance(world.translation[bone * VECTOR], world.translation[bone * VECTOR + 1], world.translation[bone * VECTOR + 2]) >= (plan.girth[bone] / 2) * world.scale[bone * VECTOR] * SCULPT.clearShare);
+      return limb.bones.every(
+        (bone) =>
+          trunkDistance(world.translation[bone * VECTOR], world.translation[bone * VECTOR + 1], world.translation[bone * VECTOR + 2]) >=
+          (plan.girth[bone] / 2) * world.scale[bone * VECTOR] * SCULPT.clearShare
+      );
     };
     const angles = free.map((limb) => {
       for (let step = 0; step <= SCULPT.clearSteps; step++) if (isClear(limb, (SCULPT.mostOpen * step) / SCULPT.clearSteps)) return (SCULPT.mostOpen * step) / SCULPT.clearSteps;
@@ -237,7 +241,8 @@
   };
 
   /** Can this piece be a solid at all: shaded normally, of a kind that has a distance? */
-  const isSolidPiece = (piece) => !piece.stamps && !piece.shell && !piece.emissive && piece.tone === undefined && piece.inkGroup !== Kit.figure.INK_GROUPS.glow && Boolean(Kit.sculpt.KINDS[piece.shape.kind]);
+  const isSolidPiece = (piece) =>
+    !piece.stamps && !piece.shell && !piece.emissive && piece.tone === undefined && piece.inkGroup !== Kit.figure.INK_GROUPS.glow && Boolean(Kit.sculpt.KINDS[piece.shape.kind]);
   /** Is this piece a solid of the body itself: one the body's skin may replace? */
   const isSculpted = (piece) => !piece.isProp && isSolidPiece(piece);
   /** The pieces of worn objects the sculpt takes, by the wear of their bones. */
@@ -292,7 +297,11 @@
     const onward = movesBetween(from, to);
     const back = movesBetween(to, from);
     const { positions, normals } = mesh;
-    const [there, home, fix] = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    const [there, home, fix] = [
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 0, 0],
+    ];
     for (let vertex = 0; vertex < positions.length / VECTOR; vertex++) {
       const at = vertex * VECTOR;
       const [x, y, z] = [positions[at], positions[at + 1], positions[at + 2]];
@@ -352,6 +361,25 @@
     const lead = limbLead.get(piece.inkGroup);
     placed.anchor = [matrices[lead * MATRIX + 12], matrices[lead * MATRIX + 13], matrices[lead * MATRIX + 14]];
     return placed;
+  };
+
+  /**
+   * The solid of a piece made to fit a grid: as it is when the grid can hold it, thickened to `thickenedCells`
+   * cells when it is thinner than that, and null when it is too thin even to thicken (it stays a rigid piece).
+   */
+  const fittedSolid = (piece, matrices, limbLead, cell) => {
+    const part = solidOf(piece, matrices, limbLead);
+    const least = (cell * SCULPT.thickenedCells) / 2;
+    if (part.thinness >= least) return part;
+    if (part.thinness < least * SCULPT.leastThinShare) return null;
+    const grow = least - part.thinness;
+    const thick = solidOf({ ...piece, shape: { ...piece.shape, inflate: (piece.shape.inflate || 0) + grow } }, matrices, limbLead);
+    thick.thinness += grow;
+    for (let axis = 0; axis < VECTOR; axis++) {
+      thick.min[axis] -= grow;
+      thick.max[axis] += grow;
+    }
+    return thick;
   };
 
   /**
@@ -456,7 +484,9 @@
    */
   const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
     const { wears, hangs } = wearOf(bake.plan);
-    const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) => [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone]].join('~'));
+    const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) =>
+      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone]].join('~')
+    );
     const rest = bake.rest || Kit.body.createPose(bake.plan);
     const pose = [rest.translation, rest.rotation, rest.scale].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
     return [detail, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
@@ -489,10 +519,56 @@
       kept.set(signature, known);
       return known;
     }
-    const sculpted = { ...sculpt(bake, figureLayout, detail), signature };
-    kept.set(signature, sculpted);
-    if (kept.size > SCULPT.kept) kept.delete(kept.keys().next().value);
-    return sculpted;
+    return sculptTask(bake, figureLayout, options).finish();
+  };
+
+  /**
+   * A sculpt that can be done a little at a time, so a first sculpt never holds a frame: `step(milliseconds)`
+   * works for about that long and says whether it is done, `finish()` does the rest at once, and `result` is
+   * the `Sculpted` once done (at once for a bake seen before). Its layers go to the same `sculptCache`.
+   * @param {Object} bake from a bakery
+   * @param {Object} figureLayout `Kit.figure.layout(bake)`
+   * @param {{detail?: string, now?: function(): number}} [options] `now`: a clock in milliseconds (default `performance.now`)
+   * @returns {{step: function(number): boolean, finish: function(): Sculpted, isDone: function(): boolean, result: ?Sculpted, signature: string}}
+   * @complexity as `sculptLayers` in total; one `step` runs pieces of a few milliseconds until its time is used
+   * @example const task = Kit.figure.sculptTask(bake, layout); // each frame: if (task.step(6)) show(task.result);
+   */
+  const sculptTask = (bake, figureLayout, options = {}) => {
+    const detail = options.detail || figureLayout.level;
+    const now = options.now || (() => performance.now());
+    const signature = sculptSignature(bake, figureLayout, detail);
+    const task = { signature, result: null };
+    let steps = null;
+    /** Takes the layers from the cache if they are there (another figure may have finished the same bake meanwhile). */
+    const recall = () => {
+      const known = kept.get(signature);
+      if (!known) return false;
+      kept.delete(signature);
+      kept.set(signature, known);
+      task.result = known;
+      return true;
+    };
+    const advance = () => {
+      steps = steps || sculptSteps(bake, figureLayout, detail);
+      const step = steps.next();
+      if (!step.done) return false;
+      task.result = { ...step.value, signature };
+      kept.set(signature, task.result);
+      if (kept.size > SCULPT.kept) kept.delete(kept.keys().next().value);
+      return true;
+    };
+    task.isDone = () => task.result !== null;
+    task.step = (milliseconds) => {
+      const until = now() + milliseconds;
+      while (!task.result && !recall() && !advance() && now() < until);
+      return task.result !== null;
+    };
+    task.finish = () => {
+      while (!task.result && !recall() && !advance());
+      return task.result;
+    };
+    recall();
+    return task;
   };
 
   /** Per vertex of a layer: the share of it moved by the bones flagged in `isFlagged` (0..1). */
@@ -502,8 +578,8 @@
     return shares;
   };
 
-  /** Sculpts a bake afresh (see `sculptLayers`). */
-  const sculpt = (bake, figureLayout, detail) => {
+  /** Sculpts a bake afresh (see `sculptLayers`), pausing (a `yield`) between pieces of work of a few milliseconds each. */
+  function* sculptSteps(bake, figureLayout, detail) {
     const { plan } = bake;
     const matrices = restMatrices(bake, spreadPose(bake));
     const frames = bake.surface && Kit.body.surfaceLayout ? Kit.body.surfaceLayout(plan).frames : null;
@@ -512,10 +588,14 @@
     /** Ink group -> the first (nearest the root) bone of that limb. */
     const limbLead = new Map();
     candidates.forEach((piece) => limbLead.has(piece.inkGroup) || limbLead.set(piece.inkGroup, piece.bone));
-    const placed = candidates.map((piece) => ({ piece, part: solidOf(piece, matrices, limbLead) }));
-    // One grid cell for the whole body; what is too thin for it (an earring) stays a rigid piece.
-    const cell = placed.length ? Kit.sculpt.cellFor(placed.map(({ part }) => part), detail) : 0;
-    const meshed = placed.filter(({ part }) => !Kit.sculpt.isTooThin(part, cell));
+    // One grid cell for the whole body; what is far too thin for it (an earring) stays a rigid piece.
+    const cell = candidates.length
+      ? Kit.sculpt.cellFor(
+          candidates.map((piece) => solidOf(piece, matrices, limbLead)),
+          detail
+        )
+      : 0;
+    const meshed = candidates.map((piece) => ({ piece, part: fittedSolid(piece, matrices, limbLead, cell) })).filter(({ part }) => part);
     const replaced = new Set(meshed.map(({ piece }) => piece.id));
     // The shells the layout made for raised regions are replaced along with the surfaces they were copies of.
     figureLayout.pieces.filter((piece) => piece.shell && replaced.has(piece.id.split('~')[0])).forEach((piece) => replaced.add(piece.id));
@@ -540,15 +620,25 @@
     const headGroup = Kit.figure.INK_GROUPS.head;
     const isHeadBone = Uint8Array.from({ length: plan.boneCount }, (_unused, bone) => (Kit.figure.inkGroupOf(Kit.figure.inkKeyOf(plan, bone)) === headGroup ? 1 : 0));
     const layers = [];
-    groups.forEach((group) => {
+    for (const group of groups.values()) {
       const bones = [...new Set(group.solids.map((part) => part.owner))];
       const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
-      const field = Kit.sculpt.sample(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
-      const layerOf = (id, ramp, mesh, offset) => ({ id, ramp, inkGroup: group.inkGroup, inkClass: ramp, ...mesh, ...Kit.sculpt.weights(mesh.positions, group.solids, { spread: SCULPT.weightSpread, reach: offset + cell }) });
-      const skin = layerOf(`skin:${group.ramp}`, group.ramp, Kit.sculpt.surface(field), 0);
+      const field = yield* Kit.sculpt.sampleSteps(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
+      const layerOf = (id, ramp, mesh, offset) => ({
+        id,
+        ramp,
+        inkGroup: group.inkGroup,
+        inkClass: ramp,
+        ...mesh,
+        ...Kit.sculpt.weights(mesh.positions, group.solids, { spread: SCULPT.weightSpread, reach: offset + cell }),
+      });
+      const bare = Kit.sculpt.surface(field);
+      yield undefined;
+      const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
       skin.faceShare = shareOf(skin, isHeadBone);
       layers.push(skin);
-      specs.forEach(({ garment, offset, host, isPaint }) => {
+      yield undefined;
+      for (const { garment, offset, host, isPaint } of specs) {
         const own = cutOf(garment, field, frames);
         const within = host ? cutOf(host, field, frames) : null;
         const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
@@ -556,14 +646,16 @@
         const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
         const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: SCULPT.buriedDepth, walls: !isPaint });
         if (cloth.indices.length) layers.push(layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
-      });
-    });
-    wornLayers(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead }).forEach(({ layer, pieces }) => {
+        yield undefined;
+      }
+    }
+    const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead });
+    worn.forEach(({ layer, pieces }) => {
       layers.push(layer);
       pieces.forEach((piece) => replaced.add(piece.id));
     });
     return { layers, replaced, matrices, clearance };
-  };
+  }
 
   /**
    * The layers of the worn objects of a bake (bone rows with `wear`): one per object and paint, each on a grid of
@@ -571,7 +663,7 @@
    * it hangs as authored, given to the body solids beside it, and then carried into the sculpting pose by them.
    * @returns {Array<{layer: SculptLayer, pieces: Object[]}>}
    */
-  const wornLayers = (bake, figureLayout, { cell, matrices, bodyPieces, limbLead }) => {
+  function* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces, limbLead }) {
     const { plan } = bake;
     const { wears, hangs } = wearOf(plan);
     const worn = wornPieces(figureLayout, wears);
@@ -591,42 +683,38 @@
       return (chosen.length ? chosen : hosts).map(({ part }) => part);
     };
     const made = [];
-    objects.forEach((pieces, key) => {
+    for (const [key, pieces] of objects) {
       const isDrape = wears[pieces[0].bone] === 'drape';
       const pose = isDrape ? rest : matrices;
-      const ownCell = cell || Kit.sculpt.cellFor(pieces.map((piece) => solidOf(piece, pose, limbLead)), figureLayout.level);
-      /** The least half-thickness the grid holds. */
-      const least = (ownCell * SCULPT.thickenedCells) / 2;
+      const ownCell =
+        cell ||
+        Kit.sculpt.cellFor(
+          pieces.map((piece) => solidOf(piece, pose, limbLead)),
+          figureLayout.level
+        );
       const kept = [];
       pieces.forEach((piece) => {
-        let part = solidOf(piece, pose, limbLead);
-        if (part.thinness < least * SCULPT.leastThinShare) return;
-        if (part.thinness < least) {
-          const grow = least - part.thinness;
-          part = solidOf({ ...piece, shape: { ...piece.shape, inflate: (piece.shape.inflate || 0) + grow } }, pose, limbLead);
-          part.thinness += grow;
-          part.blend = Math.max(part.blend, SCULPT.leastBlend);
-          for (let axis = 0; axis < VECTOR; axis++) {
-            part.min[axis] -= grow;
-            part.max[axis] += grow;
-          }
-        }
+        const part = fittedSolid(piece, pose, limbLead, ownCell);
         // An object is one thing: its solids blend wherever they meet, and it joins nothing else.
-        kept.push({ piece, part: Object.assign(part, { group: 0, anchor: undefined, join: undefined }) });
+        if (part) kept.push({ piece, part: Object.assign(part, { group: 0, anchor: undefined, join: undefined }) });
       });
-      if (!kept.length) return;
+      if (!kept.length) continue;
       const solids = kept.map(({ part }) => part);
-      const mesh = Kit.sculpt.surface(Kit.sculpt.sample(solids, { cell: ownCell }));
-      if (!mesh.indices.length) return;
+      const mesh = Kit.sculpt.surface(yield* Kit.sculpt.sampleSteps(solids, { cell: ownCell }));
+      if (!mesh.indices.length) continue;
+      yield undefined;
       const [first] = kept;
       const drapeHosts = isDrape && bodyPieces.length ? hostsFor(hangs[first.piece.bone]) : null;
-      const skin = drapeHosts ? Kit.sculpt.weights(mesh.positions, drapeHosts, { spread: SCULPT.drapeSpread, reach: Infinity, sharpness: SCULPT.drapeSharpness }) : Kit.sculpt.weights(mesh.positions, solids, { spread: SCULPT.weightSpread, reach: ownCell });
+      const skin = drapeHosts
+        ? Kit.sculpt.weights(mesh.positions, drapeHosts, { spread: SCULPT.drapeSpread, reach: Infinity, sharpness: SCULPT.drapeSharpness })
+        : Kit.sculpt.weights(mesh.positions, solids, { spread: SCULPT.weightSpread, reach: ownCell });
       // Made at rest (a drape with something to hang on, or a drape alone): carried into the pose the skeleton is bound in.
       if (isDrape) carry(mesh, skin, rest, matrices);
       made.push({ layer: { id: `worn:${key}`, ramp: first.piece.ramp, inkGroup: first.piece.inkGroup, inkClass: first.piece.ramp, ...mesh, ...skin }, pieces: kept.map(({ piece }) => piece) });
-    });
+      yield undefined;
+    }
     return made;
-  };
+  }
 
-  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers });
+  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers, sculptTask });
 })();

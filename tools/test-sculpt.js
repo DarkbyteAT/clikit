@@ -254,6 +254,89 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     });
   });
 
+  test('sculpt: worn objects follow their data: a skirt is draped on the legs and hangs as authored at rest, a hat is a solid on its own bone, a sword stays rigid', () => {
+    const { catalog } = catalogs[0];
+    const editor = Kit.body.editor(catalog);
+    const [species] = catalog.speciesIds();
+    const recipe = editor.setSocket(editor.setSocket({ species, seed: 1 }, 'bottom', 'skirt'), 'hat', 'wideBrim');
+    const bake = catalog.bakery({ capacity: 4 }).bakeRecipe(recipe);
+    const { plan } = bake;
+    const layout = figure.layout(bake, { level: 'medium' });
+    const sculpted = figure.sculptLayers(bake, layout);
+    const skirt = sculpted.layers.find((layer) => layer.id.startsWith('worn:bottom'));
+    const hat = sculpted.layers.find((layer) => layer.id.startsWith('worn:hat'));
+    assert.ok(skirt && hat, `layers: ${sculpted.layers.map((layer) => layer.id).join(' ')}`);
+    assert.ok(skirt.id.endsWith('drape') && hat.id.endsWith('solid'));
+    const legMask = Kit.body.roleMask(['leg']);
+    assert.ok(skirt.owners.every((owner, slot) => skirt.weights[slot] === 0 || (plan.roles[owner] & legMask) !== 0), 'every owner of the skirt is a leg bone');
+    assert.ok(new Set(Array.from(skirt.owners).filter((_owner, slot) => skirt.weights[slot] > 0.5)).size >= 2, 'both legs carry it');
+    assert.ok(hat.owners.every((owner, slot) => hat.weights[slot] === 0 || plan.boneNames[owner].startsWith('hat/')), 'the hat is moved by its own bones');
+    // Skinned from the sculpting pose (legs spread) to rest, the skirt is the authored cone again: every vertex on its solid.
+    const rest = figure.restMatrices(bake);
+    const bone = plan.boneIndex('bottom/skirt');
+    const piece = layout.pieces.find((candidate) => candidate.bone === bone);
+    const authored = sculpt.solid(piece.shape, rest.subarray(bone * 16, bone * 16 + 16));
+    const inverses = Array.from({ length: plan.boneCount }, (_unused, index) => sculpt.invertAffine(sculpted.matrices.subarray(index * 16, index * 16 + 16)));
+    const moved = (matrices, layer, vertex) => {
+      const out = [0, 0, 0];
+      for (let slot = 0; slot < OWNERS; slot++) {
+        const share = layer.weights[vertex * OWNERS + slot];
+        if (!share) continue;
+        const owner = layer.owners[vertex * OWNERS + slot];
+        const back = inverses[owner];
+        const [x, y, z] = [layer.positions[vertex * 3], layer.positions[vertex * 3 + 1], layer.positions[vertex * 3 + 2]];
+        const local = [back[0] * x + back[1] * y + back[2] * z + back[3], back[4] * x + back[5] * y + back[6] * z + back[7], back[8] * x + back[9] * y + back[10] * z + back[11]];
+        for (let axis = 0; axis < 3; axis++) out[axis] += share * (matrices[owner * 16 + axis] * local[0] + matrices[owner * 16 + 4 + axis] * local[1] + matrices[owner * 16 + 8 + axis] * local[2] + matrices[owner * 16 + 12 + axis]);
+      }
+      return out;
+    };
+    let worstAtRest = 0;
+    let worstUnmoved = 0;
+    for (let vertex = 0; vertex < skirt.positions.length / 3; vertex++) {
+      worstAtRest = Math.max(worstAtRest, Math.abs(authored.distance(...moved(rest, skirt, vertex))));
+      worstUnmoved = Math.max(worstUnmoved, Math.abs(authored.distance(skirt.positions[vertex * 3], skirt.positions[vertex * 3 + 1], skirt.positions[vertex * 3 + 2])));
+    }
+    assert.ok(worstAtRest < 0.012, `at rest the skirt hangs as authored (thickened to the grid): off by ${worstAtRest}`);
+    assert.ok(worstUnmoved > worstAtRest * 2, `the control: in the sculpting pose it is spread with the legs (${worstUnmoved})`);
+    // A held thing has no wear: it is the rigid piece it was.
+    const armed = catalog.bakery({ capacity: 4 }).bakeRecipe(editor.setSocket({ species, seed: 1 }, 'handRight', 'shortBlade'));
+    const armedLayout = figure.layout(armed, { level: 'medium' });
+    const blade = armedLayout.pieces.find((candidate) => armed.plan.boneNames[candidate.bone] === 'handRight/blade');
+    assert.ok(blade && !figure.sculptLayers(armed, armedLayout).replaced.has(blade.id));
+  });
+
+  test('sculpt: a task does the same sculpt in steps of bounded time, and shares the cache', () => {
+    const { catalog } = catalogs[0];
+    const [species] = catalog.speciesIds();
+    const bake = catalog.bakery({ capacity: 4 }).bakeRecipe({ species, seed: 3 });
+    const layout = figure.layout(bake, { level: 'low' });
+    figure.sculptCache.clear();
+    const whole = figure.sculptLayers(bake, layout);
+    figure.sculptCache.clear();
+    // A clock that says a millisecond passes at every look: each step of 0 ms does exactly one piece of work.
+    let clock = 0;
+    const task = figure.sculptTask(bake, layout, { now: () => clock++ });
+    assert.strictEqual(task.isDone(), false);
+    let calls = 0;
+    while (!task.step(0)) calls++;
+    assert.ok(calls > 10, `the work is in many pieces: ${calls}`);
+    assert.deepStrictEqual(task.result.layers.map((layer) => [layer.id, layer.positions.length, layer.indices.length]), whole.layers.map((layer) => [layer.id, layer.positions.length, layer.indices.length]));
+    assert.deepStrictEqual(Array.from(task.result.layers[0].positions.subarray(0, 300)), Array.from(whole.layers[0].positions.subarray(0, 300)), 'the same surface');
+    assert.strictEqual(figure.sculptLayers(bake, layout), task.result, 'the finished task is what the cache holds');
+    assert.strictEqual(figure.sculptTask(bake, layout).isDone(), true, 'a bake seen before is done at once');
+    // Something else sampled while a task is half way does not disturb it.
+    figure.sculptCache.clear();
+    const paused = figure.sculptTask(bake, layout, { now: () => clock++ });
+    for (let step = 0; step < 5; step++) paused.step(0);
+    sculpt.surface(sculpt.sample([ball()], { detail: 'low' }));
+    assert.deepStrictEqual(Array.from(paused.finish().layers[0].positions.subarray(0, 300)), Array.from(whole.layers[0].positions.subarray(0, 300)));
+  });
+
+  test('sculpt: the level of detail follows how tall a figure is drawn', () => {
+    assert.deepStrictEqual([40, 150, 151, 330, 331, 900].map(figure.levelFor), ['low', 'low', 'medium', 'medium', 'high', 'high']);
+    assert.ok(figure.LEVEL_BY_PIXELS.every((row) => sculpt.DETAIL[row.level] && figure.LEVELS[row.level]));
+  });
+
   test('sculpt: equal bakes share their layers; a colour does not change what is sculpted, a dial does', () => {
     const { catalog } = catalogs[0];
     const [species] = catalog.speciesIds();

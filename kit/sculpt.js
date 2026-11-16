@@ -488,23 +488,29 @@
    */
 
   /** Work arrays of `sample`, kept between calls and grown when a grid needs more: a bake allocates only what it returns. */
-  const scratch = { nodes: 0 };
-  const scratchFor = (count) => {
-    if (scratch.nodes >= count) return scratch;
-    Object.assign(scratch, {
-      nodes: count,
-      /** Per group: the nearest and second nearest member at a node, and which group last wrote them. */
-      own: new Float32Array(count),
-      second: new Float32Array(count),
-      ownIndex: new Int16Array(count),
-      secondIndex: new Int16Array(count),
-      stamp: new Uint16Array(count),
-      /** The plain distance of the nearest solid of any group so far, to decide `nearest`. */
-      nearestDistance: new Float32Array(count),
-      inside: new Uint8Array(count),
-      isListed: new Uint8Array(count),
-      vertexOf: new Int32Array(count),
-    });
+  const scratch = { nodes: 0, isBusy: false };
+  /** Fresh work arrays for a grid of `count` nodes. */
+  const scratchOf = (count) => ({
+    nodes: count,
+    /** Per group: the nearest and second nearest member at a node, and which group last wrote them. */
+    own: new Float32Array(count),
+    second: new Float32Array(count),
+    ownIndex: new Int16Array(count),
+    secondIndex: new Int16Array(count),
+    stamp: new Uint16Array(count),
+    /** The plain distance of the nearest solid of any group so far, to decide `nearest`. */
+    nearestDistance: new Float32Array(count),
+    inside: new Uint8Array(count),
+    isListed: new Uint8Array(count),
+    vertexOf: new Int32Array(count),
+  });
+  /**
+   * The work arrays for a grid of `count` nodes: the kept ones, grown when needed. While a sampling in steps
+   * (`sampleSteps`) is under way they are its own, and anything else sampled meanwhile gets arrays of its own.
+   */
+  const scratchFor = (count, isSampling = false) => {
+    if (isSampling && scratch.isBusy) return scratchOf(count);
+    if (scratch.nodes < count) Object.assign(scratch, scratchOf(count));
     return scratch;
   };
 
@@ -545,13 +551,14 @@
    * @param {{detail?: string, cell?: number, margin?: number}} [options] `detail`: a key of `DETAIL` (default
    *   'high'); `cell` overrides the cell `cellFor` gives; `margin`: the furthest a surface will be pushed out of this field
    *   (`surface`'s `offset`), metres (default 0)
-   * @returns {Field}
+   * @returns {Generator<undefined, Field, undefined>} yields after every slab of blocks (a few milliseconds each), so a
+   *   caller can spread the work over frames; its return value is the field
    * @throws {Error} with no solids, or when the grid would exceed `MOST_NODES`
    * @complexity O(surface area / cell^2 x band width in cells x solids near a node) distance evaluations;
    *   O(nodes) memory (one float and one short per node returned)
-   * @example const field = Kit.sculpt.sample(bodySolids, { detail: 'medium', margin: 0.03 });
+   * @example const steps = Kit.sculpt.sampleSteps(bodySolids, { margin: 0.03 }); let step = steps.next(); while (!step.done) step = steps.next(); const field = step.value;
    */
-  const sample = (solids, { detail = 'high', cell: givenCell, margin = 0 } = {}) => {
+  function* sampleSteps(solids, { detail = 'high', cell: givenCell, margin = 0 } = {}) {
     if (!solids.length) fail('sample', 'needs at least one solid.');
     const cell = givenCell || cellFor(solids, detail);
     /** Values are wanted from `lowest` (inside) to `highest` (outside): the surfaces asked for, plus the nodes their normals read. */
@@ -565,170 +572,198 @@
     if (count > MOST_NODES) fail('sample', `the grid would have ${count} nodes (${size.join(' x ')} at ${cell} m); a solid is much larger than the rest, or the detail is too fine.`);
     const values = new Float32Array(count).fill(FAR);
     const nearest = new Int16Array(count).fill(-1);
-    const { own, second, ownIndex, secondIndex, stamp, nearestDistance } = scratchFor(count);
+    const work = scratchFor(count, true);
+    const isOwner = work === scratch;
+    if (isOwner) scratch.isBusy = true;
+    const { own, second, ownIndex, secondIndex, stamp, nearestDistance } = work;
     stamp.fill(0, 0, count);
-    const [sizeX, sizeY] = size;
-    const [lowX, lowY, lowZ] = low;
-    const band = growingList(Int32Array, 1 << 14);
-    /** Candidate solids of the block being walked, one run per depth of the walk. */
-    const candidates = new Int32Array(solids.length * (Math.ceil(Math.log2(BLOCK)) + 3));
-    const centreDistance = new Float64Array(solids.length);
-    const groupIds = [...new Set(solids.map((part) => part.group || 0))];
+    try {
+      const [sizeX, sizeY] = size;
+      const [lowX, lowY, lowZ] = low;
+      const band = growingList(Int32Array, 1 << 14);
+      /** Candidate solids of the block being walked, one run per depth of the walk. */
+      const candidates = new Int32Array(solids.length * (Math.ceil(Math.log2(BLOCK)) + 3));
+      const centreDistance = new Float64Array(solids.length);
+      const groupIds = [...new Set(solids.map((part) => part.group || 0))];
 
-    groupIds.forEach((groupId, groupOrder) => {
-      const members = solids.map((_part, index) => index).filter((index) => (solids[index].group || 0) === groupId);
-      const lead = solids[members[0]];
-      const joinBlend = lead.join === undefined ? Math.max(...members.map((index) => solids[index].blend)) : lead.join;
-      const joinReach = lead.joinReach || joinBlend * JOIN_REACH;
-      const anchor = groupOrder > 0 ? lead.anchor : null;
-      // A fillet pulls a value down by at most a quarter of its width, which the band's own reach past the
-      // surfaces (`BAND_CELLS`) already covers for the nodes a surface's position depends on.
-      const groupHighest = highest;
-      const mark = groupOrder + 1;
-      const written = growingList(Int32Array, 1 << 12);
+      for (let groupOrder = 0; groupOrder < groupIds.length; groupOrder++) {
+        const groupId = groupIds[groupOrder];
+        const members = solids.map((_part, index) => index).filter((index) => (solids[index].group || 0) === groupId);
+        const lead = solids[members[0]];
+        const joinBlend = lead.join === undefined ? Math.max(...members.map((index) => solids[index].blend)) : lead.join;
+        const joinReach = lead.joinReach || joinBlend * JOIN_REACH;
+        const anchor = groupOrder > 0 ? lead.anchor : null;
+        // A fillet pulls a value down by at most a quarter of its width, which the band's own reach past the
+        // surfaces (`BAND_CELLS`) already covers for the nodes a surface's position depends on.
+        const groupHighest = highest;
+        const mark = groupOrder + 1;
+        const written = growingList(Int32Array, 1 << 12);
 
-      /** Measures one node against the candidates in `candidates[from, to)`. */
-      const measureNode = (nodeX, nodeY, nodeZ, from, to) => {
-        const x = lowX + nodeX * cell;
-        const y = lowY + nodeY * cell;
-        const z = lowZ + nodeZ * cell;
-        let first = FAR;
-        let other = FAR;
-        let firstIndex = -1;
-        let otherIndex = -1;
-        for (let slot = from; slot < to; slot++) {
-          const index = candidates[slot];
-          const distance = solids[index].distance(x, y, z);
-          if (distance < first) {
-            other = first;
-            otherIndex = firstIndex;
-            first = distance;
-            firstIndex = index;
-          } else if (distance < other) {
-            other = distance;
-            otherIndex = index;
+        /** Measures one node against the candidates in `candidates[from, to)`. */
+        const measureNode = (nodeX, nodeY, nodeZ, from, to) => {
+          const x = lowX + nodeX * cell;
+          const y = lowY + nodeY * cell;
+          const z = lowZ + nodeZ * cell;
+          let first = FAR;
+          let other = FAR;
+          let firstIndex = -1;
+          let otherIndex = -1;
+          for (let slot = from; slot < to; slot++) {
+            const index = candidates[slot];
+            const distance = solids[index].distance(x, y, z);
+            if (distance < first) {
+              other = first;
+              otherIndex = firstIndex;
+              first = distance;
+              firstIndex = index;
+            } else if (distance < other) {
+              other = distance;
+              otherIndex = index;
+            }
           }
-        }
-        const node = nodeX + sizeX * (nodeY + sizeY * nodeZ);
-        own[node] = first;
-        second[node] = other;
-        ownIndex[node] = firstIndex;
-        secondIndex[node] = otherIndex;
-        stamp[node] = mark;
-        written.push(node);
-      };
+          const node = nodeX + sizeX * (nodeY + sizeY * nodeZ);
+          own[node] = first;
+          second[node] = other;
+          ownIndex[node] = firstIndex;
+          secondIndex[node] = otherIndex;
+          stamp[node] = mark;
+          written.push(node);
+        };
 
-      /** Fills a block of nodes that lie deep inside the group. */
-      const bury = (fromX, fromY, fromZ, toX, toY, toZ) => {
-        for (let nodeZ = fromZ; nodeZ < toZ; nodeZ++) for (let nodeY = fromY; nodeY < toY; nodeY++) values.fill(-FAR, fromX + sizeX * (nodeY + sizeY * nodeZ), toX + sizeX * (nodeY + sizeY * nodeZ));
-      };
+        /** Fills a block of nodes that lie deep inside the group. */
+        const bury = (fromX, fromY, fromZ, toX, toY, toZ) => {
+          for (let nodeZ = fromZ; nodeZ < toZ; nodeZ++) for (let nodeY = fromY; nodeY < toY; nodeY++) values.fill(-FAR, fromX + sizeX * (nodeY + sizeY * nodeZ), toX + sizeX * (nodeY + sizeY * nodeZ));
+        };
 
-      /**
-       * Walks the block of nodes [from, to) on each axis: measures its centre, drops the block when no surface
-       * of interest can pass through it, else halves it. `candidates[from, to)` are the solids that matter here.
-       */
-      const walk = (fromX, fromY, fromZ, toX, toY, toZ, from, to) => {
-        const spanX = toX - fromX;
-        const spanY = toY - fromY;
-        const spanZ = toZ - fromZ;
-        if (spanX === 1 && spanY === 1 && spanZ === 1) return measureNode(fromX, fromY, fromZ, from, to);
-        const x = lowX + (fromX + (spanX - 1) / 2) * cell;
-        const y = lowY + (fromY + (spanY - 1) / 2) * cell;
-        const z = lowZ + (fromZ + (spanZ - 1) / 2) * cell;
-        /** No distance at a node of the block differs from the centre's by more than this. */
-        const halfDiagonal = (Math.sqrt((spanX - 1) * (spanX - 1) + (spanY - 1) * (spanY - 1) + (spanZ - 1) * (spanZ - 1)) * cell * STEEPEST) / 2;
-        let closest = Infinity;
-        for (let slot = from; slot < to; slot++) {
-          const distance = solids[candidates[slot]].distance(x, y, z);
-          centreDistance[candidates[slot]] = distance;
-          if (distance < closest) closest = distance;
-        }
-        if (closest - halfDiagonal > groupHighest) return undefined;
-        if (closest + halfDiagonal < lowest) return bury(fromX, fromY, fromZ, toX, toY, toZ);
-        // A solid further than its fillet beyond the closest, anywhere in the block, changes nothing in it.
-        let kept = to;
-        for (let slot = from; slot < to; slot++) {
-          const index = candidates[slot];
-          if (centreDistance[index] - halfDiagonal <= Math.min(closest + halfDiagonal + solids[index].blend, groupHighest + solids[index].blend)) candidates[kept++] = index;
-        }
-        const midX = fromX + ((spanX + 1) >> 1);
-        const midY = fromY + ((spanY + 1) >> 1);
-        const midZ = fromZ + ((spanZ + 1) >> 1);
-        for (let part = 0; part < CORNER_COUNT; part++) {
-          const startX = part & 1 ? midX : fromX;
-          const endX = part & 1 ? toX : midX;
-          const startY = part & 2 ? midY : fromY;
-          const endY = part & 2 ? toY : midY;
-          const startZ = part & 4 ? midZ : fromZ;
-          const endZ = part & 4 ? toZ : midZ;
-          if (startX < endX && startY < endY && startZ < endZ) walk(startX, startY, startZ, endX, endY, endZ, to, kept);
-        }
-        return undefined;
-      };
+        /**
+         * Walks the block of nodes [from, to) on each axis: measures its centre, drops the block when no surface
+         * of interest can pass through it, else halves it. `candidates[from, to)` are the solids that matter here.
+         */
+        const walk = (fromX, fromY, fromZ, toX, toY, toZ, from, to) => {
+          const spanX = toX - fromX;
+          const spanY = toY - fromY;
+          const spanZ = toZ - fromZ;
+          if (spanX === 1 && spanY === 1 && spanZ === 1) return measureNode(fromX, fromY, fromZ, from, to);
+          const x = lowX + (fromX + (spanX - 1) / 2) * cell;
+          const y = lowY + (fromY + (spanY - 1) / 2) * cell;
+          const z = lowZ + (fromZ + (spanZ - 1) / 2) * cell;
+          /** No distance at a node of the block differs from the centre's by more than this. */
+          const halfDiagonal = (Math.sqrt((spanX - 1) * (spanX - 1) + (spanY - 1) * (spanY - 1) + (spanZ - 1) * (spanZ - 1)) * cell * STEEPEST) / 2;
+          let closest = Infinity;
+          for (let slot = from; slot < to; slot++) {
+            const distance = solids[candidates[slot]].distance(x, y, z);
+            centreDistance[candidates[slot]] = distance;
+            if (distance < closest) closest = distance;
+          }
+          if (closest - halfDiagonal > groupHighest) return undefined;
+          if (closest + halfDiagonal < lowest) return bury(fromX, fromY, fromZ, toX, toY, toZ);
+          // A solid further than its fillet beyond the closest, anywhere in the block, changes nothing in it.
+          let kept = to;
+          for (let slot = from; slot < to; slot++) {
+            const index = candidates[slot];
+            if (centreDistance[index] - halfDiagonal <= Math.min(closest + halfDiagonal + solids[index].blend, groupHighest + solids[index].blend)) candidates[kept++] = index;
+          }
+          const midX = fromX + ((spanX + 1) >> 1);
+          const midY = fromY + ((spanY + 1) >> 1);
+          const midZ = fromZ + ((spanZ + 1) >> 1);
+          for (let part = 0; part < CORNER_COUNT; part++) {
+            const startX = part & 1 ? midX : fromX;
+            const endX = part & 1 ? toX : midX;
+            const startY = part & 2 ? midY : fromY;
+            const endY = part & 2 ? toY : midY;
+            const startZ = part & 4 ? midZ : fromZ;
+            const endZ = part & 4 ? toZ : midZ;
+            if (startX < endX && startY < endY && startZ < endZ) walk(startX, startY, startZ, endX, endY, endZ, to, kept);
+          }
+          return undefined;
+        };
 
-      // The group's own bounds, in nodes, walked block by block.
-      const pad = groupHighest + cell;
-      const boxFrom = [0, 1, 2].map((axis) => Math.max(0, Math.floor((Math.min(...members.map((index) => solids[index].min[axis])) - pad - low[axis]) / cell)));
-      const boxTo = [0, 1, 2].map((axis) => Math.min(size[axis], Math.ceil((Math.max(...members.map((index) => solids[index].max[axis])) + pad - low[axis]) / cell) + 1));
-      candidates.set(members, 0);
-      for (let blockZ = boxFrom[2]; blockZ < boxTo[2]; blockZ += BLOCK) {
-        for (let blockY = boxFrom[1]; blockY < boxTo[1]; blockY += BLOCK) {
-          for (let blockX = boxFrom[0]; blockX < boxTo[0]; blockX += BLOCK) walk(blockX, blockY, blockZ, Math.min(blockX + BLOCK, boxTo[0]), Math.min(blockY + BLOCK, boxTo[1]), Math.min(blockZ + BLOCK, boxTo[2]), 0, members.length);
+        // The group's own bounds, in nodes, walked block by block.
+        const pad = groupHighest + cell;
+        const boxFrom = [0, 1, 2].map((axis) => Math.max(0, Math.floor((Math.min(...members.map((index) => solids[index].min[axis])) - pad - low[axis]) / cell)));
+        const boxTo = [0, 1, 2].map((axis) => Math.min(size[axis], Math.ceil((Math.max(...members.map((index) => solids[index].max[axis])) + pad - low[axis]) / cell) + 1));
+        candidates.set(members, 0);
+        for (let blockZ = boxFrom[2]; blockZ < boxTo[2]; blockZ += BLOCK) {
+          for (let blockY = boxFrom[1]; blockY < boxTo[1]; blockY += BLOCK) {
+            for (let blockX = boxFrom[0]; blockX < boxTo[0]; blockX += BLOCK)
+              walk(blockX, blockY, blockZ, Math.min(blockX + BLOCK, boxTo[0]), Math.min(blockY + BLOCK, boxTo[1]), Math.min(blockZ + BLOCK, boxTo[2]), 0, members.length);
+          }
+          // A slab of blocks is a few milliseconds of work: a caller that must stay responsive pauses here.
+          yield undefined;
+        }
+
+        /** A member's distance one node further along an axis: read from that node when it measured the member, else measured. */
+        const beside = (index, node, step, x, y, z) => {
+          const next = node + step;
+          if (next < count && stamp[next] === mark) {
+            if (ownIndex[next] === index) return own[next];
+            if (secondIndex[next] === index) return second[next];
+          }
+          return solids[index].distance(x, y, z);
+        };
+        const stepZ = sizeX * sizeY;
+        // Second pass over the nodes measured: fillet the two nearest members where their surfaces cross, then
+        // join the group to what is already there (fully near its anchor, not at all far from it).
+        for (let item = 0; item < written.count; item++) {
+          const node = written.items[item];
+          const first = own[node];
+          if (nearest[node] < 0 || first < nearestDistance[node]) {
+            nearestDistance[node] = first;
+            nearest[node] = ownIndex[node];
+          }
+          if (values[node] === -FAR) continue;
+          let distance = first;
+          const other = second[node];
+          const indexA = ownIndex[node];
+          const indexB = secondIndex[node];
+          const radius = indexB < 0 ? 0 : Math.min(solids[indexA].blend, solids[indexB].blend);
+          const nodeZ = Math.floor(node / stepZ);
+          const nodeY = Math.floor((node - nodeZ * stepZ) / sizeX);
+          const x = lowX + (node - nodeZ * stepZ - nodeY * sizeX) * cell;
+          const y = lowY + nodeY * cell;
+          const z = lowZ + nodeZ * cell;
+          if (other - first < radius) {
+            const ax = beside(indexA, node, 1, x + cell, y, z) - first;
+            const ay = beside(indexA, node, sizeX, x, y + cell, z) - first;
+            const az = beside(indexA, node, stepZ, x, y, z + cell) - first;
+            const bx = beside(indexB, node, 1, x + cell, y, z) - other;
+            const by = beside(indexB, node, sizeX, x, y + cell, z) - other;
+            const bz = beside(indexB, node, stepZ, x, y, z + cell) - other;
+            const alignment = (ax * bx + ay * by + az * bz) / (Math.sqrt((ax * ax + ay * ay + az * az) * (bx * bx + by * by + bz * bz)) || 1);
+            const grooveDepth = Math.min(solids[indexA].thinness, solids[indexB].thinness) * (1 - Math.sqrt(Math.max(0, 1 + alignment) / 2));
+            distance = smoothMin(first, other, Math.min(radius, GROOVE_FILL * grooveDepth));
+          }
+          const before = values[node];
+          if (before === FAR) {
+            values[node] = distance;
+            band.push(node);
+            continue;
+          }
+          const away = anchor ? Math.sqrt((x - anchor[0]) * (x - anchor[0]) + (y - anchor[1]) * (y - anchor[1]) + (z - anchor[2]) * (z - anchor[2])) : 0;
+          values[node] = smoothMin(before, distance, joinBlend * Math.max(0, Math.min(1, 2 - away / joinReach)));
         }
       }
+      return { values, nearest, band: band.taken(), margin, size, origin: low, cell, solids };
+    } finally {
+      // Also when the caller gives the steps up half way.
+      if (isOwner) scratch.isBusy = false;
+    }
+  }
 
-      /** A member's distance one node further along an axis: read from that node when it measured the member, else measured. */
-      const beside = (index, node, step, x, y, z) => {
-        const next = node + step;
-        if (next < count && stamp[next] === mark) {
-          if (ownIndex[next] === index) return own[next];
-          if (secondIndex[next] === index) return second[next];
-        }
-        return solids[index].distance(x, y, z);
-      };
-      const stepZ = sizeX * sizeY;
-      // Second pass over the nodes measured: fillet the two nearest members where their surfaces cross, then
-      // join the group to what is already there (fully near its anchor, not at all far from it).
-      for (let item = 0; item < written.count; item++) {
-        const node = written.items[item];
-        const first = own[node];
-        if (nearest[node] < 0 || first < nearestDistance[node]) {
-          nearestDistance[node] = first;
-          nearest[node] = ownIndex[node];
-        }
-        if (values[node] === -FAR) continue;
-        let distance = first;
-        const other = second[node];
-        const indexA = ownIndex[node];
-        const indexB = secondIndex[node];
-        const radius = indexB < 0 ? 0 : Math.min(solids[indexA].blend, solids[indexB].blend);
-        const nodeZ = Math.floor(node / stepZ);
-        const nodeY = Math.floor((node - nodeZ * stepZ) / sizeX);
-        const x = lowX + (node - nodeZ * stepZ - nodeY * sizeX) * cell;
-        const y = lowY + nodeY * cell;
-        const z = lowZ + nodeZ * cell;
-        if (other - first < radius) {
-          const ax = beside(indexA, node, 1, x + cell, y, z) - first;
-          const ay = beside(indexA, node, sizeX, x, y + cell, z) - first;
-          const az = beside(indexA, node, stepZ, x, y, z + cell) - first;
-          const bx = beside(indexB, node, 1, x + cell, y, z) - other;
-          const by = beside(indexB, node, sizeX, x, y + cell, z) - other;
-          const bz = beside(indexB, node, stepZ, x, y, z + cell) - other;
-          const alignment = (ax * bx + ay * by + az * bz) / (Math.sqrt((ax * ax + ay * ay + az * az) * (bx * bx + by * by + bz * bz)) || 1);
-          const grooveDepth = Math.min(solids[indexA].thinness, solids[indexB].thinness) * (1 - Math.sqrt(Math.max(0, 1 + alignment) / 2));
-          distance = smoothMin(first, other, Math.min(radius, GROOVE_FILL * grooveDepth));
-        }
-        const before = values[node];
-        if (before === FAR) {
-          values[node] = distance;
-          band.push(node);
-          continue;
-        }
-        const away = anchor ? Math.sqrt((x - anchor[0]) * (x - anchor[0]) + (y - anchor[1]) * (y - anchor[1]) + (z - anchor[2]) * (z - anchor[2])) : 0;
-        values[node] = smoothMin(before, distance, joinBlend * Math.max(0, Math.min(1, 2 - away / joinReach)));
-      }
-    });
-    return { values, nearest, band: band.taken(), margin, size, origin: low, cell, solids };
+  /**
+   * `sampleSteps` run to its end in one go (see it for the method).
+   * @param {Solid[]} solids
+   * @param {{detail?: string, cell?: number, margin?: number}} [options] as `sampleSteps`
+   * @returns {Field}
+   * @throws {Error} with no solids, or when the grid would exceed `MOST_NODES`
+   * @complexity as `sampleSteps`
+   * @example const field = Kit.sculpt.sample(bodySolids, { detail: 'medium', margin: 0.03 });
+   */
+  const sample = (solids, options) => {
+    const steps = sampleSteps(solids, options);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    return step.value;
   };
 
   /**
@@ -1205,7 +1240,8 @@
    */
   const keptFaces = (field, positions, indices, alongs, least, withWalls) => {
     const isShallow = new Uint8Array(positions.length / VECTOR);
-    for (let vertex = 0; vertex < isShallow.length; vertex++) isShallow[vertex] = valueAt(field, positions[vertex * VECTOR], positions[vertex * VECTOR + 1], positions[vertex * VECTOR + 2]) > least ? 1 : 0;
+    for (let vertex = 0; vertex < isShallow.length; vertex++)
+      isShallow[vertex] = valueAt(field, positions[vertex * VECTOR], positions[vertex * VECTOR + 1], positions[vertex * VECTOR + 2]) > least ? 1 : 0;
     const kept = new Uint32Array(indices.length);
     const keptAlongs = new Uint8Array(alongs.length);
     let count = 0;
@@ -1318,5 +1354,24 @@
     return { owners, weights: shares };
   };
 
-  Kit.sculpt = { DETAIL, KINDS, FAR, invertAffine, smoothMin, polygonDistance, sectionTable, distanceOf, solid, cellFor, isTooThin, sample, valueAt, slopeAt, nearestAt, surface, weights };
+  Kit.sculpt = {
+    DETAIL,
+    KINDS,
+    FAR,
+    invertAffine,
+    smoothMin,
+    polygonDistance,
+    sectionTable,
+    distanceOf,
+    solid,
+    cellFor,
+    isTooThin,
+    sample,
+    sampleSteps,
+    valueAt,
+    slopeAt,
+    nearestAt,
+    surface,
+    weights,
+  };
 })();

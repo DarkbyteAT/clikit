@@ -29,6 +29,8 @@
    * @returns {Object} a shape row
    */
   const flattened = (radius, { width = 1, depth = 1, taper } = {}) => ({ ...drawn(radius, taper), scale: [width, 1, depth] });
+  /** A shape turned about the bone's long axis from a rounded profile [[radius, along], ...] (a head, a muzzle, a hat). */
+  const round = (profile) => ({ kind: 'lathe', profile, smooth: true });
   /** A flat fin or wing: an outline [[across, along], ...] in the plane of the bone's long axis and `across`. */
   const fin = (outline, across, depth = 0.014) => ({ kind: 'extrude', outline, depth, across });
 
@@ -64,7 +66,7 @@
       ],
       paint: 'skin',
     },
-    { name: `hand${side}`, parent: `forearm${side}`, at: [0, -0.26, 0], tail: [0, -0.1, 0], roles: ['arm', 'hand', 'primary', 'tip', sideRoles(side)], girth: 0.05, shape: drawn(0.046, 0.8), paint: 'skin' },
+    { name: `hand${side}`, parent: `forearm${side}`, at: [0, -0.26, 0], tail: [0, -0.1, 0], roles: ['arm', 'hand', 'primary', 'tip', sideRoles(side)], girth: 0.05, shape: { kind: 'sphere', radius: 0.058, at: [0, -0.05, 0], scale: [0.62, 1.15, 0.95] }, paint: 'skin' },
   ];
   const bipedLeg = (side, sign) => [
     {
@@ -99,9 +101,9 @@
     const prefix = `${end}${side}`;
     const roles = ['leg', end, sideRoles(side), ...(end === 'hind' ? ['primary'] : [])];
     return [
-      { name: `${prefix}Upper`, parent: hip, at: [0.12 * sign, -0.06, 0], roles, girth: 0.08, shape: drawn(0.058) },
+      { name: `${prefix}Upper`, parent: hip, at: [0.12 * sign, -0.06, 0], roles, girth: 0.08, shape: drawn(end === 'hind' ? 0.074 : 0.06, 0.72) },
       { name: `${prefix}Lower`, parent: `${prefix}Upper`, at: [0, -0.27, 0], roles, girth: 0.06, shape: drawn(0.038) },
-      { name: `${prefix}Paw`, parent: `${prefix}Lower`, at: [0, -0.25, 0], tail: [0, 0, 0.08], roles: [...roles, 'foot', 'tip'], girth: 0.05, shape: drawn(0.04, 0.85) },
+      { name: `${prefix}Paw`, parent: `${prefix}Lower`, at: [0, -0.25, 0], tail: [0, 0, 0.08], roles: [...roles, 'foot', 'tip'], girth: 0.05, shape: { kind: 'sphere', radius: 0.048, at: [0, -0.005, 0.035], scale: [0.9, 0.62, 1.35] } },
     ];
   };
 
@@ -150,7 +152,7 @@
           at: [0, 0.22, 0],
           roles: ['neck'],
           girth: 0.05,
-          shape: drawn(0.055),
+          shape: drawn(0.064),
           limits: [
             [-40, 40],
             [-60, 60],
@@ -171,7 +173,16 @@
             [-20, 20],
           ],
           paint: 'skin',
-          shape: { kind: 'sphere', radius: 0.12, at: [0, 0.11, 0] },
+          // A skull that narrows to a jaw and sits down over the neck, turned from one rounded profile.
+          shape: round([
+            [0.062, -0.03],
+            [0.094, 0.025],
+            [0.116, 0.1],
+            [0.122, 0.165],
+            [0.104, 0.225],
+            [0.058, 0.262],
+            [0, 0.27],
+          ]),
         },
         ...bipedArm('Left', 1),
         ...bipedArm('Right', -1),
@@ -188,11 +199,23 @@
     quadruped: {
       bones: [
         { name: 'ground', roles: ['root'], joint: 'free', shape: { kind: 'none' } },
-        { name: 'hips', parent: 'ground', at: [0, 0.58, -0.35], roles: ['spine'], girth: 0.14, shape: drawn(0.105), joint: 'free', paint: 'skin' },
-        { name: 'belly', parent: 'hips', at: [0, 0, 0.35], roles: ['spine'], girth: 0.17, shape: drawn(0.112) },
-        { name: 'shoulders', parent: 'belly', at: [0, 0, 0.35], roles: ['spine'], girth: 0.16, shape: drawn(0.125) },
-        { name: 'neck', parent: 'shoulders', at: [0, 0.14, 0.14], roles: ['neck'], girth: 0.08, shape: drawn(0.075) },
-        { name: 'head', parent: 'neck', at: [0, 0.1, 0.14], tail: [0, 0, 0.24], roles: ['head'], girth: 0.12, shape: drawn(0.085, 0.5) },
+        { name: 'hips', parent: 'ground', at: [0, 0.58, -0.35], roles: ['spine'], girth: 0.14, shape: flattened(0.118, { width: 0.86 }), joint: 'free', paint: 'skin' },
+        { name: 'belly', parent: 'hips', at: [0, 0, 0.35], roles: ['spine'], girth: 0.17, shape: flattened(0.112, { width: 0.84 }) },
+        { name: 'shoulders', parent: 'belly', at: [0, 0, 0.35], roles: ['spine'], girth: 0.16, shape: flattened(0.146, { width: 0.8 }) },
+        { name: 'neck', parent: 'shoulders', at: [0, 0.14, 0.14], roles: ['neck'], girth: 0.08, shape: drawn(0.082) },
+        { name: 'head', parent: 'neck', at: [0, 0.1, 0.14], tail: [0, 0, 0.24], roles: ['head'],
+          girth: 0.12,
+          // A skull that steps down to a muzzle, turned about the bone (it points forward).
+          shape: round([
+            [0.058, -0.05],
+            [0.094, 0.01],
+            [0.092, 0.075],
+            [0.06, 0.125],
+            [0.05, 0.2],
+            [0.04, 0.245],
+            [0, 0.255],
+          ]),
+        },
         { name: 'jaw', parent: 'head', at: [0, -0.05, 0.06], tail: [0, 0, 0.16], roles: ['jaw'], girth: 0.04, shape: drawn(0.034, 0.7) },
         ...quadrupedLeg('front', 'shoulders', 'Left', 1),
         ...quadrupedLeg('front', 'shoulders', 'Right', -1),
@@ -294,6 +317,8 @@
   };
 
   /** A left wing's arm blade, [up, out] from the shoulder, and its hand blade, [out, up] from the wrist; the right wing mirrors `out`. */
+  /** How thick a wing is drawn, metres: a mass of feathers, not a card. */
+  const WING_DEPTH = 0.034;
   const WING_ARM = [
     [0.03, 0],
     [0.27, 0.44],
@@ -362,10 +387,13 @@
             kind: 'lathe',
             profile: [
               [0.17, 0],
-              [0.16, 0.02],
+              [0.175, 0.012],
+              [0.16, 0.024],
               [0.09, 0.04],
             ],
+            smooth: true,
           },
+          wear: 'solid',
         },
         {
           name: 'crown',
@@ -383,7 +411,9 @@
               [0.04, 0.16],
               [0, 0.16],
             ],
+            smooth: true,
           },
+          wear: 'solid',
         },
       ],
     },
@@ -391,10 +421,10 @@
       fits: ['back'],
       bones: [
         // Each wing is two flat blades: an arm out to the wrist, and a hand that sweeps down from it.
-        { name: 'wingLeft', at: [0.06, 0, 0], roles: ['wing', 'left'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, out]), 'y') },
-        { name: 'wingLeftTip', parent: 'wingLeft', at: [0.42, 0.22, -0.06], tail: [0.3, -0.34, -0.04], roles: ['wing', 'left', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [out, up]), 'x') },
-        { name: 'wingRight', at: [-0.06, 0, 0], roles: ['wing', 'right'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, -out]), 'y') },
-        { name: 'wingRightTip', parent: 'wingRight', at: [-0.42, 0.22, -0.06], tail: [-0.3, -0.34, -0.04], roles: ['wing', 'right', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [-out, up]), 'x') },
+        { name: 'wingLeft', at: [0.06, 0, 0], roles: ['wing', 'left'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, out]), 'y', WING_DEPTH), wear: 'solid' },
+        { name: 'wingLeftTip', parent: 'wingLeft', at: [0.42, 0.22, -0.06], tail: [0.3, -0.34, -0.04], roles: ['wing', 'left', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [out, up]), 'x', WING_DEPTH), wear: 'solid' },
+        { name: 'wingRight', at: [-0.06, 0, 0], roles: ['wing', 'right'], girth: 0.04, shape: fin(WING_ARM.map(([up, out]) => [up, -out]), 'y', WING_DEPTH), wear: 'solid' },
+        { name: 'wingRightTip', parent: 'wingRight', at: [-0.42, 0.22, -0.06], tail: [-0.3, -0.34, -0.04], roles: ['wing', 'right', 'tip'], girth: 0.03, shape: fin(WING_HAND.map(([out, up]) => [-out, up]), 'x', WING_DEPTH), wear: 'solid' },
       ],
     },
   };
