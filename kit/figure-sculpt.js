@@ -583,7 +583,7 @@
    * @param {SculptLayer} canvas the layer painted on (a skin, or a raised garment)
    * @param {function(number, number, number): boolean} keep is a point of the canvas painted? (in the canvas's space)
    * @param {function(number): boolean} mayHold can the predicate hold on vertices owned by this bone? (it is not asked elsewhere)
-   * @returns {{painted: ?SculptMesh, rest: ?SculptMesh}} the painted sheet and what is left of the canvas (positions, normals, indices, owners, weights); either is null when empty
+   * @returns {{painted: ?Object, rest: ?Object}} the painted sheet and what is left of the canvas (positions, normals, indices, owners, weights); either is null when empty
    * @complexity O(vertices + triangles of the canvas), with about one predicate call per vertex and edge near the paint and 7 per crossing
    * @example
    * const { painted, rest } = Kit.figure.paintedOn(skin, (x, y, z) => Math.floor(y * 20) % 2 === 0, () => true);

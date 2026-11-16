@@ -890,3 +890,77 @@ machine at load 20 to 40, so only the ratios mean anything.
   spheres; the warm targets of 150 / 60 / 20 ms are missed for the eight-layer person (about 245 / 95 / 38);
   low-detail drapes thinner than the least share fall back to a rigid board; the look view does not yet pick
   the level itself (the caller passes `levelFor(pixels)`).
+
+## Cloth, paint and carried things on the sculpt layer (sculpt-cloth branch)
+
+- **Causes first.** Four faults had one cause each, none of them in a garment. (1) The cape hole and the
+  notched hem: a draped piece was meshed where it was authored, and a cloak panel authored 17 cm behind
+  the spine, tilted 7 degrees in, lies inside a stout body and its top (83% of its vertices within 2 cm of
+  the skin, up to 5.6 cm deep). Nothing placed cloth relative to what is under it. (2) A nose dial changing
+  a skirt's length: `sculptSignature` left out the pose's inherited size (`rest.uniform`), so the first body
+  sculpted on a sheet (a height extreme) lent its layers to every later body with the same pieces; and a
+  worn part's root bone carried the role `root`, so a height dial reached it twice (once through the bone it
+  hangs from, once by role). (3) Boards at low detail: a solid thinner than 0.4 of the grid's least
+  thickness was left as its rigid piece. (4) Ragged bands, speckle and patches in paint: a paint sheet was
+  meshed on its own 1.2 mm above its canvas, so it was faceted differently from it (the chord error of a
+  limb at low detail is about that lift), crossed it, and shaded by normals of its own.
+- **Cloth is laid, not placed (kit/drape.js).** A drape is made at rest in four steps: its bones are swung
+  about their joints until nothing of it is buried deeper than `restDepth` in what is under it
+  (`hangAngle`); it is meshed, on the grid where it is thick and as a shell of its built shape where it is
+  thinner than the grid can hold (`shell`: welded, edges bisected, exactly as thin as authored at every
+  level); what is still under the surface is pushed out across the way it hangs and the push is handed on
+  down the cloth (`settle`); and its vertices are shared between the body bones it rests on and its own
+  bone (`ride`). "What is under it" is one function (`under`): the body's solids, each grown by the raise of
+  the garments on it, plus every drape of a lower `rank` already laid, as its solid, as a cloud of the
+  vertices that moved (`cloud`), and, for cloth hung all round the body, as everything it encloses
+  (`round`: a skirt is hollow, and tails laid over only its wall hung inside it). A solid with a rank is set
+  out on the cloth under it (`seat`): a pack sits on the cloak. The order is data: `rank` on a bone row,
+  defaults by fit in `WEAR_BY_FIT` (bottom 1, outerwear 2, cloak 3, back 4).
+  Rejected: a field warp (offsetting the garment's distance field by the body's) cannot hold a 2 cm panel
+  on a 2 to 5 cm grid and costs a field sample per drape; a relaxation pass (position-based cloth over a
+  few iterations) made at sculpt time would give folds, but its result depends on the mesh it runs on, so
+  the same garment would hang differently at each level of detail unless it ran on one mesh and was
+  transferred (not tried: reasoned, not measured); pushing
+  along the body's own slope crumpled cone caps and pushed a cloak out of the bottom of a skirt (kept:
+  across the hang only). Trade-off recorded: a cloak hangs as a straight panel from the shoulders to where
+  it rests (no fold at the seat); a second hinge at the contact is the next step, not a simulation.
+- **Cloth in motion is skin weights plus one bone.** Where cloth lies within `contact` of the body the
+  body's bones carry it (a lifted thigh moves the skirt: under 2 cm of thigh shows where the rigid piece let
+  4 cm through); further off it rides its own bone more, and beyond `clings` wholly. That bone is the one
+  the movement layer simulates (`soft` rows and `Kit.motion.loose` on the act branch), so trailing and
+  settling of a cape are the movement layer's, and this layer's part is that all the free cloth rides that
+  one bone. Rejected: a per-frame cloth pass (verlet over the shell) costs a CPU pass per figure per frame
+  and cannot be instanced in a crowd; collision in the vertex shader needs the body's capsules per instance
+  (a second bone-texture read per vertex per capsule). Weights cost nothing per frame and instance as the
+  body does. Known limit: with no simulated bone on this branch a cape does not swing, and a leg can pass
+  through cloth that rides only its own bone.
+- **Paint is the surface it is on.** `paintedOn` parts a layer's own triangles along the pattern's exact
+  edge (the predicate asked at vertices and at the middle of edges whose ends agree, a crossing placed by
+  seven bisections, decided per edge so no crack opens) into a painted sheet and the rest; both share
+  vertices, normals and skin along the cut. Nothing is drawn twice and nothing is lifted. Rejected: a
+  per-pixel shader would give the same edge with no triangles, and is the right end state for stipple; it
+  needs every `where` predicate of the region vocabulary compiled to GLSL with the surface coordinates as
+  vertex attributes, in both looks, which is a change to the look and region modules together and not to
+  this layer. Kept apart: finer paint grids (the edge stays stepped) and a larger lift (parallax at the
+  silhouette).
+- **What a garment covers is not drawn.** Each layer of a paint group gives up the triangles under a raised
+  garment that stands further off the skin, but for one ring under the garment's edge (`uncovered`). This
+  is the layering rule read downward, and it pays for the paint's cut: over 48 rolled figures mean
+  triangles fall 17% at every level (low 13 556 to 11 336; high 72 182 to 59 911, 12 rolls), though a bare
+  figure with a stippled scalp and two sculpted staffs rises 42% at low (roll 3).
+- **Carried things by fit.** `back`, `grip` and `flame` parts are `wear: 'solid'` by default: sculpted,
+  smooth, skinned to their bones. What is thinner than the grid holds stays the piece it was built as
+  (poles, handles, blades, glasses, earrings: those were looked at and left).
+- **Size reaches a worn part once.** A role selector that names `root` matches the body's own root, not the
+  roots of attached parts (names with a `/`), which inherit size through the bone they hang from. Visible
+  across the catalogue: on the default person worn parts are about 4.5% smaller than before, on a stout
+  body about 13% larger, which is what one application of its height dial gives.
+- **Fixtures changed.** tools/test-sculpt.js: a skirt's hem may be owned by the skirt's own bone as well as
+  the legs, and "hangs as authored" became "nothing inside the authored cone, nothing pushed further than
+  `mostPush`, some vertices exactly as authored"; "skins are closed" became "a skin, with the paint cut out
+  of it put back, is open only under a raised garment".
+- **Not done.** No fold where a panel leaves the body; coat tails over a skirt are lumpy and can show a
+  slit between two coarse vertices; stipple at low detail turns to short dashes; an umbrella's canopy still
+  passes through the head (a hold pose is the movement layer's); sit, kick and dive rows do not exist on
+  this branch, so cloth was judged in walk, run and swim only.
+

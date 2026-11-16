@@ -234,7 +234,7 @@ module.exports = ({ Kit, test, assert }) => {
     return out;
   };
   /** The body's own solids placed by bone matrices: what cloth lies on. */
-  const bodySolids = ({ bake, layout }, matrices) =>
+  const bodySolids = ({ layout }, matrices) =>
     layout.pieces.filter((piece) => !piece.isProp && !piece.stamps && !piece.shell && piece.tone === undefined && sculpt.KINDS[piece.shape.kind]).map((piece) => sculpt.solid(piece.shape, matrices.subarray(piece.bone * MATRIX, piece.bone * MATRIX + MATRIX), { owner: piece.bone }));
   /** The lowest, widest and rearmost reach of a layer's vertices at rest: [lowest y, widest |x|, rearmost z]. */
   const reachOf = (layer, { sculpted, rest }) => {
