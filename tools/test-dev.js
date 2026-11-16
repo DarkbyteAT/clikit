@@ -17,7 +17,7 @@ const { scriptSources, insertScriptTag, removeScriptTag, compareTags, belongsToG
 const scaffold = require('./dev/scaffold');
 const { POLICIES, simulate, analyze, seededRandom, formatClock } = require('./dev/simulate');
 const { parseSmokeOutput, parseBiomeOutput, renderTable, scopedRows } = require('./dev/check');
-const { checkBudgets, BUDGETS } = require('./dev/budgets');
+const { checkBudgets, checkSculptBudgets, BUDGETS, SCREEN_BUDGETS, SCULPT_BUDGETS } = require('./dev/budgets');
 const { parseTscOutput, countByFile, compareWithBaseline } = require('./dev/typecheck');
 const { reuseRatio, appendLedgerRow, tokensByTier } = require('./dev/metrics');
 const { judge } = require('./bench');
@@ -253,6 +253,14 @@ test('check: tool outputs parse into rows; scope separates my failures from othe
   assert.strictEqual(smoke.menu.summary, 'games registered = [miner, runner] | finger drag moved the list 80px', 'a second menu line does not hide the registered list');
   assert.deepStrictEqual(checkBudgets({ calls: 10, triangles: 10, meshes: 10 }), []);
   assert.ok(checkBudgets({ calls: BUDGETS.calls.limit + 1, triangles: 10, meshes: 10 })[0].startsWith(`${BUDGETS.calls.limit + 1} draw calls (budget ${BUDGETS.calls.limit})`));
+  // A screen with limits of its own is held to them; the same probe passes for any other screen.
+  const maker = { calls: 19, triangles: 147920, meshes: 1 };
+  assert.deepStrictEqual(checkBudgets(maker, 'miner'), []);
+  assert.strictEqual(checkBudgets(maker, 'creator').length, 2);
+  assert.ok(checkBudgets(maker, 'creator')[0].includes(`(budget ${SCREEN_BUDGETS.creator.calls})`));
+  assert.deepStrictEqual(checkBudgets({ calls: 3, triangles: 39638, meshes: 1 }, 'creator'), []);
+  assert.deepStrictEqual(checkSculptBudgets('low', { triangles: SCULPT_BUDGETS.low.triangles, meshes: 1, bytes: 1 }), []);
+  assert.deepStrictEqual(checkSculptBudgets('low', { triangles: 9710, meshes: 8, bytes: 337570 }).map((message) => message.split(' ').slice(0, 3).join(' ')), ['low: 9710 triangles', 'low: 8 skinned', 'low: 337570 bytes']);
   const rows = scopedRows('lint', [{ file: 'games/miner.js', text: 'mine' }, { file: 'kit/ui.js', text: 'theirs' }], (file) => file.startsWith('games/miner'), 'clean');
   assert.deepStrictEqual(rows.map((row) => [row.name, row.status]), [['lint', 'FAIL'], ['lint (other files)', 'WARN']]);
   assert.deepStrictEqual(scopedRows('lint', [], () => true, 'clean'), [{ name: 'lint', status: 'PASS', detail: 'clean' }]);

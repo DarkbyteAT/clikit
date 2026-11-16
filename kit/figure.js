@@ -33,12 +33,20 @@
   const MATRIX_TEXELS = 4;
   /** Bones that may move one vertex of a sculpted surface. */
   const SKIN_OWNERS = 4;
+  /** Numbers per vertex of a sculpted surface's paint (its ramp slot, its ink group, whether it glints). */
+  const SURFACE_PAINT = 3;
   const QUATERNION = 4;
   /** Floats per vertex of a stamp's paint and of its centre (kit/figure-shapes.js `stamps`). */
   const STAMP_PAINT = 4;
   const STAMP_CENTRE = 4;
   /** A crowd member's place: x, y, z, heading. */
   const PLACE = 4;
+  /** The `level` that lets a figure choose its own by how tall it is drawn. */
+  const AUTO_LEVEL = 'auto';
+  /** An automatic figure not told its size starts at the level of this many pixels: low, the quickest that still reads up close. */
+  const AUTO_START_PIXELS = 100;
+  /** Milliseconds of a frame a figure spends sculpting the level it is moving to. */
+  const LEVEL_SLICE_MS = 4;
 
   const fail = (where, message) => {
     throw new Error(`Kit.figure.${where}: ${message}`);
@@ -235,6 +243,11 @@
    *   built with `sculpt: 'steps'`, not sculpted yet); true when it did. With a number it works for about that many
    *   milliseconds and returns false until the work, spread over as many calls as it takes, is done
    * @property {function(): boolean} isSettled false while the surfaces wait for `settle()`
+   * @property {function(): string} level the level of detail shown now
+   * @property {function(number, number=): string} resize tells the figure how tall it is drawn, in target pixels: it
+   *   moves to the level that height asks for (`Kit.figure.detailFor`, so not at every wobble), sculpting the new
+   *   level for about the given milliseconds a call (default 4) and swapping when it is ready; returns the level
+   *   shown. A view calls it every frame for a figure built with `level: 'auto'`; any figure may be told by hand
    * @property {function(number): Object} frame a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
    * @property {function(): {meshes: number, skinned: number, materialsCreated: number, geometriesCreated: number}} counters `meshes`:
    *   draw objects in all, of which `skinned` are sculpted surfaces
@@ -245,8 +258,10 @@
    * Builds a figure in a view.
    * @param {Object} view from `Kit.look.view`
    * @param {Object} bake from a bakery (kit/body-recipe.js), or a part alone `{ plan, boneRamp, ramps }`
-   * @param {{level?: string, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, sculpt?: boolean|string, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
-   *   `level` of detail (default 'high'); `cache` shared between figures (default one per module); `rows`: a
+   * @param {{level?: string, pixels?: number, cache?: GeometryCache, rows?: Object, ground?: boolean, center?: boolean, sculpt?: boolean|string, featuresOf?: ?Function, regionMapOf?: ?Function}} [options]
+   *   `level` of detail (default 'high'), or 'auto': the view tells the figure how tall it is drawn each frame and
+   *   the figure keeps the level that asks for (kit/figure-detail.js), starting at `pixels` (target pixels; default:
+   *   low, which is quick to make) and changing without a hitch; `cache` shared between figures (default one per module); `rows`: a
    *   block from `loadRows` to share (default: the figure loads its own, and frees it on `dispose`); `ground`:
    *   stand the body's lowest point at rest on y = 0 (default true); `center`: turn about the middle of the
    *   footprint rather than the plan's origin (default true); `sculpt`: draw the body as blended, skinned
@@ -263,7 +278,10 @@
    */
   const build = (view, bake, options = {}) => {
     const cache = options.cache || sharedCache();
-    const layoutOptions = { level: options.level, featuresOf: options.featuresOf, regionMapOf: options.regionMapOf };
+    const isAuto = options.level === AUTO_LEVEL;
+    const layoutOptions = { level: isAuto ? Kit.figure.detailFor(options.pixels === undefined ? AUTO_START_PIXELS : options.pixels) : options.level, featuresOf: options.featuresOf, regionMapOf: options.regionMapOf };
+    /** The level the figure is moving to, with its layout and the sculpt under way for it (`resize`); null when it is where it should be. */
+    let pending = null;
     const textures = sharedRegionTextures();
     const shouldGround = options.ground !== false;
     const shouldCenter = options.center !== false;
@@ -287,13 +305,13 @@
     /** The surfaces were sculpted for an earlier bake and are being bent to this one by the skeleton (see `setBake`). */
     let isStale = false;
 
-    /** Takes the sculpted surfaces down. */
+    /** Takes the sculpted surface down. */
     const removeSkin = () => {
       if (!skin) return;
-      skin.meshes.forEach(({ mesh, dressed, layer }) => {
+      skin.meshes.forEach(({ mesh, dressed, surface }) => {
         root.remove(mesh);
         view.shading.undress(dressed);
-        releaseSkinGeometry(layer);
+        releaseSkinGeometry(surface);
       });
       skin.bones.forEach((bone) => root.remove(bone));
       skin.skeleton.dispose();
@@ -309,18 +327,17 @@
       });
       const inverses = bones.map((_bone, index) => new THREE.Matrix4().fromArray(sculpted.matrices, index * MATRIX).invert());
       const skeleton = new THREE.Skeleton(bones, inverses);
-      const meshes = sculpted.layers.map((layer) => {
-        const mesh = new THREE.SkinnedMesh(acquireSkinGeometry(layer));
-        mesh.name = layer.id;
+      // Every layer in one mesh (kit/figure-sculpt.js `SculptSurface`): a figure is one skinned draw, and its hull.
+      const meshes = [sculpted.surface].filter((surface) => surface.indices.length > 0).map((surface) => {
+        const mesh = new THREE.SkinnedMesh(acquireSkinGeometry(surface));
+        mesh.name = 'sculpted';
         // The bones move the surface anywhere; its rest bounds say nothing about where it is drawn.
         mesh.frustumCulled = false;
         root.add(mesh);
         mesh.bind(skeleton, new THREE.Matrix4());
-        // A body surface is a head and a body in one mesh: each vertex says how much of a face's light it takes.
-        const faceLight = layer.faceShare ? { response: 'face', responseShare: true } : {};
-        const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, anchor, ...faceLight });
+        const dressed = view.shading.dress(mesh, { ...surfacePart(block), anchor });
         materialsCreated += MATERIALS_PER_DRESS;
-        return { mesh, dressed, layer };
+        return { mesh, dressed, surface };
       });
       skin = { ...sculpted, bones, skeleton, meshes, scratch: Kit.body.createPose(shown.plan) };
       isStale = false;
@@ -343,7 +360,7 @@
      * the lead bone's rotation whatever wrote the pose, so a walk swings the arms about their opened rest.
      */
     const opened = (local) => (skin ? openedInto(skin.clearance, local, skin.scratch) : local);
-    const isReplaced = (piece) => Boolean(skin && skin.replaced.has(piece.id));
+    const isReplaced = (piece) => Boolean(skin && (skin.replaced.has(piece.id) || skin.joined.has(piece.id)));
 
     const addPiece = (piece) => {
       // A carving piece is a shape taken out of the sculpted surface, never a thing to draw.
@@ -408,6 +425,29 @@
       figure.measured = { ...measured, lowestY: measured.lowestY + offset.y, highestY: measured.highestY + offset.y, lowestPropY: measured.lowestPropY + offset.y, centerX: 0, centerZ: 0 };
     };
 
+    /** Starts the move to another level: its layout, and its surface sculpted in steps while the old one is still drawn. */
+    const startLevel = (level) => {
+      const layout = Kit.figure.layout(shown, { ...layoutOptions, level });
+      pending = { level, layout, task: shouldSculpt ? Kit.figure.sculptTask(shown, layout) : null };
+    };
+    /** Swaps to the level that is ready: every rigid piece and the surface are those of the new level from this frame on. */
+    const finishLevel = () => {
+      const { level, layout, task } = pending;
+      pending = null;
+      layoutOptions.level = level;
+      entries.forEach(removeEntry);
+      entries = [];
+      shownLayout = layout;
+      figure.layout = layout;
+      if (task) {
+        removeSkin();
+        addSkin(task.result);
+      }
+      layout.pieces.forEach(addPiece);
+      remeasure();
+      figure.pose();
+    };
+
     const figure = {
       root,
       anchor,
@@ -451,6 +491,8 @@
         entries.forEach(dropFaces);
         Object.keys(shownFace).forEach((set) => (shownFace[set] = 0));
         const previousPlan = shown.plan;
+        // A move to another level was for the bake that is leaving; `resize` starts it again for this one.
+        pending = null;
         const nextLayout = Kit.figure.layout(next, layoutOptions);
         const update = Kit.figure.planUpdate(shownLayout, nextLayout, changes);
         const leaving = new Set(update.remove);
@@ -504,6 +546,21 @@
         return true;
       },
       isSettled: () => !isStale,
+      level: () => shownLayout.level,
+      resize(pixels, milliseconds = LEVEL_SLICE_MS) {
+        // While an edit waits to be sculpted the level stays: one sculpt at a time.
+        if (isStale) return shownLayout.level;
+        const wanted = Kit.figure.detailFor(pixels, pending ? pending.level : shownLayout.level);
+        if (wanted === shownLayout.level) pending = null;
+        else if (!pending || pending.level !== wanted) startLevel(wanted);
+        if (!pending) return shownLayout.level;
+        const { task } = pending;
+        // Ready when there is nothing to sculpt, when another figure of the same bake has sculpted it meanwhile
+        // (taking it from the cache costs nothing), or when this call's share of the frame finishes it.
+        const isShared = Boolean(task) && !task.isDone() && Kit.figure.sculptCache.has(task.signature);
+        if (!task || task.isDone() || (isShared ? task.step(0) : milliseconds > 0 && task.step(milliseconds))) finishLevel();
+        return shownLayout.level;
+      },
       frame: (aspect, frameOptions) => Kit.figure.fitView(figure.measured, aspect, frameOptions),
       counters: () => ({ meshes: entries.length + (skin ? skin.meshes.length : 0), skinned: skin ? skin.meshes.length : 0, materialsCreated, geometriesCreated: cache.stats().created }),
       dispose() {
@@ -515,6 +572,8 @@
         if (!options.rows && view.atlas.free) view.atlas.free(block);
       },
     };
+    // A view sizes an automatic figure every frame (kit/look-view.js), in the world height of its body at rest.
+    if (isAuto) anchor.sized = { height: () => (figure.measured.highestY - figure.measured.lowestY) * root.scale.y, resize: figure.resize, isBusy: () => pending !== null };
     if (shouldSculpt && isStepped && !Kit.figure.sculptTask(shown, shownLayout).isDone()) isStale = true;
     else if (shouldSculpt) addSkin();
     shownLayout.pieces.forEach(addPiece);
@@ -545,11 +604,17 @@
     return scratch;
   };
 
-  /** @type {WeakMap<Object, {geometry: THREE.BufferGeometry, users: number}>} one geometry per sculpted layer, shared by every figure showing it */
+  /**
+   * What a sculpted surface is to the look: every vertex names its own paint (its ramp slot from the figure's
+   * block, and its ink group), and how much of a face's light it takes (a body surface is a head and a body in one).
+   */
+  const surfacePart = (block) => ({ ramp: block.offset, blockRow: block.offset, vertexPaint: true, inkGroup: 1, response: 'face', responseShare: true });
+
+  /** @type {WeakMap<Object, {geometry: THREE.BufferGeometry, users: number}>} one geometry per sculpted surface, shared by every figure showing it */
   const skinGeometries = new WeakMap();
   /**
-   * The geometry of a sculpted layer (kit/figure-sculpt.js `SculptLayer`). Equal bakes share their layers, so
-   * figures of one look share one upload.
+   * The geometry of a sculpted surface (kit/figure-sculpt.js `SculptSurface`). Equal bakes share their surface,
+   * so figures of one look share one upload.
    */
   const acquireSkinGeometry = (layer) => {
     const known = skinGeometries.get(layer);
@@ -563,6 +628,7 @@
     geometry.setAttribute('skinIndex', new THREE.BufferAttribute(layer.owners, SKIN_OWNERS));
     geometry.setAttribute('skinWeight', new THREE.BufferAttribute(layer.weights, SKIN_OWNERS));
     if (layer.faceShare) geometry.setAttribute('responseShare', new THREE.BufferAttribute(layer.faceShare, 1));
+    if (layer.paint) geometry.setAttribute('vertexPaint', new THREE.BufferAttribute(layer.paint, SURFACE_PAINT));
     geometry.setIndex(new THREE.BufferAttribute(layer.indices, 1));
     skinGeometries.set(layer, { geometry, users: 1 });
     return geometry;
@@ -632,7 +698,7 @@
     const canSculpt = options.sculpt !== false && Boolean(Kit.figure.sculptLayers) && view.isWebGL2 === true;
     const sculpted = canSculpt ? Kit.figure.sculptLayers(bake, pieceLayout) : null;
     const meshes = pieceLayout.pieces
-      .filter((piece) => !piece.carve && (!sculpted || !sculpted.replaced.has(piece.id)))
+      .filter((piece) => !piece.carve && (!sculpted || !(sculpted.replaced.has(piece.id) || sculpted.joined.has(piece.id))))
       .map((piece) => {
         const mesh = new THREE.InstancedMesh(cache.acquire(piece), undefined, count);
         // Members wander over the whole stage; the geometry's own bounds would cull them wrongly.
@@ -647,12 +713,11 @@
     const boneTexture = sculpted ? new THREE.DataTexture(boneData, boneCount * MATRIX_TEXELS, count, THREE.RGBAFormat, THREE.FloatType) : null;
     const inverses = sculpted ? new Float32Array(boneCount * MATRIX) : null;
     if (sculpted) for (let bone = 0; bone < boneCount; bone++) new THREE.Matrix4().fromArray(sculpted.matrices, bone * MATRIX).invert().toArray(inverses, bone * MATRIX);
-    const skins = (sculpted ? sculpted.layers : []).map((layer) => {
+    const skins = (sculpted ? [sculpted.surface] : []).map((layer) => {
       const mesh = new THREE.InstancedMesh(acquireSkinGeometry(layer), undefined, count);
       mesh.frustumCulled = false;
       root.add(mesh);
-      const faceLight = layer.faceShare ? { response: 'face', responseShare: true } : {};
-      const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, crowdBones: boneTexture, ...faceLight });
+      const dressed = view.shading.dress(mesh, { ...surfacePart(block), crowdBones: boneTexture });
       return { layer, mesh, dressed };
     });
     const locals = Array.from({ length: count }, () => Kit.rig.copy(bake.rest, Kit.body.createPose(bake.plan)));

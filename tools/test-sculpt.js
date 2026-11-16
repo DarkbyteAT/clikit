@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const FILES = ['sculpt', 'sculpt-relief', 'drape', 'figure-sculpt'];
+const FILES = ['sculpt', 'sculpt-relief', 'drape', 'figure-detail', 'figure-sculpt'];
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const VECTOR = 3;
 const OWNERS = 4;
@@ -107,6 +107,76 @@ const nearestVertex = (positions, x, y, z) => {
   let nearest = Infinity;
   for (let offset = 0; offset < positions.length; offset += VECTOR) nearest = Math.min(nearest, Math.hypot(positions[offset] - x, positions[offset + 1] - y, positions[offset + 2] - z));
   return nearest;
+};
+
+/** The 26 directions to the faces, edges and corners of a cube, unit length. */
+const DIRECTIONS = [-1, 0, 1]
+  .flatMap((x) => [-1, 0, 1].flatMap((y) => [-1, 0, 1].map((z) => [x, y, z])))
+  .filter(([x, y, z]) => x || y || z)
+  .map((direction) => direction.map((value) => value / Math.hypot(...direction)));
+
+/**
+ * What a viewer far away along `direction` sees of some meshes: the depth of the nearest surface through each
+ * pixel of a `size` x `size` picture that frames `bounds` (parallel rays, one through each pixel's centre).
+ * @param {Array<{positions: ArrayLike<number>, indices: ArrayLike<number>}>} meshes
+ * @param {number[]} direction unit [x, y, z], the way the rays travel
+ * @param {{centre: number[], radius: number}} bounds a ball round everything drawn
+ * @param {number} size pixels along a side
+ * @returns {Float64Array} depth per pixel, Infinity where nothing is hit
+ */
+const depthsAlong = (meshes, direction, bounds, size) => {
+  const [dx, dy, dz] = direction;
+  // Two axes square to the rays.
+  const seed = Math.abs(dy) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  const across = [dy * seed[2] - dz * seed[1], dz * seed[0] - dx * seed[2], dx * seed[1] - dy * seed[0]];
+  const acrossLength = Math.hypot(...across);
+  const [ux, uy, uz] = across.map((value) => value / acrossLength);
+  const [vx, vy, vz] = [dy * uz - dz * uy, dz * ux - dx * uz, dx * uy - dy * ux];
+  const scale = size / (2 * bounds.radius);
+  const depths = new Float64Array(size * size).fill(Infinity);
+  const corner = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  meshes.forEach(({ positions, indices }) => {
+    for (let face = 0; face < indices.length; face += VECTOR) {
+      for (let index = 0; index < VECTOR; index++) {
+        const at = indices[face + index] * VECTOR;
+        const [x, y, z] = [positions[at] - bounds.centre[0], positions[at + 1] - bounds.centre[1], positions[at + 2] - bounds.centre[2]];
+        corner[index * VECTOR] = (x * ux + y * uy + z * uz + bounds.radius) * scale;
+        corner[index * VECTOR + 1] = (x * vx + y * vy + z * vz + bounds.radius) * scale;
+        corner[index * VECTOR + 2] = x * dx + y * dy + z * dz;
+      }
+      const [ax, ay, az, bx, by, bz, cx, cy, cz] = corner;
+      const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      if (Math.abs(area) < 1e-12) continue;
+      const fromX = Math.max(0, Math.floor(Math.min(ax, bx, cx)));
+      const toX = Math.min(size - 1, Math.ceil(Math.max(ax, bx, cx)));
+      const fromY = Math.max(0, Math.floor(Math.min(ay, by, cy)));
+      const toY = Math.min(size - 1, Math.ceil(Math.max(ay, by, cy)));
+      for (let pixelY = fromY; pixelY <= toY; pixelY++) {
+        for (let pixelX = fromX; pixelX <= toX; pixelX++) {
+          const [x, y] = [pixelX + 0.5, pixelY + 0.5];
+          const shareB = ((x - ax) * (cy - ay) - (y - ay) * (cx - ax)) / area;
+          const shareC = ((bx - ax) * (y - ay) - (by - ay) * (x - ax)) / area;
+          if (shareB < 0 || shareC < 0 || shareB + shareC > 1) continue;
+          const depth = az + (bz - az) * shareB + (cz - az) * shareC;
+          if (depth < depths[pixelX + size * pixelY]) depths[pixelX + size * pixelY] = depth;
+        }
+      }
+    }
+  });
+  return depths;
+};
+
+/** A ball round every vertex of some meshes. */
+const boundsOf = (meshes) => {
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
+  meshes.forEach(({ positions }) => {
+    for (let at = 0; at < positions.length; at++) {
+      low[at % VECTOR] = Math.min(low[at % VECTOR], positions[at]);
+      high[at % VECTOR] = Math.max(high[at % VECTOR], positions[at]);
+    }
+  });
+  return { centre: low.map((value, axis) => (value + high[axis]) / 2), radius: Math.hypot(...high.map((value, axis) => value - low[axis])) / 2 };
 };
 
 module.exports = ({ Kit, sandbox, test, assert }) => {
@@ -391,6 +461,8 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         const bake = bakery.bakeRecipe({ species, seed: 1 });
         const layout = figure.layout(bake, { level: 'low' });
         const sculpted = figure.sculptLayers(bake, layout);
+        // What a garment hides of a skin is not meshed, so a skin is closed only when it is sculpted whole.
+        const whole = figure.sculptLayers(bake, layout, { cull: false });
         assert.ok(sculpted.layers.length > 0, `${where}: something is sculpted`);
         const boneCount = bake.plan.boneNames.length;
         sculpted.layers.forEach((layer) => {
@@ -416,12 +488,20 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
         // A skin is closed but for what a garment covers: with the paint cut out of it put back, its open edges
         // all lie under a raised garment (within a cell or so of one), and nothing is pinched.
         const isRaised = (layer) => layer.id.startsWith('region:') && !layer.id.endsWith('|0');
+        const withPaint = (skin, layers) => welded([skin, ...layers.filter((layer) => layer.id.startsWith('region:') && !isRaised(layer) && layer.inkGroup === skin.inkGroup)]);
+        // Sculpted whole (nothing left out under a garment), a skin with its paint put back is closed.
+        whole.layers
+          .filter((layer) => layer.id.startsWith('skin:'))
+          .forEach((skin) => {
+            const edges = openEdgesOf(withPaint(skin, whole.layers));
+            assert.deepStrictEqual({ open: edges.open.length, pinched: edges.pinched }, { open: 0, pinched: 0 }, `${where} ${skin.id}: closed when sculpted whole, every edge shared by exactly two triangles`);
+            assert.ok(sixVolumes(skin) > 0, `${where} ${skin.id}: wound outward when sculpted whole`);
+          });
         const raised = sculpted.layers.filter(isRaised);
         sculpted.layers
           .filter((layer) => layer.id.startsWith('skin:'))
           .forEach((skin) => {
-            const whole = welded([skin, ...sculpted.layers.filter((layer) => layer.id.startsWith('region:') && !isRaised(layer) && layer.inkGroup === skin.inkGroup)]);
-            const edges = openEdgesOf(whole);
+            const edges = openEdgesOf(withPaint(skin, sculpted.layers));
             assert.strictEqual(edges.pinched, 0, `${where} ${skin.id}: no edge shared by more than two triangles`);
             assert.ok(sixVolumes(skin) > 0, `${where} ${skin.id}: wound outward`);
             edges.open.forEach(([x, y, z]) => {
@@ -501,7 +581,15 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const armed = catalog.bakery({ capacity: 4 }).bakeRecipe(editor.setSocket({ species, seed: 1 }, 'handRight', 'shortBlade'));
     const armedLayout = figure.layout(armed, { level: 'medium' });
     const blade = armedLayout.pieces.find((candidate) => armed.plan.boneNames[candidate.bone] === 'handRight/blade');
-    assert.ok(blade && !figure.sculptLayers(armed, armedLayout).replaced.has(blade.id));
+    const withBlade = figure.sculptLayers(armed, armedLayout);
+    assert.ok(blade && !withBlade.replaced.has(blade.id));
+    // It is drawn in the one surface all the same, as it is: every triangle its shape was built with, moved by its bone alone.
+    assert.ok(withBlade.joined.has(blade.id), 'the blade rides in the surface');
+    const run = withBlade.surface.ranges.find((range) => range.id === `piece:${blade.id}`);
+    assert.strictEqual(run.indexCount, figure.buildShape(blade.shape, armedLayout.level).indices.length, 'none of its triangles is simplified away');
+    for (let vertex = run.vertexStart; vertex < run.vertexStart + run.vertexCount; vertex++) {
+      if (withBlade.surface.owners[vertex * OWNERS] !== blade.bone || withBlade.surface.weights[vertex * OWNERS] !== 1) assert.fail(`vertex ${vertex} of the blade is not its bone's alone`);
+    }
   });
 
   test('sculpt: a task does the same sculpt in steps of bounded time, and shares the cache', () => {
@@ -557,5 +645,218 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const reshaped = bakery.bakeRecipe(editor.setDial(recipe, dial.id, dial.max));
     assert.ok(figure.sculptSignature(reshaped, figure.layout(reshaped, { level: 'low' })) !== first.signature, 'a dial that changes a girth is');
     assert.ok(figure.sculptSignature(bake, layout, 'high') !== first.signature, 'so is the detail');
+  });
+
+  // ---- cost: fewer triangles, hidden surface, one mesh, a level by size ----
+
+  /** A bent arm: two capsules meeting at an elbow, each with its own owner, as one closed skin with weights. */
+  const bentArm = (detail) => {
+    const solids = [capsule([0, 0, 0], [0.3, 0, 0], 0.05, { owner: 0, blend: 0.03 }), capsule([0.3, 0, 0], [0.5, 0.2, 0], 0.045, { owner: 1, blend: 0.03 })];
+    const mesh = sculpt.surface(sculpt.sample(solids, { detail }));
+    return { ...mesh, ...sculpt.weights(mesh.positions, solids) };
+  };
+  /** The most of the ownership that changes along any edge of a skinned mesh (0: every edge within one owner's part). */
+  const widestShareStep = ({ indices, owners, weights }) => {
+    const step = (first, second) => {
+      let common = 0;
+      for (let slot = 0; slot < OWNERS; slot++) for (let other = 0; other < OWNERS; other++) if (owners[first * OWNERS + slot] === owners[second * OWNERS + other]) common += Math.min(weights[first * OWNERS + slot], weights[second * OWNERS + other]);
+      return 1 - common;
+    };
+    let widest = 0;
+    for (let face = 0; face < indices.length; face += VECTOR) for (let corner = 0; corner < VECTOR; corner++) widest = Math.max(widest, step(indices[face + corner], indices[face + ((corner + 1) % VECTOR)]));
+    return widest;
+  };
+
+  test('sculpt: simplifying keeps a closed skin closed and wound outward, moves no vertex, and stays within its tolerance', () => {
+    const arm = bentArm('medium');
+    const tolerance = 0.0015;
+    const light = sculpt.simplify(arm, { tolerance, skin: arm });
+    assert.ok(light.indices.length < arm.indices.length * 0.6, `far fewer triangles: ${light.indices.length / VECTOR} of ${arm.indices.length / VECTOR}`);
+    assert.deepStrictEqual(edgesOf(light), { open: 0, pinched: 0 }, 'closed, every edge shared by exactly two triangles');
+    assert.deepStrictEqual(edgesOf(arm), { open: 0, pinched: 0 }, 'the control: it was closed to begin with');
+    close(sixVolumes(light) / sixVolumes(arm), 1, 0.02, 'the same volume, wound the same way');
+    assert.ok(light.error <= tolerance && light.distance <= light.error, `no collapse cost more than the tolerance: ${light.error}`);
+    // Every kept vertex is one of the mesh's own, where it was, with its own normal.
+    for (let vertex = 0; vertex < light.kept.length; vertex++) {
+      for (let axis = 0; axis < VECTOR; axis++) {
+        if (light.positions[vertex * VECTOR + axis] !== arm.positions[light.kept[vertex] * VECTOR + axis]) assert.fail(`vertex ${vertex} was moved`);
+        if (light.normals[vertex * VECTOR + axis] !== arm.normals[light.kept[vertex] * VECTOR + axis]) assert.fail(`the normal of vertex ${vertex} was changed`);
+      }
+    }
+    assert.ok(Array.from(light.kept).every((vertex, index, kept) => index === 0 || vertex > kept[index - 1]), 'kept vertices keep their order');
+    // The control: no tolerance and no budget removes nothing that costs anything, a ball loses none of its roundness for free.
+    const round = sculpt.surface(sculpt.sample([ball()], { detail: 'low' }));
+    assert.ok(sculpt.simplify(round, { tolerance: 0 }).indices.length > round.indices.length * 0.9, 'a curved surface gives nothing up at no tolerance');
+  });
+
+  test('sculpt: simplified skin weights are the kept vertices own (each sums to 1), and a joint keeps the loops it bends on', () => {
+    const arm = bentArm('medium');
+    const light = sculpt.simplify(arm, { tolerance: 0.004, skin: arm });
+    const weights = sculpt.pick(arm.weights, OWNERS, light.kept);
+    const owners = sculpt.pick(arm.owners, OWNERS, light.kept);
+    assert.strictEqual(weights.length, light.kept.length * OWNERS);
+    for (let vertex = 0; vertex < light.kept.length; vertex++) {
+      let sum = 0;
+      for (let slot = 0; slot < OWNERS; slot++) sum += weights[vertex * OWNERS + slot];
+      if (Math.abs(sum - 1) > 1e-5) assert.fail(`weights of vertex ${vertex} sum to ${sum}`);
+    }
+    const guarded = widestShareStep({ indices: light.indices, owners, weights });
+    assert.ok(guarded <= sculpt.SIMPLIFY.mostShareStep + 1e-6, `no edge spans more than half a change of owner: ${guarded}`);
+    // The control: simplified as a form alone, some edge runs from one bone's part straight into the other's.
+    const blind = sculpt.simplify(arm, { tolerance: 0.004 });
+    const unguarded = widestShareStep({ indices: blind.indices, owners: sculpt.pick(arm.owners, OWNERS, blind.kept), weights: sculpt.pick(arm.weights, OWNERS, blind.kept) });
+    assert.ok(unguarded > sculpt.SIMPLIFY.mostShareStep, `without the skin an edge crosses the joint: ${unguarded}`);
+  });
+
+  test('sculpt: a triangle budget is met cheapest first; an open sheet keeps its edge; simplifying in steps gives the same mesh', () => {
+    const round = sculpt.surface(sculpt.sample([ball()], { detail: 'medium' }));
+    const few = sculpt.simplify(round, { most: 200 });
+    assert.ok(few.indices.length / VECTOR <= 200 && few.indices.length / VECTOR > 150, `the budget is met and not overshot: ${few.indices.length / VECTOR}`);
+    assert.deepStrictEqual(edgesOf(few), { open: 0, pinched: 0 });
+    close(sixVolumes(few) / sixVolumes(round), 1, 0.08, 'still the ball');
+    // A cap of the ball (an open sheet): its rim stays a circle at the cut's height.
+    const field = sculpt.sample([ball()], { detail: 'medium' });
+    const cap = sculpt.surface(field, { cut: (_x, y) => y > 0.05, walls: false });
+    const lightCap = sculpt.simplify(cap, { tolerance: 0.003 });
+    assert.ok(lightCap.indices.length < cap.indices.length * 0.7);
+    const lowest = (mesh) => mesh.positions.reduce((least, value, index) => (index % VECTOR === 1 ? Math.min(least, value) : least), Infinity);
+    close(lowest(lightCap), lowest(cap), 0.004, 'the rim is where it was');
+    assert.strictEqual(edgesOf(lightCap).pinched, 0);
+    const steps = sculpt.simplifySteps(round, { most: 200 });
+    let step = steps.next();
+    let pauses = 0;
+    while (!step.done) {
+      pauses++;
+      step = steps.next();
+    }
+    assert.ok(pauses >= 2, 'the work can be paused');
+    assert.deepStrictEqual(Array.from(step.value.indices), Array.from(few.indices));
+  });
+
+  test('sculpt: what a layer hides is not meshed, and nothing that can be seen from 26 directions is missing', () => {
+    const { catalog } = catalogs[0];
+    const bake = catalog.bakery({ capacity: 4 }).bakeRecipe({ species: catalog.speciesIds()[0], seed: 12 });
+    // At medium: a garment must be several cells wide before anything under it is far enough from its hem to go.
+    const layout = figure.layout(bake, { level: 'medium' });
+    const whole = figure.sculptLayers(bake, layout, { cull: false, simplify: false });
+    const culled = figure.sculptLayers(bake, layout, { simplify: false });
+    const count = (sculpted) => sculpted.surface.indices.length / VECTOR;
+    assert.ok(whole.layers.some((layer) => layer.id.startsWith('region:')), 'the control: the body wears something');
+    assert.ok(count(culled) < count(whole) * 0.92, `hidden triangles are gone: ${count(culled)} of ${count(whole)}`);
+    const bounds = boundsOf([whole.surface]);
+    const SIZE = 72;
+    DIRECTIONS.forEach((direction) => {
+      const seen = depthsAlong([whole.surface], direction, bounds, SIZE);
+      const left = depthsAlong([culled.surface], direction, bounds, SIZE);
+      let missing = 0;
+      for (let pixel = 0; pixel < seen.length; pixel++) if (seen[pixel] !== left[pixel]) missing++;
+      assert.strictEqual(missing, 0, `from ${direction.map((value) => value.toFixed(2))}: ${missing} pixels show something else`);
+    });
+    // The control: the same comparison does see a layer that is taken away.
+    const without = whole.layers.filter((layer) => !layer.id.startsWith('region:'));
+    const bare = depthsAlong(without, DIRECTIONS[0], bounds, SIZE);
+    const dressed = depthsAlong([whole.surface], DIRECTIONS[0], bounds, SIZE);
+    assert.ok(bare.some((depth, pixel) => depth !== dressed[pixel]), 'a missing garment shows');
+  });
+
+  test('sculpt: the layers of a bake are one surface: each layer a run of it, painted per vertex, within the level budget', () => {
+    const { catalog } = catalogs[0];
+    const bake = catalog.bakery({ capacity: 4 }).bakeRecipe({ species: catalog.speciesIds()[0], seed: 12 });
+    ['low', 'far'].forEach((level) => {
+      const { surface, layers, bytes } = figure.sculptLayers(bake, figure.layout(bake, { level }));
+      const vertexCount = surface.positions.length / VECTOR;
+      assert.ok(surface.indices.length / VECTOR <= sculpt.DETAIL[level].triangles, `${level}: ${surface.indices.length / VECTOR} triangles`);
+      assert.strictEqual(surface.paint.length, vertexCount * 3);
+      assert.strictEqual(surface.ranges.reduce((sum, range) => sum + range.vertexCount, 0), vertexCount, 'the runs cover every vertex');
+      assert.strictEqual(surface.ranges.reduce((sum, range) => sum + range.indexCount, 0), surface.indices.length, 'and every triangle');
+      layers.forEach((layer) => {
+        const range = surface.ranges.find((row) => row.id === layer.id);
+        assert.strictEqual(layer.positions.buffer === surface.positions.buffer, true, 'a layer is a view of the surface, not a copy');
+        assert.strictEqual(layer.indices.length, range.indexCount);
+        for (let corner = 0; corner < range.indexCount; corner++) {
+          const vertex = surface.indices[range.indexStart + corner];
+          if (vertex - range.vertexStart !== layer.indices[corner]) assert.fail(`${level} ${layer.id}: triangle corner ${corner} names another vertex`);
+          if (surface.paint[vertex * 3] !== layer.ramp || surface.paint[vertex * 3 + 1] !== layer.inkGroup) assert.fail(`${level} ${layer.id}: vertex ${vertex} is painted as another layer`);
+        }
+      });
+      for (let slot = 0; slot < surface.weights.length; slot += OWNERS) {
+        const sum = surface.weights[slot] + surface.weights[slot + 1] + surface.weights[slot + 2] + surface.weights[slot + 3];
+        if (Math.abs(sum - 1) > 1e-4) assert.fail(`${level}: weights of vertex ${slot / OWNERS} sum to ${sum}`);
+      }
+      assert.ok(bytes > 0 && bytes < 400e3, `${level}: ${bytes} bytes`);
+    });
+  });
+
+  test('sculpt: a dressed person is within the budget of every level: triangles, one skinned mesh, bytes', () => {
+    const { SCULPT_BUDGETS, checkSculptBudgets } = require('./dev/budgets');
+    const { catalog } = catalogs[0];
+    const bakery = catalog.bakery({ capacity: 4 });
+    assert.deepStrictEqual(Object.keys(SCULPT_BUDGETS).sort(), Object.keys(sculpt.DETAIL).sort(), 'every level has a budget');
+    // Seeds 12 and 6: eight layers each; 6 wears a wide hat and a long coat, the dearest things in the wardrobe to mesh.
+    [12, 6].forEach((seed) => {
+      const bake = bakery.bakeRecipe({ species: catalog.speciesIds()[0], seed });
+      Object.keys(SCULPT_BUDGETS).forEach((level) => {
+        figure.sculptCache.clear();
+        const { surface, bytes } = figure.sculptLayers(bake, figure.layout(bake, { level }));
+        assert.deepStrictEqual(checkSculptBudgets(level, { triangles: surface.indices.length / VECTOR, meshes: 1, bytes }), [], `seed ${seed}`);
+      });
+    });
+    figure.sculptCache.clear();
+    // The control: the same person sculpted as before (nothing culled, nothing simplified) is far over.
+    const bake = bakery.bakeRecipe({ species: catalog.speciesIds()[0], seed: 12 });
+    const dense = figure.sculptLayers(bake, figure.layout(bake, { level: 'low' }), { cull: false, simplify: false });
+    assert.ok(checkSculptBudgets('low', { triangles: dense.surface.indices.length / VECTOR, meshes: 1, bytes: dense.bytes }).length >= 2);
+    figure.sculptCache.clear();
+  });
+
+  test('sculpt: kept bakes are bounded by bytes as well as by count, and what they take is known', () => {
+    const { catalog } = catalogs[1];
+    const editor = Kit.body.editor(catalog);
+    const bakery = catalog.bakery({ capacity: 4 });
+    const recipe = { species: catalog.speciesIds()[0], seed: 1 };
+    const dial = editor.schema(recipe).dials.find((control) => control.affects.some((effect) => effect.channel === 'girth'));
+    figure.sculptCache.clear();
+    assert.strictEqual(figure.sculptCache.bytes(), 0);
+    const made = [];
+    for (let step = 0; step < figure.SCULPT.kept + 6; step++) {
+      const bake = bakery.bakeRecipe(editor.setDial(recipe, dial.id, dial.min + ((dial.max - dial.min) * step) / (figure.SCULPT.kept + 6)));
+      made.push(figure.sculptLayers(bake, figure.layout(bake, { level: 'far' })));
+    }
+    assert.ok(new Set(made.map((sculpted) => sculpted.signature)).size > figure.SCULPT.kept, 'the control: more distinct bakes than may be kept');
+    assert.strictEqual(figure.sculptCache.size(), figure.SCULPT.kept, 'no more than the count');
+    const held = made.slice(-figure.SCULPT.kept).reduce((sum, sculpted) => sum + sculpted.bytes, 0);
+    assert.strictEqual(figure.sculptCache.bytes(), held, 'the bytes are those of the bakes kept, the oldest gone');
+    assert.ok(figure.sculptCache.bytes() <= figure.SCULPT.keptBytes);
+    assert.strictEqual(figure.sculptCache.has(made[0].signature), false);
+    assert.strictEqual(figure.sculptCache.has(made[made.length - 1].signature), true);
+    figure.sculptCache.clear();
+    assert.strictEqual(figure.sculptCache.bytes(), 0);
+  });
+
+  test('figure detail: the level follows the height drawn, far included, and does not flicker at a band edge', () => {
+    assert.deepStrictEqual([20, 64, 65, 150, 151, 330, 331, 2000].map((pixels) => figure.detailFor(pixels)), ['far', 'far', 'low', 'low', 'medium', 'medium', 'high', 'high']);
+    assert.ok(figure.DETAIL_BANDS.every((row) => sculpt.DETAIL[row.level] && figure.LEVELS[row.level]), 'every band is a level of the shapes and of the sculpt');
+    // A figure bobbing 6 pixels either side of an edge: without memory it changes level every time it crosses.
+    const bob = Array.from({ length: 40 }, (_unused, frame) => 150 + 6 * Math.sin(frame));
+    const changes = (levels) => levels.filter((level, index) => index > 0 && level !== levels[index - 1]).length;
+    assert.ok(changes(bob.map((pixels) => figure.detailFor(pixels))) > 8, 'the control: the bare bands do flicker');
+    let shown = figure.detailFor(bob[0]);
+    const held = bob.map((pixels) => (shown = figure.detailFor(pixels, shown)));
+    assert.strictEqual(changes(held), 0, 'with the level shown, it holds');
+    // It does change once the height is clearly in another band, both ways, and can skip a band.
+    assert.strictEqual(figure.detailFor(150 * (1 + figure.DETAIL_HYSTERESIS) + 1, 'low'), 'medium');
+    assert.strictEqual(figure.detailFor(150 * (1 - figure.DETAIL_HYSTERESIS) - 1, 'medium'), 'low');
+    assert.strictEqual(figure.detailFor(155, 'medium'), 'medium');
+    assert.strictEqual(figure.detailFor(800, 'far'), 'high');
+    assert.throws(() => figure.detailFor(100, 'tiny'), /no level "tiny"/);
+  });
+
+  test('figure detail: a height in pixels is measured on the target, so a pixel look counts its texels', () => {
+    close(figure.pixelsTall({ height: 1.1, targetHeight: 180, viewHeight: 2.2 }), 90, 1e-9, 'an orthographic camera');
+    close(figure.pixelsTall({ height: 1, targetHeight: 800, depth: 4, fieldOfView: Math.PI / 2 }), 100, 1e-9, 'a perspective camera');
+    assert.strictEqual(figure.pixelsTall({ height: 1, targetHeight: 800, depth: 0, fieldOfView: 1 }), Infinity);
+    // The same figure on the same screen: 720 pixels tall drawn directly, 180 texels in a pixel look of a quarter the rows.
+    assert.strictEqual(figure.detailFor(figure.pixelsTall({ height: 1.1, targetHeight: 1440, viewHeight: 2.2 })), 'high');
+    assert.strictEqual(figure.detailFor(figure.pixelsTall({ height: 1.1, targetHeight: 360, viewHeight: 2.2 })), 'medium');
   });
 };

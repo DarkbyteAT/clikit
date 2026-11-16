@@ -211,10 +211,10 @@ module.exports = ({ Kit, test, assert }) => {
   const wearing = (species, sockets) => Object.keys(sockets).reduce((recipe, path) => editor.setSocket(recipe, path, sockets[path]), { species, seed: 1 });
   const bakery = catalog.bakery({ capacity: 16 });
   /** A recipe sculpted at a level, with its rest matrices. */
-  const sculptedOf = (recipe, level) => {
+  const sculptedOf = (recipe, level, options) => {
     const bake = bakery.bakeRecipe(recipe);
     const layout = figure.layout(bake, { level });
-    return { bake, layout, sculpted: figure.sculptLayers(bake, layout), rest: figure.restMatrices(bake) };
+    return { bake, layout, sculpted: figure.sculptLayers(bake, layout, options), rest: figure.restMatrices(bake) };
   };
   /** A layer's vertices skinned from the pose it was made in to another (bone matrices, 16 per bone). */
   const skinnedTo = (layer, bind, to) => {
@@ -438,7 +438,10 @@ module.exports = ({ Kit, test, assert }) => {
   });
 
   test('drape: a lifted thigh pushes a skirt out instead of coming through it, and a swung cloak bone carries its cloak', () => {
-    const made = sculptedOf(wearing('person', { top: 'tee', bottom: 'longSkirt', outerwear: 'cloak' }), 'medium');
+    // With every vertex the grid made: the depths below are read at vertices, and a surface made lighter keeps a
+    // subset of them, each where it was with the weights it had, so what holds here holds for it; but it has too
+    // few to show how deep a rigid skirt would be run through (the control).
+    const made = sculptedOf(wearing('person', { top: 'tee', bottom: 'longSkirt', outerwear: 'cloak' }), 'medium', { simplify: false });
     const { bake, sculpted } = made;
     const { plan } = bake;
     const skirt = wornLayer(made, 'bottom');

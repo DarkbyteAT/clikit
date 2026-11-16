@@ -34,6 +34,12 @@
     weightSpread: 0.03,
     /** A layer keeps what lies within this distance inside the surface it sits on (its cut edges), and drops the rest. */
     buriedDepth: 0.002,
+    /**
+     * And at least this share of a grid cell: the mesh of the surface below sags between its vertices by about
+     * a fifth of a cell across a limb, and where that surface is not meshed under the layer (kit/sculpt.js
+     * `surface`, `under`) the layer's wall must reach past the sag or a gap opens at the hem.
+     */
+    wallShare: 0.3,
     /** The sculpting pose swings a limb this far (radians) from the trunk when its joint is `fullSpreadAt` or more to the side; less when nearer; not at all within `midline`. */
     spread: 0.75,
     fullSpreadAt: 0.1,
@@ -69,11 +75,16 @@
     drapeSpread: 0.16,
     /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
     drapeSharpness: 5,
-    /** Sculpted bakes kept for reuse (`sculptCache`): about 2 MB each at high detail. */
+    /** Sculpted bakes kept for reuse (`sculptCache`): at most this many, and at most `keptBytes` of arrays between them. */
     kept: 24,
+    keptBytes: 12e6,
   });
+  /** Numbers per vertex of a surface's `paint`: the ramp slot, the ink group, and 1 where it glints (a shiny piece). */
+  const PAINT = 3;
   /** Owners per vertex of a layer. */
   const OWNERS = 4;
+  /** The largest vertex index a 16-bit index buffer can hold. */
+  const MOST_SHORT_INDEX = 65535;
   const MATRIX = 16;
   /** Numbers of an affine map kept as three rows of four. */
   const ROW_AFFINE = 12;
@@ -379,13 +390,20 @@
    * @property {Uint16Array|Uint32Array} indices
    * @property {Uint16Array} owners 4 bone indices per vertex
    * @property {Float32Array} weights 4 shares per vertex
+   * @property {boolean} [isShiny] it glints (a rigid piece joined as it is: a blade)
+   * @property {Uint8Array} [locked] per vertex, 1 where it must be kept when the surface is made lighter (all of a rigid piece)
+   * @property {SculptLayer} [on] for paint: the layer it was cut out of, whose vertices on the cut it shares
    * @property {Float32Array} [faceShare] on a body surface: per vertex, how much of it the head's bones move (0..1); a look lights a face and a form differently
    */
 
   /**
    * @typedef {Object} Sculpted
-   * @property {SculptLayer[]} layers shared between equal bakes: never write to their arrays
+   * @property {SculptLayer[]} layers shared between equal bakes: never write to their arrays (views of `surface`'s, a layer each, made the first time they are read)
+   * @property {SculptSurface} surface every layer as one mesh: what a figure draws
+   * @property {number} bytes what the surface's arrays take, bytes
    * @property {Set<string>} replaced ids of the layout pieces the layers stand in for (do not draw them)
+   * @property {Set<string>} joined ids of the layout pieces that are drawn in the surface as they are: rigid, each moved
+   *   wholly by its own bone, with the triangles it was authored with (a sword, a pack; do not draw them either)
    * @property {Float32Array} matrices the bone matrices the layers were made in (the bind pose), 16 per bone
    * @property {{leads: Int16Array, turns: Float32Array}} clearance see `limbClearance`
    * @property {string} signature what the layers depend on (see `sculptSignature`)
@@ -393,6 +411,21 @@
 
   /** Where a bone's joint is: the move of its matrix (the fourth column of a column-major 4 x 4), as [x, y, z]. */
   const originOf = (matrices, bone) => Array.from(matrices.subarray(bone * MATRIX + ROW_AFFINE, bone * MATRIX + ROW_AFFINE + VECTOR));
+
+  /**
+   * @typedef {Object} SculptSurface
+   * The layers of a bake as one skinned mesh: a figure is one draw however many garments it wears. A layer is a
+   * run of vertices and a run of triangles (`ranges`); no vertex is shared between two.
+   * @property {Float32Array} positions 3 per vertex, in the bake's sculpting pose
+   * @property {Float32Array} normals
+   * @property {Uint16Array|Uint32Array} indices
+   * @property {Uint16Array} owners 4 bone indices per vertex
+   * @property {Float32Array} weights 4 shares per vertex
+   * @property {Float32Array} faceShare per vertex, how much of it the head's bones move where its layer is a body surface, else 0
+   * @property {Uint8Array} paint 3 per vertex: its layer's ramp slot (also its line class), its ink group, and 1 where it is shiny
+   * @property {Array<{id: string, vertexStart: number, vertexCount: number, indexStart: number, indexCount: number}>} ranges
+   * @property {number} error the furthest a vertex was moved off the planes it stood for when the mesh was simplified, metres (`Kit.sculpt.simplify`'s `distance`)
+   */
 
   /** The solid of a layout piece in the sculpting pose, with the fillets its thickness earns. */
   const solidOf = (piece, matrices, limbLead) => {
@@ -461,14 +494,17 @@
    * last. A garment with no raise (stripes, a trim, a tattoo) is paint: it lies a hair above the raised
    * garment of its own part, or above the skin, and is cut out of that garment's area.
    * @param {Garment[]} garments in paint order
+   * @param {number} [slack=0] metres a surface of this level of detail may stand off the form it was meshed on
+   *   (`Kit.sculpt.DETAIL`'s `error` of a cell): layers stand at least that far apart, so a coarse level's flatter
+   *   triangles do not cut through the layer below
    * @returns {Array<{garment: Garment, offset: number, host: ?Garment, isPaint: boolean}>}
    */
-  const stackGarments = (garments) => {
+  const stackGarments = (garments, slack = 0) => {
     let lastOffset = 0;
     const raised = garments
       .filter((garment) => garment.raise > 0)
       .map((garment) => {
-        lastOffset = Math.max(garment.raise, SCULPT.leastRaise, lastOffset + SCULPT.layerGap);
+        lastOffset = Math.max(garment.raise, SCULPT.leastRaise, lastOffset + Math.max(SCULPT.layerGap, slack));
         return { garment, offset: lastOffset, host: null, isPaint: false };
       });
     const painted = garments
@@ -605,6 +641,8 @@
    * crossed once, at a point placed by bisection; an edge whose ends agree is asked at its middle too, and split
    * there when the middle differs (a stripe narrower than a triangle is still seen, at any level of detail). A
    * crossing or a split is decided per edge, so the two triangles on it agree and neither part has cracks.
+   * Each part has its own copy of the vertices on the cut, bit for bit the same: `joinLayers` makes them one
+   * again, so a mesh made lighter afterwards moves the cut's vertices in both parts at once.
    * @param {SculptLayer} canvas the layer painted on (a skin, or a raised garment)
    * @param {function(number, number, number): boolean} keep is a point of the canvas painted? (in the canvas's space)
    * @param {function(number): boolean} mayHold can the predicate hold on vertices owned by this bone? (it is not asked elsewhere)
@@ -738,49 +776,85 @@
    * @param {Object} bake from a bakery
    * @param {Object} figureLayout `Kit.figure.layout(bake)`
    * @param {string} [detail] default the layout's level
+   * @param {{cull?: boolean, simplify?: boolean}} [options] as `sculptLayers`
    * @returns {string}
    * @complexity O(pieces + bones)
    * @example Kit.figure.sculptSignature(bake, layout) === Kit.figure.sculptSignature(recoloured, Kit.figure.layout(recoloured)) // true
    */
-  const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
+  const sculptSignature = (bake, figureLayout, detail = figureLayout.level, options = {}) => {
     const { wears, hangs, ranks, clings, covers } = wearOf(bake.plan);
-    const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) =>
-      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone], ranks[piece.bone], clings[piece.bone], covers[piece.bone], piece.carve ? 'carve' : '', piece.blend === undefined ? '' : piece.blend].join('~')
-    );
+    // Every piece that is sculpted, worn or joined as it is: all but stamps and the like, whose looks are not the surface's.
+    const pieces = figureLayout.pieces
+      .filter((piece) => isSculpted(piece) || (piece.isProp && wears[piece.bone] && isSolidPiece(piece)) || isJoinable(piece))
+      .map((piece) =>
+        [
+          piece.id,
+          piece.bone,
+          piece.key,
+          piece.ramp,
+          piece.inkGroup,
+          piece.regions ? piece.regions.key : '',
+          wears[piece.bone],
+          hangs[piece.bone],
+          ranks[piece.bone],
+          clings[piece.bone],
+          covers[piece.bone],
+          piece.carve ? 'carve' : '',
+          piece.blend === undefined ? '' : piece.blend,
+          piece.shiny ? 'shiny' : '',
+        ].join('~')
+      );
     const rest = bake.rest || Kit.body.createPose(bake.plan);
     // Every array of the pose: a size dial (a height) writes `uniform` alone, and two bodies that differ only
     // there must not share layers (a drape is made in the rest pose, so it is as long as the body it was made for).
     const pose = [rest.translation, rest.rotation, rest.scale, rest.uniform].map((values) => Array.from(values, (value) => value.toFixed(SIGNATURE_DECIMALS)).join(','));
-    return [detail, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
+    const made = `${detail}${options.cull === false ? '~whole' : ''}${options.simplify === false ? '~dense' : ''}`;
+    return [made, bake.plan.boneNames.join(','), ...pieces, ...pose].join('|');
   };
 
   /** @type {Map<string, Sculpted>} sculpted bakes by signature, most recently used last */
   const kept = new Map();
+  /** The bytes of every array `kept` holds. */
+  let keptBytes = 0;
   /**
    * The sculpted layers kept for reuse: equal bakes (a crowd of one look, a recoloured body, an undo) share one
-   * set of arrays. The `SCULPT.kept` most recently used are held.
-   * @type {{clear: function(): void, size: function(): number}}
+   * set of arrays. The most recently used are held: at most `SCULPT.kept` of them and `SCULPT.keptBytes` bytes,
+   * and always the last one made. What a figure still draws stays alive with the figure, kept here or not.
+   * @type {{clear: function(): void, size: function(): number, bytes: function(): number, has: function(string): boolean}}
    */
-  const sculptCache = { clear: () => kept.clear(), size: () => kept.size };
+  const sculptCache = {
+    clear: () => {
+      kept.clear();
+      keptBytes = 0;
+    },
+    size: () => kept.size,
+    bytes: () => keptBytes,
+    /** Is the bake of this signature (`sculptSignature`, a task's `signature`) kept? Does not count as a use. */
+    has: (signature) => kept.has(signature),
+  };
+  /** Keeps a sculpted bake, and lets the least recently used go while there are too many or they are too large. */
+  const keep = (sculpted) => {
+    kept.set(sculpted.signature, sculpted);
+    keptBytes += sculpted.bytes;
+    while (kept.size > 1 && (kept.size > SCULPT.kept || keptBytes > SCULPT.keptBytes)) {
+      const [oldest, dropped] = kept.entries().next().value;
+      kept.delete(oldest);
+      keptBytes -= dropped.bytes;
+    }
+  };
 
   /**
    * Sculpts a bake. Equal bakes return the same layers (see `sculptCache`).
    * @param {Object} bake from a bakery
    * @param {Object} figureLayout `Kit.figure.layout(bake)`
-   * @param {{detail?: string}} [options] a key of `Kit.sculpt.DETAIL` (default: the layout's level)
+   * @param {{detail?: string, cull?: boolean, simplify?: boolean}} [options] `detail`: a key of `Kit.sculpt.DETAIL` (default: the
+   *   layout's level); `cull: false` also meshes what a garment hides (every skin is then closed); `simplify: false`
+   *   keeps every vertex the grid made. Both are for measuring and testing: a figure draws the default
    * @returns {Sculpted}
    * @complexity O(body surface area / cell^2) distance evaluations and vertices, once per distinct bake; O(pieces) for a bake seen before
    * @example const { layers, replaced } = Kit.figure.sculptLayers(bake, Kit.figure.layout(bake));
    */
   const sculptLayers = (bake, figureLayout, options = {}) => {
-    const detail = options.detail || figureLayout.level;
-    const signature = sculptSignature(bake, figureLayout, detail);
-    const known = kept.get(signature);
-    if (known) {
-      kept.delete(signature);
-      kept.set(signature, known);
-      return known;
-    }
     return sculptTask(bake, figureLayout, options).finish();
   };
 
@@ -790,7 +864,7 @@
    * the `Sculpted` once done (at once for a bake seen before). Its layers go to the same `sculptCache`.
    * @param {Object} bake from a bakery
    * @param {Object} figureLayout `Kit.figure.layout(bake)`
-   * @param {{detail?: string, now?: function(): number}} [options] `now`: a clock in milliseconds (default `performance.now`)
+   * @param {{detail?: string, cull?: boolean, simplify?: boolean, now?: function(): number}} [options] as `sculptLayers`; `now`: a clock in milliseconds (default `performance.now`)
    * @returns {{step: function(number): boolean, finish: function(): Sculpted, isDone: function(): boolean, result: ?Sculpted, signature: string}}
    * @complexity as `sculptLayers` in total; one `step` runs pieces of a few milliseconds until its time is used
    * @example const task = Kit.figure.sculptTask(bake, layout); // each frame: if (task.step(6)) show(task.result);
@@ -798,7 +872,7 @@
   const sculptTask = (bake, figureLayout, options = {}) => {
     const detail = options.detail || figureLayout.level;
     const now = options.now || (() => performance.now());
-    const signature = sculptSignature(bake, figureLayout, detail);
+    const signature = sculptSignature(bake, figureLayout, detail, options);
     /** @type {{step: function(number): boolean, finish: function(): Object, isDone: function(): boolean, result: ?Object, signature: string}} */
     const task = { signature, result: null, step: () => false, finish: () => null, isDone: () => false };
     let steps = null;
@@ -812,12 +886,12 @@
       return true;
     };
     const advance = () => {
-      steps = steps || sculptSteps(bake, figureLayout, detail);
+      steps = steps || sculptSteps(bake, figureLayout, detail, options);
       const step = steps.next();
       if (!step.done) return false;
-      task.result = { ...step.value, signature };
-      kept.set(signature, task.result);
-      if (kept.size > SCULPT.kept) kept.delete(kept.keys().next().value);
+      // Not a copy: `layers` is made when read, and a copy would read it.
+      task.result = Object.assign(step.value, { signature });
+      keep(task.result);
       return true;
     };
     task.isDone = () => task.result !== null;
@@ -842,7 +916,7 @@
   };
 
   /** Sculpts a bake afresh (see `sculptLayers`), pausing (a `yield`) between pieces of work of a few milliseconds each. */
-  function* sculptSteps(bake, figureLayout, detail) {
+  function* sculptSteps(bake, figureLayout, detail, options = {}) {
     const { plan } = bake;
     const matrices = restMatrices(bake, spreadPose(bake));
     const frames = bake.surface && Kit.body.surfaceLayout ? Kit.body.surfaceLayout(plan).frames : null;
@@ -907,7 +981,7 @@
     const lifts = new Float32Array(plan.boneCount);
     for (const group of groups.values()) {
       const bones = [...new Set(group.dressed)];
-      const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
+      const specs = regions && frames ? stackGarments(garmentsOn(bones, regions), cell * Kit.sculpt.DETAIL[detail].error) : [];
       specs.filter((spec) => !spec.isPaint).forEach((spec) => spec.garment.tests.forEach((_tests, bone) => (lifts[bone] = Math.max(lifts[bone], spec.offset))));
       const field = yield* Kit.sculpt.sampleSteps(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
       const layerOf = (id, ramp, mesh, offset) => ({
@@ -918,72 +992,83 @@
         ...mesh,
         ...Kit.sculpt.weights(mesh.positions, group.solids, { spread: SCULPT.weightSpread, reach: offset + cell }),
       });
-      const bare = Kit.sculpt.surface(field);
-      yield undefined;
-      const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
-      const first = layers.push(skin) - 1;
-      /** How far each layer of this group stands off the skin, and each raised garment's cut. */
-      const standsOff = new Map([[skin, 0]]);
-      const raisedCuts = new Map();
-      yield undefined;
+      // The layering rule: what a raised garment covers is not drawn, and so is not meshed (kit/sculpt.js
+      // `surface`, `cover` / `under`). The raised garments are made from the outermost in and the skin last, each
+      // marking where it lies; what is made after it stops a cell inside its edge, behind its wall.
+      const raised = specs.filter((spec) => !spec.isPaint);
+      const cover = options.cull !== false && raised.length ? new Uint8Array(field.values.length) : undefined;
+      // Over a relief mark that stands proud of the bone (an ear under a hairline) a garment gives way: it is
+      // neither painted nor raised there, and so covers nothing there either.
+      const ownCut = ({ garment, offset }) => cutOf(garment, field, frames, offset + SCULPT.proud);
       /** The layer each raised garment of this group became, by garment key: what its paint is painted on. */
       const layerOfGarment = new Map();
-      /** Paint waiting for its turn: the canvas, the pattern, and the place in the list its sheet takes. */
-      const paints = [];
-      for (const { garment, offset, host, isPaint } of specs) {
-        // Over a relief mark that stands proud of the bone (an ear under a hairline) the garment gives way: it is
-        // neither painted nor raised there, and so covers nothing there either.
-        const own = cutOf(garment, field, frames, offset + SCULPT.proud);
-        if (isPaint) {
-          const canvas = host ? layerOfGarment.get(host.key) : skin;
-          // On a raised garment, paint is on the seen side: its outer surface and its hem's wall, not its underside.
-          const least = offset - SCULPT.paintLift - cell * PAINT_DEPTH_CELLS;
-          const keep = host ? (x, y, z) => own(x, y, z) && Kit.sculpt.valueAt(field, x, y, z) >= least : own;
-          if (canvas) paints.push({ canvas, keep, garment, at: layers.push(null) - 1 });
-        } else {
-          const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
-          const cloth = Kit.sculpt.surface(field, { offset, cut: own, near, depth: SCULPT.buriedDepth });
-          if (cloth.indices.length) {
-            layerOfGarment.set(garment.key, layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
-            layers.push(layerOfGarment.get(garment.key));
-            standsOff.set(layerOfGarment.get(garment.key), offset);
-            raisedCuts.set(garment, { own, offset });
-          }
-        }
+      for (const spec of [...raised].sort((first, second) => second.offset - first.offset)) {
+        const { garment, offset } = spec;
+        const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
+        const cloth = yield* Kit.sculpt.surfaceSteps(field, { offset, cut: ownCut(spec), near, depth: Math.max(SCULPT.buriedDepth, cell * SCULPT.wallShare), cover, under: cover });
+        yield undefined;
+        if (cloth.indices.length) layerOfGarment.set(garment.key, layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
         yield undefined;
       }
-      // Paint is cut out of the surface it is on, the last painted first: where two patterns overlap, the later
-      // one shows, and no triangle is drawn twice.
-      for (const { canvas, keep, garment, at } of paints.reverse()) {
+      const bare = yield* Kit.sculpt.surfaceSteps(field, { under: cover });
+      yield undefined;
+      const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
+      yield undefined;
+      // Paint is cut out of the surface it is on (what is left of it: paint under a garment is not there to cut),
+      // the last painted first: where two patterns overlap, the later one shows, and no triangle is drawn twice.
+      /** The sheet each paint of this group became, by garment key. */
+      const sheetOfPaint = new Map();
+      for (const spec of specs.filter((candidate) => candidate.isPaint).reverse()) {
+        const { garment, offset, host } = spec;
+        const canvas = host ? layerOfGarment.get(host.key) : skin;
+        if (!canvas || !canvas.indices.length) continue;
+        const own = ownCut(spec);
+        // On a raised garment, paint is on the seen side: its outer surface and its hem's wall, not its underside.
+        const least = offset - SCULPT.paintLift - cell * PAINT_DEPTH_CELLS;
+        const keep = host ? (x, y, z) => own(x, y, z) && Kit.sculpt.valueAt(field, x, y, z) >= least : own;
         const { painted, rest } = paintedOn(canvas, keep, (bone) => garment.tests.has(bone));
         if (painted) {
-          layers[at] = { id: `region:${garment.key}`, ramp: garment.ramp, inkGroup: group.inkGroup, inkClass: garment.ramp, ...painted };
-          standsOff.set(layers[at], standsOff.get(canvas));
-          Object.assign(canvas, rest || { indices: new Uint16Array(0) });
-        }
-        yield undefined;
-      }
-      // The layering rule: what a raised garment covers is not drawn. Each layer of this group gives up what
-      // lies under a garment standing further off the skin than it does.
-      for (let at = first; at < layers.length; at++) {
-        if (!layers[at]) continue;
-        for (const [garment, { own, offset }] of raisedCuts) {
-          if (!(offset > standsOff.get(layers[at]) + SCULPT.paintLift)) continue;
-          const left = uncovered(layers[at], own, (bone) => garment.tests.has(bone));
-          if (left !== layers[at]) layers[at] = left ? Object.assign(layers[at], left) : null;
-          if (!layers[at]) break;
+          sheetOfPaint.set(garment.key, { id: `region:${garment.key}`, ramp: garment.ramp, inkGroup: group.inkGroup, inkClass: garment.ramp, on: canvas, ...painted });
+          Object.assign(canvas, rest || { positions: new Float32Array(0), normals: new Float32Array(0), indices: new Uint16Array(0), owners: new Uint16Array(0), weights: new Float32Array(0) });
         }
         yield undefined;
       }
       skin.faceShare = shareOf(skin, isHeadBone);
+      // Listed as they are painted: the skin, then each garment and each paint in paint order. One wholly painted over is not listed.
+      layers.push(...[skin, ...specs.map(({ garment, isPaint }) => (isPaint ? sheetOfPaint : layerOfGarment).get(garment.key))].filter((layer) => layer && layer.indices.length));
+      yield undefined;
     }
-    for (let at = layers.length - 1; at >= 0; at--) if (!layers[at]) layers.splice(at, 1);
     const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead, lifts });
     worn.forEach(({ layer, pieces }) => {
       layers.push(layer);
       pieces.forEach((piece) => replaced.add(piece.id));
     });
-    return { layers, replaced, matrices, clearance };
+    // What is left rigid and plainly shaded rides in the same mesh, so a figure is one draw and its face.
+    const rigid = figureLayout.pieces.filter((piece) => !replaced.has(piece.id) && isJoinable(piece));
+    const drawn = [...layers, ...rigid.map((piece) => rigidLayer(piece, matrices, figureLayout.level))];
+    const whole = joinLayers(drawn);
+    yield undefined;
+    const level = Kit.sculpt.DETAIL[detail];
+    const tolerance = (cell || level.cell) * level.error;
+    // A rigid piece is `locked`: it keeps the triangles its shape was built with. The line where paint meets what
+    // it is painted on is a line between two `paints`: it keeps its course, and both sides keep sharing its vertices.
+    const light = options.simplify === false ? null : yield* Kit.sculpt.simplifySteps(whole, { tolerance, most: level.triangles || 0, skin: whole, locked: whole.locked, paints: whole.paints });
+    const surface = surfaceOf(whole, drawn, light);
+    // What each layer is, without its dense arrays: the layers are found again in the surface only when someone reads them.
+    const kinds = layers.map(({ id, ramp, inkGroup, inkClass, faceShare }) => ({ id, ramp, inkGroup, inkClass, isBody: Boolean(faceShare) }));
+    let views = null;
+    return {
+      get layers() {
+        views = views || layerViews(surface, kinds);
+        return views;
+      },
+      surface,
+      bytes: bytesOf(surface),
+      replaced,
+      joined: new Set(rigid.map((piece) => piece.id)),
+      matrices,
+      clearance,
+    };
   }
 
   /** A built shape's points placed by a bone matrix (column-major 4 x 4 at `at` in `matrices`). */
@@ -1020,9 +1105,6 @@
     });
     return { positions, normals, indices: vertexCount > MOST_SHORT_INDEX ? indices : Uint16Array.from(indices), tagOf };
   };
-  /** The largest vertex index a 16-bit index buffer can hold. */
-  const MOST_SHORT_INDEX = 65535;
-
   /** The longest edge of a surface net, in cells: a cell's diagonal and a half. */
   const NET_EDGE_CELLS = 2.6;
   /** Balls per edge length that make a laid cloth's vertices one surface for the next cloth (`Kit.drape.cloud`). */
@@ -1034,6 +1116,210 @@
       if (mesh.positions[at] !== before[at] || mesh.positions[at + 1] !== before[at + 1] || mesh.positions[at + 2] !== before[at + 2]) points.push(mesh.positions[at], mesh.positions[at + 1], mesh.positions[at + 2]);
     return Kit.drape.cloud(points, longestEdge * CLOUD_SHARE);
   };
+
+  /**
+   * Can a piece the sculpt leaves rigid be drawn in the surface: shaded from one ramp like a layer, with an
+   * outline of its own? Stamps, painted or raised pieces and fixed tones need a material of their own; a carving
+   * piece (a shape pressed into a surface) is never drawn at all.
+   */
+  const isJoinable = (piece) => !piece.carve && !piece.stamps && !piece.regions && !piece.shell && !piece.emissive && piece.tone === undefined && piece.outlined !== false && piece.inkGroup > 0;
+
+  /** Numbers along a side of a 4 x 4 matrix, and so between the rows of an affine map kept as three rows of four. */
+  const SIDE = 4;
+
+  /**
+   * A rigid piece as a layer: its shape's own mesh placed by its bone in the sculpting pose and owned wholly
+   * by that bone, so the skeleton moves it exactly as it moved the piece. Its vertices are `locked`: it keeps
+   * the triangles its shape was built with (its edges are meant, not a grid's).
+   * @complexity O(vertices of the piece)
+   */
+  const rigidLayer = (piece, matrices, level) => {
+    const built = Kit.figure.buildShape(piece.shape, level);
+    const at = piece.bone * MATRIX;
+    const inverse = Kit.sculpt.invertAffine(matrices.subarray(at, at + MATRIX));
+    const count = built.positions.length / VECTOR;
+    const normals = new Float32Array(count * VECTOR);
+    for (let offset = 0; offset < normals.length; offset += VECTOR) {
+      const [nx, ny, nz] = [built.normals[offset], built.normals[offset + 1], built.normals[offset + 2]];
+      // A normal is carried by the inverse's transpose, which keeps it square to the surface under a stretch.
+      for (let axis = 0; axis < VECTOR; axis++) normals[offset + axis] = inverse[axis] * nx + inverse[SIDE + axis] * ny + inverse[2 * SIDE + axis] * nz;
+      const length = Math.hypot(normals[offset], normals[offset + 1], normals[offset + 2]) || 1;
+      for (let axis = 0; axis < VECTOR; axis++) normals[offset + axis] /= length;
+    }
+    // A bone that mirrors (a left hand made from the right) turns triangles inside out: wind them back.
+    const indices = Uint32Array.from(built.indices);
+    if (isMirror(matrices, at)) for (let face = 0; face < indices.length; face += VECTOR) [indices[face + 1], indices[face + 2]] = [indices[face + 2], indices[face + 1]];
+    const owners = new Uint16Array(count * OWNERS);
+    const weights = new Float32Array(count * OWNERS);
+    for (let vertex = 0; vertex < count; vertex++) {
+      owners[vertex * OWNERS] = piece.bone;
+      weights[vertex * OWNERS] = 1;
+    }
+    return { id: `piece:${piece.id}`, ramp: piece.ramp, inkGroup: piece.inkGroup, inkClass: piece.ramp, isShiny: Boolean(piece.shiny), positions: placedPoints(built.positions, matrices, at), normals, indices, owners, weights, locked: new Uint8Array(count).fill(1) };
+  };
+
+  /**
+   * Layers as one mesh for `Kit.sculpt.simplify`: their triangles end to end, each numbered with its layer
+   * (`paints`). A paint and the layer it was cut out of (`on`) become one surface again: the vertices they
+   * have on the cut, the same in both, are one vertex here, so nothing done to the mesh can part them.
+   * @param {SculptLayer[]} layers
+   * @returns {{positions: Float32Array, normals: Float32Array, indices: Uint32Array, owners: Uint16Array, weights: Float32Array, faceShare: Float32Array, locked: Uint8Array, paints: Uint16Array}}
+   * @complexity O(vertices + triangles)
+   */
+  const joinLayers = (layers) => {
+    const canvases = new Set(layers.map((layer) => layer.on).filter(Boolean));
+    /** Per canvas: the vertices of it and of its paints so far, by where they are. */
+    const placedOn = new Map();
+    let vertexCount = 0;
+    /** Per layer: the number each of its vertices has in the whole. */
+    const numbersOf = layers.map((layer) => {
+      const count = layer.positions.length / VECTOR;
+      const numbers = new Uint32Array(count);
+      const canvas = layer.on || (canvases.has(layer) ? layer : null);
+      if (!canvas) {
+        for (let vertex = 0; vertex < count; vertex++) numbers[vertex] = vertexCount++;
+        return numbers;
+      }
+      const placed = placedOn.get(canvas) || new Map();
+      placedOn.set(canvas, placed);
+      // A layer's own vertices are never made one with each other (two may share a place where a surface pinches):
+      // they are looked up among those of the layers before it, and added only once the whole layer is numbered.
+      const keys = Array.from({ length: count }, (_unused, vertex) => `${layer.positions[vertex * VECTOR]},${layer.positions[vertex * VECTOR + 1]},${layer.positions[vertex * VECTOR + 2]}`);
+      keys.forEach((key, vertex) => (numbers[vertex] = placed.has(key) ? placed.get(key) : vertexCount++));
+      keys.forEach((key, vertex) => placed.has(key) || placed.set(key, numbers[vertex]));
+      return numbers;
+    });
+    const faceCount = layers.reduce((sum, layer) => sum + layer.indices.length / VECTOR, 0);
+    const whole = {
+      positions: new Float32Array(vertexCount * VECTOR),
+      normals: new Float32Array(vertexCount * VECTOR),
+      indices: new Uint32Array(faceCount * VECTOR),
+      owners: new Uint16Array(vertexCount * OWNERS),
+      weights: new Float32Array(vertexCount * OWNERS),
+      faceShare: new Float32Array(vertexCount),
+      locked: new Uint8Array(vertexCount),
+      paints: new Uint16Array(faceCount),
+    };
+    let indexStart = 0;
+    layers.forEach((layer, order) => {
+      const numbers = numbersOf[order];
+      // Hot loops over every vertex and corner: index writes only. A vertex two layers share is the same in both.
+      for (let vertex = 0; vertex < numbers.length; vertex++) {
+        const to = numbers[vertex];
+        for (let axis = 0; axis < VECTOR; axis++) {
+          whole.positions[to * VECTOR + axis] = layer.positions[vertex * VECTOR + axis];
+          whole.normals[to * VECTOR + axis] = layer.normals[vertex * VECTOR + axis];
+        }
+        for (let slot = 0; slot < OWNERS; slot++) {
+          whole.owners[to * OWNERS + slot] = layer.owners[vertex * OWNERS + slot];
+          whole.weights[to * OWNERS + slot] = layer.weights[vertex * OWNERS + slot];
+        }
+        if (layer.faceShare) whole.faceShare[to] = layer.faceShare[vertex];
+        if (layer.locked && layer.locked[vertex]) whole.locked[to] = 1;
+      }
+      for (let corner = 0; corner < layer.indices.length; corner++) whole.indices[indexStart + corner] = numbers[layer.indices[corner]];
+      whole.paints.fill(order, indexStart / VECTOR, (indexStart + layer.indices.length) / VECTOR);
+      indexStart += layer.indices.length;
+    });
+    return whole;
+  };
+
+  /**
+   * What a figure draws: a joined mesh (`joinLayers`), as it is or made lighter, with each layer a run of
+   * vertices and of triangles again. A vertex two layers shared while the mesh was worked on is two again, one
+   * in each run and the same in both, because a vertex carries its layer's paint.
+   * @param {Object} whole from `joinLayers`
+   * @param {SculptLayer[]} layers the layers it was joined from, in that order
+   * @param {?Object} light `Kit.sculpt.simplify` of `whole`, or null to draw `whole` as it is
+   * @returns {SculptSurface}
+   * @complexity O(vertices + triangles)
+   */
+  const surfaceOf = (whole, layers, light) => {
+    const joined = light ? light.indices : whole.indices;
+    const faceCount = joined.length / VECTOR;
+    const paintOf = (face) => whole.paints[light ? light.faces[face] : face];
+    /** Per vertex of the joined mesh: the layer it was last numbered for, and its number there. */
+    const numberedFor = new Int32Array(light ? light.kept.length : whole.positions.length / VECTOR).fill(-1);
+    const numberOf = new Uint32Array(numberedFor.length);
+    /** Per vertex drawn: the vertex of `whole` it is. */
+    const from = [];
+    const corners = new Uint32Array(joined.length);
+    let face = 0;
+    // Triangles keep their order through `simplify`, so each layer's are still together and in the layers' order.
+    const ranges = layers.map((layer, order) => {
+      const [vertexStart, indexStart] = [from.length, face * VECTOR];
+      for (; face < faceCount && paintOf(face) === order; face++) {
+        for (let corner = face * VECTOR; corner < face * VECTOR + VECTOR; corner++) {
+          const vertex = joined[corner];
+          if (numberedFor[vertex] !== order) {
+            numberedFor[vertex] = order;
+            numberOf[vertex] = from.length;
+            from.push(light ? light.kept[vertex] : vertex);
+          }
+          corners[corner] = numberOf[vertex];
+        }
+      }
+      return { id: layer.id, vertexStart, vertexCount: from.length - vertexStart, indexStart, indexCount: face * VECTOR - indexStart };
+    });
+    const faceShare = Kit.sculpt.pick(whole.faceShare, 1, from);
+    const paint = new Uint8Array(from.length * PAINT);
+    ranges.forEach(({ vertexStart, vertexCount }, order) => {
+      const layer = layers[order];
+      // Only a body surface is lit as a face where the head moves it; paint and cloth on it are not.
+      if (!layer.faceShare) faceShare.fill(0, vertexStart, vertexStart + vertexCount);
+      for (let vertex = vertexStart; vertex < vertexStart + vertexCount; vertex++) {
+        paint[vertex * PAINT] = layer.ramp;
+        paint[vertex * PAINT + 1] = layer.inkGroup;
+        paint[vertex * PAINT + 2] = layer.isShiny ? 1 : 0;
+      }
+    });
+    return {
+      positions: Kit.sculpt.pick(whole.positions, VECTOR, from),
+      normals: Kit.sculpt.pick(whole.normals, VECTOR, from),
+      indices: from.length > MOST_SHORT_INDEX ? corners : Uint16Array.from(corners),
+      owners: Kit.sculpt.pick(whole.owners, OWNERS, from),
+      weights: Kit.sculpt.pick(whole.weights, OWNERS, from),
+      faceShare,
+      paint,
+      ranges,
+      error: light ? light.distance : 0,
+    };
+  };
+
+  /**
+   * The layers of a surface as layers again: each a view of its run of the surface's arrays (nothing copied
+   * but its triangles, which name its own vertices). A layer nothing is left of is not listed.
+   * @param {SculptSurface} surface
+   * @param {Array<{id: string, ramp: number, inkGroup: number, inkClass: number, isBody: boolean}>} kinds what each of the
+   *   surface's first runs is (the sculpted layers; the rigid pieces joined after them are not layers)
+   * @returns {SculptLayer[]}
+   */
+  const layerViews = (surface, kinds) =>
+    surface.ranges
+      .slice(0, kinds.length)
+      .map((range, index) => {
+        const { vertexStart, indexStart } = range;
+        const vertexEnd = vertexStart + range.vertexCount;
+        const { id, ramp, inkGroup, inkClass, isBody } = kinds[index];
+        const indices = new Uint16Array(range.indexCount);
+        for (let corner = 0; corner < range.indexCount; corner++) indices[corner] = surface.indices[indexStart + corner] - vertexStart;
+        const view = {
+          id,
+          ramp,
+          inkGroup,
+          inkClass,
+          positions: surface.positions.subarray(vertexStart * VECTOR, vertexEnd * VECTOR),
+          normals: surface.normals.subarray(vertexStart * VECTOR, vertexEnd * VECTOR),
+          indices: range.vertexCount > MOST_SHORT_INDEX ? Uint32Array.from(indices, (_value, corner) => surface.indices[indexStart + corner] - vertexStart) : indices,
+          owners: surface.owners.subarray(vertexStart * OWNERS, vertexEnd * OWNERS),
+          weights: surface.weights.subarray(vertexStart * OWNERS, vertexEnd * OWNERS),
+        };
+        return isBody ? { ...view, faceShare: surface.faceShare.subarray(vertexStart, vertexEnd) } : view;
+      })
+      .filter((layer) => layer.indices.length > 0);
+
+  /** The bytes of a surface's arrays: what a kept bake holds (its `layers` are views made when read, for tools and tests). */
+  const bytesOf = (surface) => [surface.positions, surface.normals, surface.indices, surface.owners, surface.weights, surface.faceShare, surface.paint].reduce((sum, values) => sum + values.byteLength, 0);
 
   /**
    * Swings the bones of a draped object out to where they rest on what is under them (`Kit.drape.hangAngle`):
@@ -1166,7 +1452,7 @@
         });
         if (thick.length) {
           gridSolids = thick.map(({ part }) => part);
-          const mesh = Kit.sculpt.surface(yield* Kit.sculpt.sampleSteps(gridSolids, { cell: ownCell }));
+          const mesh = yield* Kit.sculpt.surfaceSteps(yield* Kit.sculpt.sampleSteps(gridSolids, { cell: ownCell }));
           if (mesh.indices.length) {
             const before = Float32Array.from(mesh.positions);
             if (bodyPieces.length && Kit.drape.settle(mesh, below, { gap, hang: hangOf.get(lead.bone) })) laid.solids.push(movedCloud(mesh, before, ownCell * NET_EDGE_CELLS));
@@ -1207,7 +1493,7 @@
         });
         if (!kept.length) continue;
         gridSolids = kept.map(({ part }) => part);
-        const mesh = Kit.sculpt.surface(yield* Kit.sculpt.sampleSteps(gridSolids, { cell: ownCell }));
+        const mesh = yield* Kit.sculpt.surfaceSteps(yield* Kit.sculpt.sampleSteps(gridSolids, { cell: ownCell }));
         if (mesh.indices.length) {
           meshes.push(mesh);
           owns.push(-1);
