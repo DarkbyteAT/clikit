@@ -29,6 +29,8 @@
   /** Floats per vertex position or normal, and per matrix. */
   const VECTOR = 3;
   const MATRIX = 16;
+  /** Texels of a bone texture per matrix (a column each), and numbers per column. */
+  const MATRIX_TEXELS = 4;
   /** Bones that may move one vertex of a sculpted surface. */
   const SKIN_OWNERS = 4;
   const QUATERNION = 4;
@@ -220,6 +222,7 @@
    * @property {Object} world the world transforms of the last `pose()`, in figure space
    * @property {Object} measured the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
    * @property {function(): void} rest copies the bake's rest pose into `local`
+   * @property {{triangles: number, meshes: number, isSculpted: boolean}} cost triangles per member, instanced meshes for the whole crowd
    * @property {function(): void} pose forward kinematics over `local` and a matrix write per mesh; no allocation
    * @property {function(Object, Object=, {settle?: boolean}=): Object} setBake draws another bake with the fewest
    *   changes; returns the plan carried out. A colour change never sculpts. `{ settle: false }` says the edit is
@@ -336,23 +339,7 @@
      * The pose with every buried limb opened (kit/figure-sculpt.js `limbClearance`): the same turn in front of
      * the lead bone's rotation whatever wrote the pose, so a walk swings the arms about their opened rest.
      */
-    const opened = (local) => {
-      if (!skin || !skin.clearance.leads.length) return local;
-      const { leads, turns } = skin.clearance;
-      Kit.rig.copy(local, skin.scratch);
-      const rotation = skin.scratch.rotation;
-      // Per-frame: a quaternion product per opened limb, written in place.
-      for (let index = 0; index < leads.length; index++) {
-        const [at, turn] = [leads[index] * QUATERNION, index * QUATERNION];
-        const [ax, ay, az, aw] = [turns[turn], turns[turn + 1], turns[turn + 2], turns[turn + 3]];
-        const [bx, by, bz, bw] = [rotation[at], rotation[at + 1], rotation[at + 2], rotation[at + 3]];
-        rotation[at] = aw * bx + ax * bw + ay * bz - az * by;
-        rotation[at + 1] = aw * by - ax * bz + ay * bw + az * bx;
-        rotation[at + 2] = aw * bz + ax * by - ay * bx + az * bw;
-        rotation[at + 3] = aw * bw - ax * bx - ay * by - az * bz;
-      }
-      return skin.scratch;
-    };
+    const opened = (local) => (skin ? openedInto(skin.clearance, local, skin.scratch) : local);
     const isReplaced = (piece) => Boolean(skin && skin.replaced.has(piece.id));
 
     const addPiece = (piece) => {
@@ -476,6 +463,27 @@
     return figure;
   };
 
+  /**
+   * The pose with every buried limb opened, written into `scratch` (or `local` itself when no limb is buried):
+   * a quaternion product per opened limb, in place, nothing allocated.
+   */
+  const openedInto = (clearance, local, scratch) => {
+    if (!clearance.leads.length) return local;
+    const { leads, turns } = clearance;
+    Kit.rig.copy(local, scratch);
+    const rotation = scratch.rotation;
+    for (let index = 0; index < leads.length; index++) {
+      const [at, turn] = [leads[index] * QUATERNION, index * QUATERNION];
+      const [ax, ay, az, aw] = [turns[turn], turns[turn + 1], turns[turn + 2], turns[turn + 3]];
+      const [bx, by, bz, bw] = [rotation[at], rotation[at + 1], rotation[at + 2], rotation[at + 3]];
+      rotation[at] = aw * bx + ax * bw + ay * bz - az * by;
+      rotation[at + 1] = aw * by - ax * bz + ay * bw + az * bx;
+      rotation[at + 2] = aw * bz + ax * by - ay * bx + az * bw;
+      rotation[at + 3] = aw * bw - ax * bx - ay * by - az * bz;
+    }
+    return scratch;
+  };
+
   /** @type {WeakMap<Object, {geometry: THREE.BufferGeometry, users: number}>} one geometry per sculpted layer, shared by every figure showing it */
   const skinGeometries = new WeakMap();
   /**
@@ -540,7 +548,9 @@
    * @param {Object} view from `Kit.look.view`
    * @param {Object} bake from a bakery
    * @param {number} count members
-   * @param {{level?: string, cache?: GeometryCache, rows?: Object}} [options] `rows`: a block from `loadRows` to share
+   * @param {{level?: string, cache?: GeometryCache, rows?: Object, sculpt?: boolean}} [options] `rows`: a block from `loadRows` to share;
+   *   `sculpt: false`: the rigid pieces (also what a WebGL1 renderer gets). Sculpted, every member bends the same
+   *   surfaces (sculpted once per bake, kept in the sculpt cache) by its own row of a bone texture
    * @returns {Crowd}
    * @complexity pose: O(count x (bones + pieces)) per frame, no allocation; draw calls O(pieces)
    * @example const crowd = Kit.figure.crowd(view, bake, 200); crowd.places.set([x, 0, z, heading], 4 * index);
@@ -555,30 +565,72 @@
     const textures = sharedRegionTextures();
     const restWorld = Kit.body.worldTransforms(bake.plan, bake.rest, Kit.body.createPose(bake.plan));
     const measured = Kit.figure.measureRest(pieceLayout, restWorld, cache.positions);
-    const meshes = pieceLayout.pieces.map((piece) => {
-      const mesh = new THREE.InstancedMesh(cache.acquire(piece), undefined, count);
-      // Members wander over the whole stage; the geometry's own bounds would cull them wrongly.
+    // One sculpted surface per layer for the whole crowd where the renderer can index a bone texture by instance;
+    // the rigid pieces are then only what the surfaces leave (eyes, props, what is too thin to sculpt).
+    const canSculpt = options.sculpt !== false && Boolean(Kit.figure.sculptLayers) && view.isWebGL2 === true;
+    const sculpted = canSculpt ? Kit.figure.sculptLayers(bake, pieceLayout) : null;
+    const meshes = pieceLayout.pieces
+      .filter((piece) => !sculpted || !sculpted.replaced.has(piece.id))
+      .map((piece) => {
+        const mesh = new THREE.InstancedMesh(cache.acquire(piece), undefined, count);
+        // Members wander over the whole stage; the geometry's own bounds would cull them wrongly.
+        mesh.frustumCulled = false;
+        root.add(mesh);
+        const dressed = view.shading.dress(mesh, lookPartOf(piece, block, textures));
+        return { piece, mesh, dressed };
+      });
+    const boneCount = bake.plan.boneCount;
+    /** Per member, per bone: its world matrix times the inverse of the pose the surfaces were made in (a texture row a member). */
+    const boneData = sculpted ? new Float32Array(count * boneCount * MATRIX) : null;
+    const boneTexture = sculpted ? new THREE.DataTexture(boneData, boneCount * MATRIX_TEXELS, count, THREE.RGBAFormat, THREE.FloatType) : null;
+    const inverses = sculpted ? new Float32Array(boneCount * MATRIX) : null;
+    if (sculpted) for (let bone = 0; bone < boneCount; bone++) new THREE.Matrix4().fromArray(sculpted.matrices, bone * MATRIX).invert().toArray(inverses, bone * MATRIX);
+    const skins = (sculpted ? sculpted.layers : []).map((layer) => {
+      const mesh = new THREE.InstancedMesh(acquireSkinGeometry(layer), undefined, count);
       mesh.frustumCulled = false;
       root.add(mesh);
-      const dressed = view.shading.dress(mesh, lookPartOf(piece, block, textures));
-      return { piece, mesh, dressed };
+      const faceLight = layer.faceShare ? { response: 'face', responseShare: true } : {};
+      const dressed = view.shading.dress(mesh, { ramp: block.rows[layer.ramp], inkGroup: layer.inkGroup, inkClass: layer.inkClass, blockRow: block.offset, crowdBones: boneTexture, ...faceLight });
+      return { layer, mesh, dressed };
     });
     const locals = Array.from({ length: count }, () => Kit.rig.copy(bake.rest, Kit.body.createPose(bake.plan)));
     const world = Kit.body.createPose(bake.plan);
+    const scratch = Kit.body.createPose(bake.plan);
+    const boneMatrix = new Float32Array(MATRIX);
     const places = new Float32Array(count * PLACE);
     return {
       root,
       count,
       locals,
       places,
+      /** Triangles drawn per member and draw calls for the whole crowd (ink hulls not counted). */
+      cost: {
+        triangles: [...meshes, ...skins].reduce((sum, { mesh }) => sum + (mesh.geometry.index ? mesh.geometry.index.count : mesh.geometry.attributes.position.count) / VECTOR, 0),
+        meshes: meshes.length + skins.length,
+        isSculpted: Boolean(sculpted),
+      },
       pose() {
-        // Per-frame hot path over members and pieces: index loops, direct writes into the instance buffers.
+        // Per-frame hot path over members, pieces and bones: index loops, direct writes into the instance and bone buffers.
         for (let member = 0; member < count; member++) {
           const at = member * PLACE;
-          Kit.body.worldTransforms(bake.plan, locals[member], world, places[at], places[at + 1] - measured.lowestY, places[at + 2], places[at + 3]);
+          const local = sculpted ? openedInto(sculpted.clearance, locals[member], scratch) : locals[member];
+          Kit.body.worldTransforms(bake.plan, local, world, places[at], places[at + 1] - measured.lowestY, places[at + 2], places[at + 3]);
           for (let index = 0; index < meshes.length; index++) Kit.figure.writeBoneMatrix(world, meshes[index].piece.bone, meshes[index].mesh.instanceMatrix.array, member * MATRIX);
+          if (!sculpted) continue;
+          for (let bone = 0; bone < boneCount; bone++) {
+            Kit.figure.writeBoneMatrix(world, bone, boneMatrix);
+            const [out, inverse] = [(member * boneCount + bone) * MATRIX, bone * MATRIX];
+            // An affine product, column by column: the bone's matrix times the inverse of where the surface was made.
+            for (let column = 0; column < MATRIX; column += MATRIX_TEXELS) {
+              const [x, y, z, w] = [inverses[inverse + column], inverses[inverse + column + 1], inverses[inverse + column + 2], inverses[inverse + column + 3]];
+              for (let row = 0; row < MATRIX_TEXELS; row++) {
+                boneData[out + column + row] = boneMatrix[row] * x + boneMatrix[MATRIX_TEXELS + row] * y + boneMatrix[2 * MATRIX_TEXELS + row] * z + boneMatrix[3 * MATRIX_TEXELS + row] * w;
+              }
+            }
+          }
         }
         for (let index = 0; index < meshes.length; index++) meshes[index].mesh.instanceMatrix.needsUpdate = true;
+        if (boneTexture) boneTexture.needsUpdate = true;
       },
       dispose() {
         meshes.forEach(({ piece, mesh, dressed }) => {
@@ -588,6 +640,13 @@
           cache.release(piece.key);
           if (piece.regions) textures.release(piece.regions.key);
         });
+        skins.forEach(({ layer, mesh, dressed }) => {
+          root.remove(mesh);
+          view.shading.undress(dressed);
+          mesh.dispose();
+          releaseSkinGeometry(layer);
+        });
+        if (boneTexture) boneTexture.dispose();
         view.remove(root);
         if (!options.rows && view.atlas.free) view.atlas.free(block);
       },

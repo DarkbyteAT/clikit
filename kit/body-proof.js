@@ -257,6 +257,8 @@
         const cells = sheet.cells.slice((job.page || 0) * perPage, ((job.page || 0) + 1) * perPage);
         if (job.preset) view.use(job.preset);
         shown.forEach((entry) => entry.figure.dispose());
+        if (gathered) gathered.dispose();
+        gathered = null;
         const refusals = [];
         shown = cells.map((cell) => {
           const figure = Kit.figure.build(view, bakery.bakeRecipe(cell.recipe), { cache, level, sculpt: !job.rigid });
@@ -295,6 +297,42 @@
         return { pages, cells: shown.length, columns, rows, framing, aspect: (columns * cellWidth) / (rows * cellHeight), refusals };
       };
 
+      /** The crowd drawn by `crowd`, if any (a sheet replaces it and the reverse). */
+      let gathered = null;
+      /**
+       * Draws many figures of one recipe as one `Kit.figure.crowd`, each at its own phase of an act and its own heading.
+       * @param {{catalog?: string, recipe: Object, count?: number, columns?: number, act?: string, level?: string, rigid?: boolean, preset?: string, cellPixels?: number}} job
+       * @returns {{count: number, columns: number, rows: number, aspect: number, level: string, triangles: number, meshes: number, isSculpted: boolean}}
+       *   `triangles` per member; `meshes`: instanced meshes for the whole crowd
+       */
+      const crowd = (job) => {
+        const { bakery } = catalogOf(job.catalog || 'wardrobe');
+        const bake = bakery.bakeRecipe(job.recipe);
+        const count = job.count || 100;
+        const columns = job.columns || Math.ceil(Math.sqrt(count * 2));
+        const rows = Math.ceil(count / columns);
+        const level = job.level || Kit.figure.levelFor((job.cellPixels || 0) * CELL.figureShare || Infinity);
+        if (job.preset) view.use(job.preset);
+        shown.forEach((entry) => entry.figure.dispose());
+        shown = [];
+        if (gathered) gathered.dispose();
+        const measure = Kit.figure.build(view, bake, { cache, level: 'low', sculpt: false });
+        const [height, width] = [measure.measured.highestY, Math.max(CELL.leastWidth, measure.measured.reach * 2)];
+        measure.dispose();
+        gathered = Kit.figure.crowd(view, bake, count, { cache, level, sculpt: !job.rigid });
+        const [cellWidth, cellHeight] = [Math.min(width, height * CELL.mostAspect) * CELL.sideMargin, height * CELL.topMargin];
+        for (let member = 0; member < count; member++) {
+          const local = gathered.locals[member];
+          perform({ bake, local, rest: () => Kit.rig.copy(bake.rest, local), pose() {} }, job.act || 'walk', (member % PHASES) / PHASES);
+          const [column, row] = [member % columns, Math.floor(member / columns)];
+          gathered.places.set([(column - (columns - 1) / 2) * cellWidth, (rows - 1 - row) * cellHeight + cellHeight * 0.04, 0, ((member * 3) % 8) * (TURN / 8)], member * 4);
+        }
+        gathered.pose();
+        grid = { columns, rows, cellWidth, cellHeight };
+        labels.value = { columns, rows, texts: [] };
+        return { count, columns, rows, aspect: (columns * cellWidth) / (rows * cellHeight), level, ...gathered.cost };
+      };
+
       const fitCamera = () => {
         const [width, height] = [grid.columns * grid.cellWidth, grid.rows * grid.cellHeight];
         const worldPerPixel = Math.max(width / size.w, height / size.h);
@@ -323,11 +361,13 @@
         },
         dispose() {
           shown.forEach((entry) => entry.figure.dispose());
+          if (gathered) gathered.dispose();
           view.dispose();
           cache.dispose();
         },
         debugState: () => ({ cells: shown.length, grid }),
         show,
+        crowd,
       };
     },
   });

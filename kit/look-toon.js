@@ -69,6 +69,23 @@
   // ---- GLSL chunks -----------------------------------------------------------------------------------------------------
 
   /**
+   * A crowd of one sculpted surface: an instanced mesh whose members each have their own bones. Row `gl_InstanceID`
+   * of the bone texture holds that member's bone matrices (four texels each, columns), already times the inverse
+   * of the pose the surface was made in; the instance matrix then places the member. WebGL2 only.
+   */
+  const GLSL_CROWD_PARS = `
+    #ifdef LOOK_CROWD_BONES
+      attribute vec4 skinIndex;
+      attribute vec4 skinWeight;
+      uniform highp sampler2D uCrowdBones;
+      mat4 crowdBone(float bone) {
+        int at = int(bone) * 4;
+        return mat4(texelFetch(uCrowdBones, ivec2(at, gl_InstanceID), 0), texelFetch(uCrowdBones, ivec2(at + 1, gl_InstanceID), 0),
+          texelFetch(uCrowdBones, ivec2(at + 2, gl_InstanceID), 0), texelFetch(uCrowdBones, ivec2(at + 3, gl_InstanceID), 0));
+      }
+    #endif`;
+
+  /**
    * Vertex stage shared by the toon and hull shaders: three.js's skinning and instancing chunks, in the order
    * its own materials use them. Leaves `transformedNormal` (view space), `mvPosition` and `gl_Position` set.
    */
@@ -79,8 +96,15 @@
     #endif
     #include <skinbase_vertex>
     #include <skinnormal_vertex>
+    #ifdef LOOK_CROWD_BONES
+      mat4 crowdSkin = skinWeight.x * crowdBone(skinIndex.x) + skinWeight.y * crowdBone(skinIndex.y) + skinWeight.z * crowdBone(skinIndex.z) + skinWeight.w * crowdBone(skinIndex.w);
+      objectNormal = (crowdSkin * vec4(objectNormal, 0.0)).xyz;
+    #endif
     #include <defaultnormal_vertex>
     #include <begin_vertex>
+    #ifdef LOOK_CROWD_BONES
+      transformed = (crowdSkin * vec4(transformed, 1.0)).xyz;
+    #endif
     #ifdef LOOK_STAMP
       transformed = stampCentre.xyz + (transformed - stampCentre.xyz) * stampGrowth();
     #endif
@@ -270,6 +294,7 @@
 
   const TOON_VERTEX = `
     #include <skinning_pars_vertex>
+    ${GLSL_CROWD_PARS}
     #ifdef LOOK_INSTANCE_RAMP
       attribute float instanceRamp;
     #endif
@@ -437,6 +462,7 @@
    */
   const HULL_VERTEX = `
     #include <skinning_pars_vertex>
+    ${GLSL_CROWD_PARS}
     #ifdef LOOK_INK_NORMAL
       attribute vec3 inkNormal;
     #endif
@@ -532,6 +558,8 @@
    * @property {boolean} [responseShare] the geometry has a float `responseShare` attribute, 0..1 per vertex: how
    *   much of `response` the surface takes there, the rest being a form's (one skin that is a head and a body)
    * @property {{value: THREE.Vector2}} [anchor] from `shading.follow(root)`: the figure this part's dither moves with
+   * @property {THREE.DataTexture} [crowdBones] an InstancedMesh of one skinned surface: a float texture with a row of bone
+   *   matrices per instance (4 texels a bone), which bend the geometry's `skinIndex`/`skinWeight` before the instance matrix places it (WebGL2)
    * @property {boolean} [instanceRamp] an InstancedMesh whose geometry has a float `instanceRamp` attribute: a row offset per instance
    * @property {number} [inkClass=0] 0..15. Where two classes meet on one surface (a sleeve and the skin below
    *   it), a line is drawn on the lower one, even inside one ink group. Parts that all keep the default never get one
@@ -633,6 +661,7 @@
       uInkGroup: { value: part.inkGroup === undefined ? (part.emissive ? 0 : 1) : part.inkGroup },
       uPart: { value: new THREE.Vector3(part.shiny ? 1 : 0, part.emissive ? 1 : 0, part.tone === undefined ? -1 : part.tone) },
       uInkClass: { value: part.inkClass || 0 },
+      ...(part.crowdBones ? { uCrowdBones: { value: part.crowdBones } } : {}),
       ...(part.regions || part.stamps ? { uBlockRow: { value: part.blockRow || 0 } } : {}),
       ...(part.regions ? regionUniforms(part.regions, part.shell || 0) : {}),
     });
@@ -649,7 +678,13 @@
         uShell: { value: shell },
       };
     };
-    const partDefines = (part) => ({ ...(part.regions ? { LOOK_REGIONS: '' } : {}), ...(part.stamps ? { LOOK_STAMP: '' } : {}), ...(part.responseShare ? { LOOK_RESPONSE_SHARE: '' } : {}) });
+    const partDefines = (part) => ({
+      ...(part.regions ? { LOOK_REGIONS: '' } : {}),
+      ...(part.stamps ? { LOOK_STAMP: '' } : {}),
+      ...(part.responseShare ? { LOOK_RESPONSE_SHARE: '' } : {}),
+      ...crowdDefines(part),
+    });
+    const crowdDefines = (part) => (part.crowdBones ? { LOOK_CROWD_BONES: '' } : {});
 
     /** Makes the geometry draw twice, once per material slot (toon, hull), and gives it welded normals for the hull. */
     const prepareGeometry = (mesh) => {
@@ -697,7 +732,7 @@
           vertexShader: HULL_VERTEX,
           fragmentShader: HULL_FRAGMENT,
           side: THREE.BackSide,
-          defines: { ...baseDefines(), ...(part.regions && !part.stamps ? { LOOK_REGIONS: '' } : {}), LOOK_INK_NORMAL: '' },
+          defines: { ...baseDefines(), ...(part.regions && !part.stamps ? { LOOK_REGIONS: '' } : {}), ...crowdDefines(part), LOOK_INK_NORMAL: '' },
         });
         // An unoutlined part (group 0, stamps, or one that asked for none) keeps its hull material but never shows it.
         hull.userData.isInked = partValues.uInkGroup.value > 0 && !part.stamps && part.outlined !== false;

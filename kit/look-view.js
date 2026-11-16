@@ -115,6 +115,8 @@
 
     return {
       scene,
+      /** Whether the renderer is WebGL2 (a sculpted crowd needs it: a bone texture indexed by instance). */
+      isWebGL2: Boolean(renderer.capabilities && renderer.capabilities.isWebGL2),
       atlas,
       shading,
       add(root) {
