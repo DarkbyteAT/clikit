@@ -104,6 +104,8 @@
   /** Where each channel starts in a values buffer, and the buffer's length. */
   const OFFSET = Object.freeze(Object.fromEntries(CHANNEL_NAMES.map((name, index) => [name, CHANNEL_NAMES.slice(0, index).reduce((sum, other) => sum + CHANNELS[other].size, 0)])));
   const VALUE_COUNT = CHANNEL_NAMES.reduce((sum, name) => sum + CHANNELS[name].size, 0);
+  /** The values that are sideways: every part of a channel that a mirror negates (a lean, a yaw, a tilt). */
+  const SIDEWAYS_VALUES = Object.freeze(CHANNEL_NAMES.flatMap((name) => (CHANNELS[name].mirror || []).map((sign, part) => (sign < 0 ? OFFSET[name] + part : -1)).filter((at) => at >= 0)));
   /** A key's shorthand for both sides at once. */
   const BOTH = Object.freeze({ arms: ['armLeft', 'armRight'], feet: ['footLeft', 'footRight'] });
   /** The limbs a `reach` can pull, and which sides each means. */
@@ -196,6 +198,9 @@
    * @property {Object} [needs] a requirement spec for `Kit.body.requirement` ({ needs, atLeast })
    * @property {string} [side] 'left' or 'right': the side it is authored for; played mirrored for the other
    * @property {string} [sideBy] the name of a target: the side is the one that point is on
+   * @property {boolean} [leanBySide=false] with `sideBy`: the sideways parts of its keys (the lean, yaw and tilt of the
+   *   body, spine and head) play in proportion to how far to the side the point is, in full at an arm's length, so a
+   *   point straight ahead is met squarely instead of leaning the shoulder away from it
    * @property {Object<string, number[]>} [defaults] target name -> [left, up, forward] from where the body stands, in
    *   units of how high its hands reach (`ActRig.high`; its standing height when it has no arms): where the
    *   point is when the caller gives none, so a default is within reach of a long body and a squat one alike
@@ -335,6 +340,8 @@
     const uses = new Uint8Array(GROUP_NAMES.length);
     used.forEach((name) => (uses[GROUP[CHANNELS[name].group]] = 1));
     const movesBody = uses[GROUP.body] === 1;
+    // Legs are needed only by what works them: a foot channel, a foot pulled to a point, or a body carried somewhere.
+    const standsOnLegs = used.has('footLeft') || used.has('footRight') || reaches.some((reach) => reach.foot) || Boolean(travel);
     return Object.freeze({
       id: spec.id,
       label: spec.label || spec.id,
@@ -343,8 +350,10 @@
       hold: Boolean(spec.hold),
       needs: spec.needs ? Kit.body.requirement(spec.needs) : null,
       movesBody,
+      standsOnLegs,
       side: spec.side ? SIDES.indexOf(spec.side) : -1,
       sideBy: spec.sideBy === undefined ? -1 : targets.indexOf(spec.sideBy),
+      leanBySide: Boolean(spec.leanBySide) && spec.sideBy !== undefined,
       keyCount: keys.length,
       times: Float32Array.from(keys, (key) => key.at),
       eases: keys.map((key) => EASES[key.ease || 'smooth']),
@@ -520,10 +529,10 @@
     return measured;
   };
 
-  /** What a performance needs of a plan, as stage needs (kit/motion.js): its own requirement, and legs to stand on when it moves the body. */
+  /** What a performance needs of a plan, as stage needs (kit/motion.js): its own requirement, and legs to stand on when it works them (a body without legs still bows, turns and waves). */
   const needsOf = (compiled) => [
     ...(compiled.needs ? [{ consumer: `the "${compiled.id}" performance`, requirement: compiled.needs }] : []),
-    ...(compiled.movesBody ? WALK_STAGE.needs.map((need) => ({ ...need, consumer: `the "${compiled.id}" performance` })) : []),
+    ...(compiled.standsOnLegs ? WALK_STAGE.needs.map((need) => ({ ...need, consumer: `the "${compiled.id}" performance` })) : []),
   ];
 
   /**
@@ -661,6 +670,7 @@
       time: 0,
       rate: 1,
       leadUntil: 0,
+      sideways: 1,
       leadRate: 1,
       isMirrored: false,
       values: new Float32Array(VALUE_COUNT),
@@ -727,12 +737,15 @@
       acting.points[at + 1] = motion.y + compiled.defaults[at + 1] * high;
       acting.points[at + 2] = scratchPoint[2];
     }
+    acting.sideways = 1;
     // The side: asked for outright, or the one the named point is on; mirrored when it is not the authored one.
     let side = params && params.side ? SIDES.indexOf(params.side) : -1;
     if (side < 0 && compiled.sideBy >= 0) {
       const at = compiled.sideBy * VECTOR_STRIDE;
       const left = (acting.points[at] - motion.x) * Math.cos(motion.heading) - (acting.points[at + 2] - motion.z) * Math.sin(motion.heading);
       side = left >= 0 ? 0 : 1;
+      const armsLength = Math.max(acting.rig.armLength[0], acting.rig.armLength[1]) || acting.rig.unit;
+      acting.sideways = compiled.leanBySide ? clamp(Math.abs(left) / armsLength, 0, 1) : 1;
     }
     acting.isMirrored = compiled.side >= 0 && side >= 0 && side !== compiled.side;
   };
@@ -795,6 +808,7 @@
         out[channel + index] = lerp(Number.isNaN(first) ? rest : first, Number.isNaN(second) ? rest : second, amount);
       }
     }
+    if (acting.sideways < 1) for (let index = 0; index < SIDEWAYS_VALUES.length; index++) out[SIDEWAYS_VALUES[index]] *= acting.sideways;
     if (acting.isMirrored) mirrorValues(out);
     return next === 0 ? keyCount - 1 : next - 1;
   };
@@ -1092,12 +1106,13 @@
       acting.travelled[2] = travelForward;
       shiftCarrier(motion, measured, travelLeft, up, travelForward);
     }
-    const isBodyMoved = weights[GROUP.body] > 0 && measured.legs !== null;
+    const isBodyMoved = weights[GROUP.body] > 0;
+    const isStanding = isBodyMoved && measured.legs !== null;
     if (isBodyMoved) {
       const { unit } = measured;
       // A locomotion stage that ran this frame has already stood the body on its feet; alone, this stage does it.
-      const gaitFeet = Kit.gait.feet(motion);
-      const isStood = gaitFeet !== null && gaitFeet.steppedAt === motion.time;
+      const gaitFeet = isStanding ? Kit.gait.feet(motion) : null;
+      const isStood = !isStanding || (gaitFeet !== null && gaitFeet.steppedAt === motion.time);
       shiftCarrier(motion, measured, values[OFFSET.shift] * unit, values[OFFSET.shift + 1] * unit + (isStood ? 0 : measured.legs.standLift), values[OFFSET.shift + 2] * unit);
       turnBody(rotation, measured, measured.carrier, values[OFFSET.turn], values[OFFSET.turn + 1], values[OFFSET.turn + 2]);
     }
@@ -1118,7 +1133,7 @@
       lookAngles(motion, acting.points[at], acting.points[at + 1], acting.points[at + 2], scratchAngles);
       turnHead(rotation, measured, scratchAngles[0] * pulls.head, scratchAngles[1] * pulls.head, 0);
     }
-    if (isBodyMoved) poseLegs(motion, acting, values, travelLeft, travelForward);
+    if (isStanding) poseLegs(motion, acting, values, travelLeft, travelForward);
     if (weights[GROUP.armLeft] > 0) poseArm(motion, acting, values, 0);
     if (weights[GROUP.armRight] > 0) poseArm(motion, acting, values, 1);
     for (let group = 0; group < GROUP_NAMES.length; group++) if (weights[group] > 0) fadeGroup(motion, acting, group);

@@ -210,6 +210,7 @@
       needs: ARMS_NEEDED,
       side: 'left',
       sideBy: 'target',
+      leanBySide: true,
       defaults: { target: [0.3, 0.86, 0.12] },
       keys: [
         { at: 0.14, ease: 'out', shift: [-0.03, -0.12, 0], turn: [0, 0, -0.05], armLeft: [0.9, 1.1, 0.45, 0.6], armRight: [0.7, 0.8, 0.7, 0.4] },

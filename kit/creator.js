@@ -58,6 +58,9 @@
   const DRAFT_DELAY_SECONDS = 1.5;
   /** Share of the screen the panel takes: the height in portrait, the width in landscape (CSS clamp bounds). */
   const PANEL_SIZE = Object.freeze({ portraitHeight: 'clamp(300px, 50dvh, 520px)', landscapeWidth: 'clamp(320px, 44vw, 460px)' });
+  const MS_PER_SECOND = 1000;
+  /** The most one frame advances the session's clock, milliseconds: a stalled frame is not a pause by the person. */
+  const CLOCK_STEP_MS = 100;
   /** Slider-to-figure latencies kept for the report (the newest this many). */
   const LATENCY_SAMPLES = 60;
 
@@ -126,7 +129,10 @@
     const editor = Kit.body.editor(catalog);
     const bakery = catalog.bakery();
     const draft = restoreDraft(ctx.save, catalog);
-    const session = creator.session({ catalog, editor, recipe: draft.recipe || openingRecipe(catalog, editor), name: draft.name || undefined });
+    // The session's clock is the screen's own: it advances with drawn frames, never by more than `CLOCK_STEP_MS` a
+    // frame, so a renderer that stalls is not mistaken for the person pausing between two nudges of a control.
+    let screenMs = 0;
+    const session = creator.session({ catalog, editor, recipe: draft.recipe || openingRecipe(catalog, editor), name: draft.name || undefined, now: () => screenMs });
     const slots = creator.slots(ctx.save);
     const director = creator.camera.director();
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -298,6 +304,7 @@
 
     return {
       update(dt) {
+        screenMs += Math.min(dt * MS_PER_SECOND, CLOCK_STEP_MS);
         director.step(dt, reducedMotion.matches);
         quietSeconds += dt;
         if (isDraftDirty && quietSeconds >= DRAFT_DELAY_SECONDS) saveDraft();

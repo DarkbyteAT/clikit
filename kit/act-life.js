@@ -288,7 +288,7 @@
   /**
    * A whole character, ready made: a body with legs walks and runs (kit/gait.js) with breathing and a weight
    * shift under it and, over it, a performer (`Kit.act.play`), a gaze and blinks, then tails, wings, hair and
-   * cloaks trailing; a body without legs swims (kit/swim.js) and blinks. Standing still, it fidgets now and
+   * cloaks trailing; a body without legs swims (kit/swim.js) under the same performer, gaze and blinks. Standing still, it fidgets now and
    * then. This is the controller the Character Maker uses and the one a game should start from.
    * @param {{base?: string, fidgets?: string[], fidgetGap?: number[]}} [options] passed to `Kit.act.performer`
    *   (default fidgets: `Kit.act.FIDGETS`; pass [] for none)
@@ -302,7 +302,8 @@
    */
   const character = (options = {}) => {
     const walker = Kit.gait.walk({ before: [breathe(), sway()], after: [Kit.act.performer({ fidgets: Kit.act.FIDGETS, ...options }), gaze(), blink()] });
-    const swimmer = Kit.motion.sequence(Kit.swim.swim(), blink());
+    // A body without legs performs too: whatever needs only a head, a spine, arms or a tail plays over the swim.
+    const swimmer = Kit.motion.sequence(Kit.swim.swim(), Kit.act.performer({ fidgets: Kit.act.FIDGETS, ...options }), gaze(), blink(), Kit.motion.loose());
     return Kit.motion.when((motion, plan) => Kit.act.rig(plan, motion.rest).legs !== null, walker, swimmer);
   };
 
