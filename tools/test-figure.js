@@ -167,6 +167,24 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.ok(!pieces.find((piece) => piece.id === 'chest').shiny, 'cloth is not');
   });
 
+  test('figure layout: a hub bone draws a link to every continuing child, so no stretch of a body is left bare', () => {
+    const carp = figure.layout(bakery.bakeRecipe({ species: 'carp', seed: 8 }));
+    const link = carp.pieces.find((piece) => piece.id === 'trunk>rear');
+    assert.ok(link, 'the trunk reaches its rear as well as its head');
+    assert.deepStrictEqual(
+      Array.from(link.shape.end).map((value) => Number(value.toFixed(3))),
+      [0, 0, -0.24],
+      'ending at the rear joint'
+    );
+    assert.ok(link.shape.endRadius < link.shape.radius, 'narrowing into the rear (same region)');
+    const human = figure.layout(bakery.bakeRecipe({ species: 'human', seed: 4 }));
+    const shoulder = human.pieces.find((piece) => piece.id === 'chest>upperArmLeft');
+    assert.ok(shoulder && shoulder.shape.endRadius >= shoulder.shape.radius * 0.6 - 1e-9, 'a shoulder is part of the torso');
+    assert.strictEqual(human.pieces.find((piece) => piece.id === 'chest').shape.endRadius, human.pieces.find((piece) => piece.id === 'chest').shape.radius, 'the chest keeps its width up to the neck');
+    assert.ok(!human.pieces.some((piece) => piece.id.startsWith('handRight>')), 'control: a tailed bone draws only itself');
+    assert.ok(!human.pieces.some((piece) => piece.id.includes('>headTop')), 'and a part is never a link');
+  });
+
   test('figure layout: a limb`s segments share an ink group, sides and parts do not, and a part keeps its group', () => {
     const groupsOf = (recipe) => new Map(figure.layout(bakery.bakeRecipe(recipe)).pieces.map((piece) => [piece.id, piece.inkGroup]));
     const bare = groupsOf({ species: 'human', seed: 4, overrides: { 'fill:headTop': 'hat', 'fill:handRight': null } });

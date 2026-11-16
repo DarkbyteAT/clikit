@@ -57,6 +57,8 @@
   const SIDE_ROLES = ['left', 'right'];
   const END_ROLES = ['front', 'hind'];
   const NO_RAMP = -1;
+  /** The role kit/body-parts.js gives every bone of an attached part. */
+  const PROP_ROLE = 'prop';
   const VECTOR = 3;
 
   const fail = (where, message) => {
@@ -68,7 +70,8 @@
   /**
    * @typedef {Object} FigurePiece
    * One drawn surface: a mesh in the meshes binding, a run of triangles in a merged one.
-   * @property {string} id stable across rebuilds: the bone's name, plus '#<n>' for an extension piece
+   * @property {string} id stable across rebuilds: the bone's name; '<bone>><child>' for an extra link of a hub
+   *   bone (a chest to a shoulder); '<bone>#<n>' for an extension piece
    * @property {number} bone bone index in the layout's plan (changes when the outfit changes; `id` does not)
    * @property {Object} shape a `ShapeDescriptor` of kit/figure-shapes.js, in the bone's space
    * @property {string} key `shapeKey(shape, level)`: equal keys share one geometry
@@ -136,6 +139,23 @@
     return resolved;
   };
 
+  /**
+   * The paint channel each bone is drawn with, inherited exactly like its ramp (`resolveRamps`), so a ruby on a
+   * sword is metal too.
+   * @param {Object} plan a `BodyPlan`
+   * @returns {Array<?string>} per bone: a channel name, or null when no ancestor is painted
+   * @complexity O(bones)
+   * @example Kit.figure.resolveChannels(plan)[plan.boneIndex('handRight/blade')] // 'metal'
+   */
+  const resolveChannels = (plan) => {
+    const channels = [];
+    for (let bone = 0; bone < plan.boneCount; bone++) {
+      const own = plan.bonePaint[bone] ? plan.paintChannels[plan.bonePaint[bone] - 1] : null;
+      channels.push(own || (plan.parent[bone] >= 0 ? channels[plan.parent[bone]] : null));
+    }
+    return channels;
+  };
+
   // ---- ink groups -----------------------------------------------------------------------------------------------------
 
   /** FNV-1a of a string, 32 bits: a part's ink group must not depend on what else is worn. */
@@ -161,7 +181,7 @@
     const side = SIDE_ROLES.find(has);
     const end = END_ROLES.find(has);
     const name = plan.boneNames[bone];
-    if (has('prop')) return ['part:' + name.split(Kit.body.SOCKET_PATH_SEPARATOR)[0], side].filter(Boolean).join('-');
+    if (has(PROP_ROLE)) return ['part:' + name.split(Kit.body.SOCKET_PATH_SEPARATOR)[0], side].filter(Boolean).join('-');
     const group = Kit.body.groupOf(roles);
     if (group === 'body' || group === 'head' || group === 'tail') return group;
     return [group, end, side].filter(Boolean).join('-');
@@ -209,23 +229,28 @@
     const { plan } = bake;
     const level = options.level || Kit.figure.DEFAULT_LEVEL;
     const boneRamp = resolveRamps(plan, bake.boneRamp);
-    const boneChannel = [];
-    for (let bone = 0; bone < plan.boneCount; bone++) {
-      const own = plan.bonePaint[bone] ? plan.paintChannels[plan.bonePaint[bone] - 1] : null;
-      boneChannel.push(own || (plan.parent[bone] >= 0 ? boneChannel[plan.parent[bone]] : null));
-    }
-    const propMask = Kit.body.roleMask(['prop']);
+    const boneChannel = resolveChannels(plan);
+    const propMask = Kit.body.roleMask([PROP_ROLE]);
     const isProp = (bone) => (plan.roles[bone] & propMask) !== 0;
     const mountSuffix = `${Kit.body.SOCKET_PATH_SEPARATOR}${Kit.body.MOUNT_BONE}`;
     const isHidden = (bone) => plan.boneNames[bone].endsWith(mountSuffix);
     const inkKeys = Array.from({ length: plan.boneCount }, (_unused, bone) => inkKeyOf(plan, bone));
-    // A limb narrows into its next segment; a chest keeps its width up to the neck (another region).
-    const taperInto = (bone, child) => inkKeys[bone] === inkKeys[child] && Kit.body.groupOf(plan.roles[bone]) !== 'body';
+    const rules = { isHidden, skipChild: (from, child) => isProp(child) !== isProp(from) || isHidden(child), isSameRegion: (bone, child) => inkKeys[bone] === inkKeys[child] };
     const pieces = [];
     for (let bone = 0; bone < plan.boneCount; bone++) {
-      const shape = Kit.figure.describeShape(plan, bone, { isHidden, skipChild: (from, child) => isProp(child) !== isProp(from) || isHidden(child), taperInto });
+      const surfaces = Kit.figure.describeShapes(plan, bone, rules);
       const base = { bone, ramp: boneRamp[bone], isProp: isProp(bone), shiny: SHINY_CHANNELS.includes(boneChannel[bone]) };
-      if (shape) pieces.push({ ...base, id: plan.boneNames[bone], shape, key: Kit.figure.shapeKey(shape, level), inkGroup: inkGroupOf(inkKeys[bone]) });
+      // A bone's own surface is named after it; an extra link after the bone and the child it reaches ('chest>upperArmLeft').
+      surfaces.forEach(({ shape, child }) =>
+        pieces.push({
+          ...base,
+          id: child < 0 ? plan.boneNames[bone] : `${plan.boneNames[bone]}>${plan.boneNames[child]}`,
+          shape,
+          key: Kit.figure.shapeKey(shape, level),
+          inkGroup: inkGroupOf(inkKeys[bone]),
+        })
+      );
+      const shape = surfaces.length ? surfaces[0].shape : null;
       const features = options.featuresOf ? options.featuresOf(plan, bone, shape) || [] : [];
       features.forEach((feature, index) => pieces.push(featurePiece(feature, `${plan.boneNames[bone]}#${index}`, base, inkGroupOf(inkKeys[bone]), level)));
     }
@@ -369,9 +394,9 @@
     const top = measured.highestY + height * (margin + headroom);
     const neededHalfWidth = measured.reach * (1 + margin);
     const halfHeight = Math.max((top - bottom) / 2, neededHalfWidth / aspect);
-    // When the width decides, the body stays on the ground of the window: extra room goes above, not below.
-    return { centerX: 0, centerY: bottom + halfHeight, halfWidth: halfHeight * aspect, halfHeight };
+    // When the width decides, the extra height is shared above and below: the body sits in the middle.
+    return { centerX: 0, centerY: (bottom + top) / 2, halfWidth: halfHeight * aspect, halfHeight };
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { INK_GROUPS, PART_GROUPS, SHINY_CHANNELS, resolveRamps, inkKeyOf, inkGroupOf, layout, planUpdate, measureRest, fitView });
+  Kit.figure = Object.assign(Kit.figure || {}, { INK_GROUPS, PART_GROUPS, SHINY_CHANNELS, resolveRamps, resolveChannels, inkKeyOf, inkGroupOf, layout, planUpdate, measureRest, fitView });
 })();

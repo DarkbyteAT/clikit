@@ -5,7 +5,7 @@
  * two shapes would build the same surface (so identical shapes share one geometry).
  *
  * Owns:  `Kit.figure.LEVELS` (segment counts per level of detail), `Kit.figure.ACROSS_AXIS` (the extrude
- *        convention), `describeShape` (a bone of a plan -> a canonical shape descriptor), `shapeKey`,
+ *        convention), `describeShapes` (a bone of a plan -> its canonical shape descriptors), `shapeKey`,
  *        `buildShape` and the builders behind it (`BUILDERS`), `triangulate` (ear clipping for extrude
  *        outlines) and `writeBoneMatrix` (a bone's world transform as a column-major 4 x 4 matrix).
  * Does not own: the shape data (kit/body-plan.js and a catalogue's plans and parts), which bones get drawn and
@@ -392,64 +392,88 @@
 
   // ---- from a plan's bone to a descriptor ------------------------------------------------------------------------------
 
-  /** The first child of a bone that continues its surface (not skipped by `skipChild`), or -1. */
-  const firstContinuingChild = (plan, bone, skipChild) => {
-    for (let child = bone + 1; child < plan.subtreeEnd[bone]; child++) {
-      if (plan.parent[child] === bone && !skipChild(bone, child)) return child;
-    }
-    return -1;
+  /** The children of a bone that continue its surface (not skipped by `skipChild`), in plan order. */
+  const continuingChildren = (plan, bone, skipChild) => {
+    const children = [];
+    for (let child = bone + 1; child < plan.subtreeEnd[bone]; child++) if (plan.parent[child] === bone && !skipChild(bone, child)) children.push(child);
+    return children;
   };
 
   /** A bone that states no shape is a capsule. */
   const DEFAULT_SHAPE_ROW = Object.freeze({ kind: 'capsule' });
+  /**
+   * A side link (a chest to a shoulder, a pelvis to a hip) that leaves the bone's region narrows to at least this
+   * share of the bone's own radius: shoulders read as the torso's, not as thin sticks out of its middle.
+   */
+  const SIDE_LINK_SHARE = 0.6;
 
-  /** The default capsule: joint to tail, else to the first continuing child, else a ball of the bone's girth. */
-  const describeCapsule = (plan, bone, _row, at, rules) => {
+  /**
+   * The default capsule. A bone with a `tail` is one capsule from the joint to it. A bone without one is a
+   * capsule to each continuing child's joint, so a hub (a chest with a neck and two shoulders, a fish's trunk
+   * with a head in front and a rear behind) draws every link instead of only the first. Within one region a
+   * link narrows to the child's girth (a limb into its next segment); out of it the first link keeps the bone's
+   * width (a chest into its neck) and the others narrow by `SIDE_LINK_SHARE` at most. A child drawn as some
+   * other shape (a head sphere, a foot box) is never tapered towards. Neither: a ball of the bone's girth.
+   */
+  const describeCapsules = (plan, bone, _row, at, rules) => {
     const radius = plan.girth[bone] / 2;
     const tail = Array.from(plan.tail.subarray(bone * VECTOR, bone * VECTOR + VECTOR));
-    const child = length3(tail) > EPSILON ? -1 : firstContinuingChild(plan, bone, rules.skipChild || (() => false));
-    const end = child >= 0 ? Array.from(plan.restTranslation.subarray(child * VECTOR, child * VECTOR + VECTOR)) : tail;
-    if (length3(end) <= EPSILON) return { kind: 'sphere', radius, at };
-    const isTapered = child >= 0 && rules.taperInto && rules.taperInto(bone, child);
-    return { kind: 'capsule', end, radius, endRadius: isTapered ? plan.girth[child] / 2 : radius, at };
+    if (length3(tail) > EPSILON) return [{ shape: { kind: 'capsule', end: tail, radius, endRadius: radius, at }, child: -1 }];
+    const links = continuingChildren(plan, bone, rules.skipChild || (() => false)).filter((child) => length3(plan.restTranslation.subarray(child * VECTOR, child * VECTOR + VECTOR)) > EPSILON);
+    if (!links.length) return [{ shape: { kind: 'sphere', radius, at }, child: -1 }];
+    return links.map((child, index) => {
+      const isCapsuleChild = !plan.shapes[child] || plan.shapes[child].kind === 'capsule';
+      const childRadius = isCapsuleChild ? plan.girth[child] / 2 : radius;
+      const isSameRegion = rules.isSameRegion ? rules.isSameRegion(bone, child) : false;
+      const endRadius = isSameRegion ? childRadius : index === 0 ? radius : Math.max(childRadius, radius * SIDE_LINK_SHARE);
+      return { shape: { kind: 'capsule', end: Array.from(plan.restTranslation.subarray(child * VECTOR, child * VECTOR + VECTOR)), radius, endRadius, at }, child: index === 0 ? -1 : child };
+    });
   };
 
-  /** Descriptor makers by shape kind: (plan, bone, row, at, rules) -> descriptor, or null for nothing drawn. */
+  /** One descriptor, not linked to a child. */
+  const alone = (shape) => [{ shape, child: -1 }];
+
+  /** Descriptor makers by shape kind: (plan, bone, row, at, rules) -> `BoneSurface`s. */
   const DESCRIBERS = Object.freeze({
-    capsule: describeCapsule,
-    none: () => null,
-    sphere: (_plan, _bone, row, at) => ({ kind: 'sphere', radius: row.radius, at }),
-    box: (_plan, _bone, row, at) => ({ kind: 'box', size: row.size.slice(), at }),
-    lathe: (plan, bone, row, at) => ({ kind: 'lathe', profile: row.profile.map((point) => point.slice()), axis: plan.axis[bone], at }),
-    extrude: (plan, bone, row, at) => ({
-      kind: 'extrude',
-      outline: row.outline.map((point) => point.slice()),
-      depth: row.depth,
-      axis: plan.axis[bone],
-      across: AXIS_NAMES.indexOf(row.across !== undefined ? row.across : ACROSS_AXIS[AXIS_NAMES[plan.axis[bone]]]),
-      at,
-    }),
+    capsule: describeCapsules,
+    none: () => [],
+    sphere: (_plan, _bone, row, at) => alone({ kind: 'sphere', radius: row.radius, at }),
+    box: (_plan, _bone, row, at) => alone({ kind: 'box', size: row.size.slice(), at }),
+    lathe: (plan, bone, row, at) => alone({ kind: 'lathe', profile: row.profile.map((point) => point.slice()), axis: plan.axis[bone], at }),
+    extrude: (plan, bone, row, at) =>
+      alone({
+        kind: 'extrude',
+        outline: row.outline.map((point) => point.slice()),
+        depth: row.depth,
+        axis: plan.axis[bone],
+        across: AXIS_NAMES.indexOf(row.across !== undefined ? row.across : ACROSS_AXIS[AXIS_NAMES[plan.axis[bone]]]),
+        at,
+      }),
   });
 
   /**
-   * The canonical shape descriptor of a bone: its `shape` row with every default filled in, or the default
-   * capsule. A capsule runs from the joint to the bone's `tail`, else to its first continuing child's joint; a
-   * bone with neither is a ball of its girth. The rules say which bones draw nothing (`isHidden`: a part's
-   * mount), which children do not continue a bone's surface (`skipChild`: a sword's mount on a hand), and
-   * whether a capsule narrows to its child's girth (`taperInto`: a limb into its next segment) or keeps its own
-   * (a chest into a neck).
+   * @typedef {Object} BoneSurface
+   * @property {ShapeDescriptor} shape
+   * @property {number} child -1 for the bone's own (first) surface; else the child bone an extra link reaches
+   */
+
+  /**
+   * The canonical shape descriptors of a bone: its `shape` row with every default filled in, or the default
+   * capsules (see `describeCapsules`: one per link to a continuing child). The rules say which bones draw
+   * nothing (`isHidden`: a part's mount), which children do not continue a bone's surface (`skipChild`: a
+   * sword's mount on a hand) and which children are in the bone's region (`isSameRegion`, for tapering).
    * @param {Object} plan a `BodyPlan`
    * @param {number} bone bone index
-   * @param {{isHidden?: function(number): boolean, skipChild?: function(number, number): boolean, taperInto?: function(number, number): boolean}} [rules]
-   * @returns {?ShapeDescriptor} null for a `none` shape or a hidden bone
-   * @complexity O(bones in the subtree) for a default capsule (to find the first child), else O(shape size)
-   * @example Kit.figure.describeShape(plan, plan.boneIndex('thighLeft')) // { kind: 'capsule', end: [0, -0.45, 0], radius: 0.05, endRadius: 0.04, at: [0, 0, 0] }
+   * @param {{isHidden?: function(number): boolean, skipChild?: function(number, number): boolean, isSameRegion?: function(number, number): boolean}} [rules]
+   * @returns {BoneSurface[]} empty for a `none` shape or a hidden bone
+   * @complexity O(bones in the subtree) for default capsules (to find the children), else O(shape size)
+   * @example Kit.figure.describeShapes(plan, plan.boneIndex('thighLeft'))[0].shape // { kind: 'capsule', end: [0, -0.45, 0], radius: 0.05, endRadius: 0.04, at: [0, 0, 0] } with a capsule shin in the same region
    */
-  const describeShape = (plan, bone, rules = {}) => {
-    if (rules.isHidden && rules.isHidden(bone)) return null;
+  const describeShapes = (plan, bone, rules = {}) => {
+    if (rules.isHidden && rules.isHidden(bone)) return [];
     const row = plan.shapes[bone] || DEFAULT_SHAPE_ROW;
     const describe = DESCRIBERS[row.kind];
-    if (!describe) fail('describeShape', `bone ${plan.boneNames[bone]} has a shape of kind "${row.kind}", which has no builder. Kinds: ${Object.keys(BUILDERS).join(', ')}, none.`);
+    if (!describe) fail('describeShapes', `bone ${plan.boneNames[bone]} has a shape of kind "${row.kind}", which has no builder. Kinds: ${Object.keys(BUILDERS).join(', ')}, none.`);
     return describe(plan, bone, row, row.at ? row.at.slice() : [0, 0, 0], rules);
   };
 
@@ -526,5 +550,5 @@
     return out;
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, ACROSS_AXIS, BUILDERS, segmentsFor, triangulate, describeShape, shapeKey, buildShape, writeBoneMatrix });
+  Kit.figure = Object.assign(Kit.figure || {}, { LEVELS, DEFAULT_LEVEL, ACROSS_AXIS, BUILDERS, segmentsFor, triangulate, describeShapes, shapeKey, buildShape, writeBoneMatrix });
 })();
