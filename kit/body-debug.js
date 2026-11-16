@@ -156,13 +156,12 @@
     const scale = shape.scale || [1, 1, 1];
     const axisSizes = end.map(Math.abs);
     const axis = axisSizes.indexOf(Math.max(...axisSizes));
-    const direction = end[axis] < 0 ? -1 : 1;
     const placed = (x, y, z = 0) => [at[0] + x * scale[0], at[1] + y * scale[1], at[2] + z * scale[2]];
-    /** A point at `across` sideways and `along` the long axis. Across is x, or y when the bone lies along x. */
+    /** A point at `across` sideways and `along` the positive long axis (the renderer's convention). Across is x, or y when the bone lies along x. */
     const alongAxis = (across, along) => {
       const point = [0, 0, 0];
       point[axis === 0 ? 1 : 0] = across;
-      point[axis] = along * direction;
+      point[axis] = along;
       return placed(...point);
     };
     const circle = (radius) =>

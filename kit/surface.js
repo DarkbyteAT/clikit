@@ -14,7 +14,7 @@
  *
  * The frame: a solid lives in a space whose long axis is `axis` (0 = x, 1 = y, 2 = z) and whose far end is `end`
  * [x, y, z] (a capsule runs from the origin to `end`; a lathe's profile and an extrude's outline run along the
- * long axis in the direction of `end`). Azimuth turns about +Y from +Z towards +X; elevation rises towards +Y.
+ * positive long axis, as kit/figure-shapes.js builds them: a skirt hanging down states negative heights). Azimuth turns about +Y from +Z towards +X; elevation rises towards +Y.
  * Every primitive may add `at` (an offset) and `scale` ([x, y, z], about `at`).
  *
  * Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
@@ -62,8 +62,13 @@
     const largest = Math.max(...sizes);
     return largest > 0 ? sizes.indexOf(largest) : 1;
   };
-  /** +1 when the solid runs the positive way along its long axis, -1 when it runs the negative way (a leg hangs down). */
-  const directionOf = (frame, axis) => (frame.end[axis] < 0 ? -1 : 1);
+  /**
+   * The direction a lathe's profile and an extrude's outline run along the long axis: always the positive way,
+   * as the figure renderer (kit/figure-shapes.js) builds them; a skirt that hangs down has negative `along`s.
+   */
+  const directionOf = () => 1;
+  /** The extrude convention of kit/figure-shapes.js `ACROSS_AXIS`: long axis -> the axis an outline's first coordinate lies along. */
+  const ACROSS = Object.freeze({ 0: 1, 1: 0, 2: 1 });
   /** Component `index` of (x, y, z) without building an array. */
   const componentOf = (index, x, y, z) => (index === 0 ? x : index === 1 ? y : z);
   const lengthOf = (frame) => Math.hypot(frame.end[0], frame.end[1], frame.end[2]);
@@ -137,7 +142,7 @@
     extrude: (shape, _frame, axis, direction, x, y, z) => {
       const point = [x, y, z];
       // The outline lies in the plane of the long axis and the across axis; depth runs along the third axis.
-      const across = axis === 0 ? 1 : 0;
+      const across = shape.across === undefined ? ACROSS[axis] : 'xyz'.indexOf(shape.across);
       const through = VECTOR_STRIDE - axis - across;
       const inPlane = polygonDistance(shape.outline, point[across], point[axis] * direction);
       const outOfPlane = Math.abs(point[through]) - shape.depth / 2;

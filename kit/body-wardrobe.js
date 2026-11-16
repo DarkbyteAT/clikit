@@ -57,99 +57,100 @@
 
   // ---- the body plan ---------------------------------------------------------------------------------------------------
 
+  /**
+   * Proportions. The person is stylised, about 3.4 heads tall at the default dials (a big head, a short rounded
+   * body, chunky hands and feet), so it reads as a character under toon and pixel shaders; the height, head and
+   * limb dials reach towards 4.5 heads (lanky) or under 3 (stout).
+   */
+  const PROPORTIONS = Object.freeze({ legTop: 0.39, thigh: 0.17, shin: 0.16, upperArm: 0.14, forearm: 0.12, shoulder: 0.1, hip: 0.06 });
+  /** Head-worn parts were drawn for a head this much smaller; `scaledPart` grows them to fit. */
+  const HEAD_SCALE_UP = 1.42;
+  /** Body-worn parts (packs, held things, tails) were drawn for a body this much larger. */
+  const BODY_SCALE_DOWN = 0.62;
+
   /** The head's profile, chin to crown: [radius, height] in metres. Dials reshape points 0 (chin) to 6 (crown edge). */
   const HEAD_PROFILE = Object.freeze([
-    [0.028, 0], // chin
-    [0.066, 0.028], // jaw
-    [0.086, 0.07], // jaw angle
-    [0.096, 0.118], // cheekbones
-    [0.094, 0.162], // temples
-    [0.074, 0.205], // upper cranium
-    [0.034, 0.226], // crown edge
-    [0, 0.23],
+    [0.045, 0], // chin
+    [0.098, 0.04], // jaw
+    [0.128, 0.095], // jaw angle
+    [0.146, 0.155], // cheekbones
+    [0.143, 0.212], // temples
+    [0.113, 0.266], // upper cranium
+    [0.05, 0.295], // crown edge
+    [0, 0.3],
   ]);
   /** The head is a little narrower than it is deep. */
-  const HEAD_SCALE = Object.freeze([0.88, 1, 1]);
+  const HEAD_SCALE = Object.freeze([0.92, 1, 0.96]);
 
   const arm = ({ suffix, sign, role }) => [
     // A clavicle: its length along X is the shoulder width.
-    { name: `clavicle${suffix}`, parent: 'chest', at: [0.02 * sign, 0.2, 0], roles: [role], girth: 0.06, shape: { kind: 'none' } },
+    { name: `clavicle${suffix}`, parent: 'chest', at: [0.015 * sign, 0.13, 0], roles: [role], girth: 0.06, shape: { kind: 'none' } },
     {
       name: `upperArm${suffix}`,
       parent: `clavicle${suffix}`,
-      at: [0.15 * sign, 0, 0],
-      turn: [0, 0, 7 * sign],
+      at: [PROPORTIONS.shoulder * sign, 0, 0],
+      turn: [0, 0, 10 * sign],
       roles: ['arm', 'primary', role],
-      girth: 0.09,
+      girth: 0.075,
       limits: [
         [-170, 60],
         [-90, 90],
         [-120, 120],
       ],
-      shape: { kind: 'capsule', radius: 0.045, taper: 0.85 },
       paint: 'skin',
     },
     {
       name: `forearm${suffix}`,
       parent: `upperArm${suffix}`,
-      at: [0, -0.28, 0],
+      at: [0, -PROPORTIONS.upperArm, 0],
       roles: ['arm', 'primary', role],
-      girth: 0.075,
+      girth: 0.066,
       joint: 'hinge',
       limits: [
         [-150, 0],
         [0, 0],
         [0, 0],
       ],
-      shape: { kind: 'capsule', radius: 0.037, taper: 0.8 },
       paint: 'skin',
     },
     {
       name: `hand${suffix}`,
       parent: `forearm${suffix}`,
-      at: [0, -0.25, 0],
-      tail: [0, -0.09, 0],
+      at: [0, -PROPORTIONS.forearm, 0],
+      tail: [0, -0.075, 0],
       roles: ['arm', 'hand', 'primary', 'tip', role],
-      girth: 0.06,
-      shape: { kind: 'box', size: [0.05, 0.1, 0.028], at: [0, -0.045, 0] },
+      girth: 0.07,
+      // A chunky mitten: wide, short, rounded by the look's outline.
+      shape: { kind: 'sphere', radius: 0.042, at: [0, -0.034, 0], scale: [0.85, 1, 0.62] },
       paint: 'skin',
     },
   ];
   const leg = ({ suffix, sign, role }) => [
     // A hip bone: its length along X is the hip width.
-    { name: `hip${suffix}`, parent: 'pelvis', at: [0, 0.01, 0], roles: [role], girth: 0.08, shape: { kind: 'none' } },
+    { name: `hip${suffix}`, parent: 'pelvis', at: [0, 0, 0], roles: [role], girth: 0.08, shape: { kind: 'none' } },
     {
       name: `thigh${suffix}`,
       parent: `hip${suffix}`,
-      at: [0.09 * sign, 0, 0],
+      at: [PROPORTIONS.hip * sign, 0, 0],
       roles: ['leg', 'primary', role],
-      girth: 0.13,
+      girth: 0.104,
       limits: [
         [-120, 45],
         [-40, 40],
         [-45, 45],
       ],
-      shape: { kind: 'capsule', radius: 0.068, taper: 0.72 },
       paint: 'skin',
     },
-    {
-      name: `shin${suffix}`,
-      parent: `thigh${suffix}`,
-      at: [0, -0.44, 0],
-      roles: ['leg', 'primary', role],
-      girth: 0.1,
-      joint: 'hinge',
-      shape: { kind: 'capsule', radius: 0.05, taper: 0.66 },
-      paint: 'skin',
-    },
+    { name: `shin${suffix}`, parent: `thigh${suffix}`, at: [0, -PROPORTIONS.thigh, 0], roles: ['leg', 'primary', role], girth: 0.084, joint: 'hinge', paint: 'skin' },
     {
       name: `foot${suffix}`,
       parent: `shin${suffix}`,
-      at: [0, -0.43, 0],
-      tail: [0, 0, 0.16],
+      at: [0, -PROPORTIONS.shin, 0],
+      tail: [0, 0, 0.1],
       roles: ['leg', 'foot', 'primary', 'tip', role],
       girth: 0.07,
-      shape: { kind: 'box', size: [0.085, 0.065, 0.24], at: [0, -0.03, 0.05] },
+      // A chunky, rounded foot that grounds the figure.
+      shape: { kind: 'sphere', radius: 0.07, at: [0, -0.03, 0.03], scale: [0.62, 0.45, 1] },
       paint: 'skin',
     },
   ];
@@ -157,10 +158,12 @@
   /** Sockets on the head that hold only surface features: they need no position of their own. */
   const FACE_SOCKETS = ['eyes', 'brows', 'nose', 'mouth', 'ears', 'marks', 'earrings'];
   const REQUIRED_FACE = ['eyes', 'nose', 'mouth', 'ears'];
+  /** Where head-worn parts sit, before `HEAD_SCALE_UP` (they were authored for a smaller head). */
+  const atHead = (point) => point.map((value) => value * HEAD_SCALE_UP);
 
   /**
-   * Body plans by id. `person`: 23 bones, skin-painted throughout (clothes are regions over it), a lathe torso
-   * and head, and the sockets a creator fills.
+   * Body plans by id. `person`: 23 bones, every drawn bone skin-painted (clothes are regions over it), a lathe
+   * torso and head, chunky hands and feet, and the sockets a creator fills.
    */
   const PLANS = {
     person: {
@@ -169,29 +172,29 @@
         {
           name: 'pelvis',
           parent: 'ground',
-          at: [0, 0.93, 0],
-          tail: [0, 0.15, 0],
+          at: [0, PROPORTIONS.legTop, 0],
+          tail: [0, 0.1, 0],
           roles: ['spine'],
-          girth: 0.3,
+          girth: 0.24,
           joint: 'free',
           shape: lathe(
             [
-              [0.1, -0.07],
-              [0.15, 0],
-              [0.152, 0.08],
-              [0.13, 0.15],
+              [0.075, -0.045],
+              [0.112, 0],
+              [0.12, 0.05],
+              [0.106, 0.1],
             ],
-            0.7
+            0.78
           ),
           paint: 'skin',
         },
         {
           name: 'waist',
           parent: 'pelvis',
-          at: [0, 0.15, 0],
-          tail: [0, 0.15, 0],
+          at: [0, 0.1, 0],
+          tail: [0, 0.09, 0],
           roles: ['spine'],
-          girth: 0.26,
+          girth: 0.21,
           limits: [
             [-30, 45],
             [-30, 30],
@@ -199,21 +202,21 @@
           ],
           shape: lathe(
             [
-              [0.13, 0],
-              [0.12, 0.08],
-              [0.132, 0.15],
+              [0.106, 0],
+              [0.1, 0.045],
+              [0.108, 0.09],
             ],
-            0.68
+            0.76
           ),
           paint: 'skin',
         },
         {
           name: 'chest',
           parent: 'waist',
-          at: [0, 0.15, 0],
-          tail: [0, 0.24, 0],
+          at: [0, 0.09, 0],
+          tail: [0, 0.17, 0],
           roles: ['spine'],
-          girth: 0.3,
+          girth: 0.25,
           limits: [
             [-20, 30],
             [-30, 30],
@@ -221,38 +224,37 @@
           ],
           shape: lathe(
             [
-              [0.132, 0],
-              [0.152, 0.08],
-              [0.158, 0.16],
-              [0.13, 0.22],
-              [0.06, 0.25],
+              [0.108, 0],
+              [0.122, 0.06],
+              [0.125, 0.11],
+              [0.1, 0.15],
+              [0.045, 0.17],
             ],
-            0.7
+            0.76
           ),
           paint: 'skin',
         },
         {
           name: 'neck',
           parent: 'chest',
-          at: [0, 0.23, 0],
-          tail: [0, 0.08, 0],
+          at: [0, 0.155, 0],
+          tail: [0, 0.055, 0],
           roles: ['neck'],
-          girth: 0.09,
+          girth: 0.085,
           limits: [
             [-40, 40],
             [-60, 60],
             [-30, 30],
           ],
-          shape: { kind: 'capsule', radius: 0.042 },
           paint: 'skin',
         },
         {
           name: 'head',
           parent: 'neck',
-          at: [0, 0.07, 0.005],
-          tail: [0, 0.23, 0],
+          at: [0, 0.035, 0.01],
+          tail: [0, 0.3, 0],
           roles: ['head'],
-          girth: 0.18,
+          girth: 0.27,
           limits: [
             [-30, 30],
             [-40, 40],
@@ -269,24 +271,39 @@
         ...SIDES.flatMap(leg),
       ],
       sockets: [
-        ...FACE_SOCKETS.map((name) => ({ name, bone: 'head', type: name, at: [0, 0.115, 0], required: REQUIRED_FACE.includes(name) })),
-        { name: 'hair', bone: 'head', type: 'hair', at: [0, 0.115, 0] },
-        { name: 'facialHair', bone: 'head', type: 'facialHair', at: [0, 0.035, 0.055] },
-        { name: 'hat', bone: 'head', type: 'hat', at: [0, 0.222, 0] },
-        { name: 'glasses', bone: 'head', type: 'glasses', at: [0, 0.122, 0.092] },
-        { name: 'horns', bone: 'head', type: 'horns', at: [0, 0.19, 0.02] },
-        { name: 'top', bone: 'chest', type: 'top', at: [0, 0.1, 0] },
-        { name: 'outerwear', bone: 'chest', type: 'outerwear', at: [0, 0.2, 0] },
+        ...FACE_SOCKETS.map((name) => ({ name, bone: 'head', type: name, at: [0, 0.15, 0], required: REQUIRED_FACE.includes(name) })),
+        { name: 'hair', bone: 'head', type: 'hair', at: atHead([0, 0.115, 0]) },
+        { name: 'facialHair', bone: 'head', type: 'facialHair', at: atHead([0, 0.035, 0.055]) },
+        { name: 'hat', bone: 'head', type: 'hat', at: atHead([0, 0.222, 0]) },
+        { name: 'glasses', bone: 'head', type: 'glasses', at: [0, 0.162, 0.126] },
+        { name: 'horns', bone: 'head', type: 'horns', at: atHead([0, 0.19, 0.02]) },
+        { name: 'top', bone: 'chest', type: 'top', at: [0, 0.06, 0] },
+        { name: 'outerwear', bone: 'chest', type: 'outerwear', at: [0, 0.135, 0] },
         { name: 'gloves', bone: 'chest', type: 'gloves' },
-        { name: 'back', bone: 'chest', type: 'back', at: [0, 0.12, -0.11] },
-        { name: 'bottom', bone: 'pelvis', type: 'bottom', at: [0, 0.15, 0] },
+        { name: 'back', bone: 'chest', type: 'back', at: [0, 0.08, -0.09] },
+        { name: 'bottom', bone: 'pelvis', type: 'bottom', at: [0, 0.1, 0] },
         { name: 'footwear', bone: 'pelvis', type: 'footwear' },
-        { name: 'tail', bone: 'pelvis', type: 'tail', at: [0, 0.03, -0.1] },
-        { name: 'handLeft', bone: 'handLeft', type: 'grip', at: [0, -0.06, 0.01] },
-        { name: 'handRight', bone: 'handRight', type: 'grip', at: [0, -0.06, 0.01] },
+        { name: 'tail', bone: 'pelvis', type: 'tail', at: [0, 0.02, -0.08] },
+        { name: 'handLeft', bone: 'handLeft', type: 'grip', at: [0, -0.04, 0.005] },
+        { name: 'handRight', bone: 'handRight', type: 'grip', at: [0, -0.04, 0.005] },
       ],
     },
   };
+
+  /**
+   * A part with every length scaled by `factor` (bone offsets and ends, girths, shape sizes, feature sizes and
+   * lifts; never angles or regions): how parts drawn for one head or body size are fitted to another.
+   */
+  const LENGTH_FIELDS = ['at', 'tail', 'end', 'radius', 'size', 'profile', 'outline', 'depth', 'girth', 'lift'];
+  const scaleNumbers = (value, factor) => (Array.isArray(value) ? value.map((inner) => scaleNumbers(inner, factor)) : typeof value === 'number' ? value * factor : value);
+  const scaledRow = (row, factor) =>
+    Object.fromEntries(Object.keys(row).map((key) => [key, LENGTH_FIELDS.includes(key) ? scaleNumbers(row[key], factor) : key === 'shape' && row.shape ? scaledRow(row.shape, factor) : row[key]]));
+  const scaledPart = (part, factor) => ({
+    ...part,
+    bones: part.bones.map((bone) => scaledRow(bone, factor)),
+    ...(part.sockets ? { sockets: part.sockets.map((socket) => scaledRow(socket, factor)) } : {}),
+    ...(part.features ? { features: part.features.map((feature) => scaledRow(feature, factor)) } : {}),
+  });
 
   // ---- face features: surface-only parts --------------------------------------------------------------------------------
 
@@ -309,7 +326,7 @@
     fits: ['eyes'],
     label,
     bones: [],
-    features: [{ id: 'eye', azimuth: 0, elevation: 2, spacing: 52, size, frames: eyeFrames(white, irisRadius), rest: 'open', ...extra }],
+    features: [{ id: 'eye', azimuth: 0, elevation: 2, spacing: 52, size, frames: eyeFrames(white, irisRadius), rest: 'open', glow: true, ...extra }],
   });
   const ALMOND = lens(0.62, 0.45);
 
@@ -408,18 +425,20 @@
   const bottomPart = (label, regions, bones = []) => ({ fits: ['bottom'], label, bones, regions });
   const outerPart = (label, regions, bones = []) => ({ fits: ['outerwear'], label, bones, regions });
   /** A hanging skirt or coat tail: a lathe that flares as it falls from the waist. */
+  const SKIRT_TOP = 0.112 / BODY_SCALE_DOWN;
   const skirtBone = (name, length, flare, channel) => ({
     name,
     roles: ['root'],
     tail: [0, -length, 0],
     girth: 0.3,
+    // The renderer builds a lathe up its bone's positive axis, so a skirt that falls states negative heights.
     shape: lathe(
       [
-        [0.145, 0],
-        [0.15 + flare * 0.4, length * 0.45],
-        [0.15 + flare, length],
+        [SKIRT_TOP, 0],
+        [SKIRT_TOP + flare * 0.4, -length * 0.45],
+        [SKIRT_TOP + flare, -length],
       ],
-      0.78
+      0.82
     ),
     paint: channel,
   });
@@ -577,9 +596,9 @@
           outline: [
             [-0.1, 0],
             [0.1, 0],
-            [0.12, 0.3],
-            [0, 0.34],
-            [-0.12, 0.3],
+            [0.12, -0.3],
+            [0, -0.34],
+            [-0.12, -0.3],
           ],
           depth: 0.035,
         },
@@ -600,7 +619,7 @@
       )
     ),
     hairBun: hairPart('Bun', hairline(0.82, 0.32), [strand('bun', undefined, [0, 0.08, -0.085], undefined, 0.09, { shape: { kind: 'sphere', radius: 0.045 } })]),
-    hairCrest: hairPart('Crest', { intersect: [hairline(0.7, 0.3), { union: [{ band: { angle: [-15, 15] } }, { band: { angle: [165, -165] } }] }] }, [
+    hairCrest: hairPart('Crest', { intersect: [hairline(0.7, 0.3), { union: [{ band: { angle: [-15, -15] } }, { band: { angle: [165, -165] } }] }] }, [
       {
         name: 'crest',
         roles: ['root'],
@@ -613,8 +632,8 @@
           outline: [
             [-0.1, 0],
             [0.09, 0],
-            [0.06, 0.055],
-            [-0.08, 0.065],
+            [0.06, -0.055],
+            [-0.08, -0.065],
           ],
           depth: 0.018,
         },
@@ -764,8 +783,8 @@
             outline: [
               [-0.17, 0],
               [0.17, 0],
-              [0.3, 1.05],
-              [-0.3, 1.05],
+              [0.3, -1.05],
+              [-0.3, -1.05],
             ],
             depth: 0.02,
           },
@@ -819,8 +838,8 @@
             outline: [
               [-0.04, 0],
               [0.04, 0],
-              [0.045, 0.3],
-              [-0.045, 0.3],
+              [0.045, -0.3],
+              [-0.045, -0.3],
             ],
             depth: 0.012,
           },
@@ -1032,8 +1051,8 @@
         girth: 0.8,
         shape: lathe([
           [0, 0],
-          [0.3, 0.12],
-          [0.44, 0.22],
+          [0.3, -0.12],
+          [0.44, -0.22],
         ]),
         paint: 'accent',
       },
@@ -1249,6 +1268,15 @@
       ]),
     },
   };
+
+  /** Socket types worn on the head: their parts were authored for a smaller head and are grown to fit. */
+  const HEAD_TYPES = ['eyes', 'brows', 'nose', 'mouth', 'ears', 'marks', 'earrings', 'hair', 'facialHair', 'hat', 'glasses', 'horns'];
+  /** Eyes a little larger again than the head's growth: big eyes read at figure scale and suit the look. */
+  const EYE_EMPHASIS = 1.15;
+  Object.keys(PARTS).forEach((id) => {
+    const isHeadWorn = PARTS[id].fits.some((type) => HEAD_TYPES.includes(type));
+    PARTS[id] = scaledPart(PARTS[id], isHeadWorn ? HEAD_SCALE_UP * (PARTS[id].fits.includes('eyes') ? EYE_EMPHASIS : 1) : BODY_SCALE_DOWN);
+  });
 
   // ---- palettes: curated ramps per channel -------------------------------------------------------------------------------
 

@@ -14,7 +14,7 @@ const path = require('path');
 const vm = require('vm');
 
 /** Kit files these tests add to the sandbox, in load order; those that do not exist yet are skipped. */
-const FILES = ['body-wardrobe'];
+const FILES = ['body-wardrobe', 'figure-shapes', 'figure-layout'];
 
 module.exports = ({ Kit, sandbox, test, assert }) => {
   FILES.forEach((name) => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'kit', `${name}.js`), 'utf8'), sandbox, { filename: `${name}.js` }));
@@ -40,7 +40,23 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     assert.ok(Kit.surface.distance(cone, frame, 0.04, 0.05, 0) < 0, 'inside the cone low down');
     assert.ok(Kit.surface.distance(cone, frame, 0.04, 0.18, 0) > 0, 'control: the same radius near the tip is outside');
     const legFrame = { end: [0, -0.4, 0] };
-    assert.ok(Kit.surface.distance(cone, legFrame, 0.04, -0.05, 0) < 0, 'a lathe runs the way its bone runs (down a leg)');
+    assert.ok(Kit.surface.distance(cone, legFrame, 0.04, 0.05, 0) < 0, 'a lathe runs up its positive axis even on a bone that hangs down (the renderer convention)');
+    assert.ok(
+      Kit.surface.distance(
+        {
+          kind: 'lathe',
+          profile: [
+            [0.1, 0],
+            [0, -0.2],
+          ],
+        },
+        legFrame,
+        0.04,
+        -0.05,
+        0
+      ) < 0,
+      'so a hanging cone states negative heights'
+    );
     const blade = {
       kind: 'extrude',
       outline: [
@@ -727,5 +743,47 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
       'fill:facialHair': null,
     });
     assert.ok(bare.counts.spans < dressed.counts.spans, 'control: less clothing, fewer spans');
+  });
+
+  // ---- the figure renderer's extension points, and the two renderer edits they needed ----
+  test('figure hooks: features become pieces on their bone (eyes glow, stamps keep their shade); regionOf paints by bone-local point', () => {
+    const bakery = wardrobe.bakery();
+    const bake = bakery.bakeRecipe({ species: 'person', seed: 4, overrides: { 'fill:top': 'longSleeve', 'fill:eyes': 'eyesRound', 'fill:hat': null, 'fill:glasses': null } });
+    const hooks = body.figureHooks(bake);
+    const head = bake.plan.boneIndex('head');
+    const pieces = hooks.featuresOf(bake.plan, head);
+    const eyes = bake.surface.features.filter((feature) => feature.id === 'eye');
+    const stampLayers = bake.surface.features
+      .filter((feature) => feature.bone === head)
+      .reduce((sum, feature) => sum + Math.min(12, (feature.frames[feature.rest] || []).length) + (feature.shape ? 1 : 0), 0);
+    same(pieces.length, stampLayers, 'one piece per solid and per stamp layer');
+    assert.ok(pieces.filter((piece) => piece.glow).length >= eyes.length * 4, 'eye layers glow (never outlined)');
+    assert.ok(
+      pieces.every((piece) => Math.abs(Kit.surface.distance(bake.shapes[head], body.surfaceLayout(bake.plan).frames[head], ...piece.shape.at)) < 0.06),
+      'every piece sits at the head surface'
+    );
+    same(hooks.featuresOf(bake.plan, bake.plan.boneIndex('chest')), [], 'nothing on a bone without features');
+    const layout = Kit.figure.layout(bake, { featuresOf: hooks.featuresOf });
+    assert.ok(layout.pieces.filter((piece) => piece.id.startsWith('head#')).length === pieces.length, 'the renderer takes them as head pieces');
+    const chest = bake.plan.boneIndex('chest');
+    const top = wardrobe.species('person').colorIds.indexOf('top');
+    same(hooks.regionOf(bake.plan, chest, 0, 0.08, 0.09), top, 'the shirt paints the chest front');
+    const bare = bakery.bakeRecipe({ species: 'person', seed: 4, overrides: { 'fill:top': 'cropTop', 'fill:outerwear': null } });
+    same(body.figureHooks(bare).regionOf(bare.plan, bare.plan.boneIndex('waist'), 0, 0.05, 0.08), null, 'control: a crop top leaves the waist to the skin (null)');
+    same(hooks.regionOf(bare.plan, chest, 0, 0.08, 0.09), null, "another bake's plan gets no answer");
+  });
+  test("figure renderer: it draws a bake's dialled shapes and honours scale (controls: an undialled bone keeps its key; no scale, no stretch)", () => {
+    const bakery = wardrobe.bakery();
+    const base = { species: 'person', seed: 4, overrides: { 'dial:jaw': 1, 'dial:legLength': 1 } };
+    const keyOf = (bake, name) => Kit.figure.layout(bake).pieces.find((piece) => piece.id === name).key;
+    const plain = bakery.bakeRecipe(base);
+    const wideJaw = bakery.bakeRecipe({ ...base, overrides: { ...base.overrides, 'dial:jaw': 1.25 } });
+    assert.notStrictEqual(keyOf(wideJaw, 'head'), keyOf(plain, 'head'), 'the jaw dial reaches the drawn head');
+    same(keyOf(wideJaw, 'chest'), keyOf(plain, 'chest'), 'control: the chest is the same piece');
+    const sphere = { kind: 'sphere', radius: 0.1, at: [0, 0, 0] };
+    const widest = (shape) => Math.max(...Kit.figure.buildShape(shape, 'low').positions.filter((_value, index) => index % 3 === 0));
+    close(widest({ ...sphere, scale: [0.5, 1, 1] }), widest(sphere) / 2, 1e-6, 'scale stretches the built surface');
+    const normals = Kit.figure.buildShape({ ...sphere, scale: [0.5, 1, 2] }, 'low').normals;
+    for (let index = 0; index < normals.length; index += 3) close(Math.hypot(normals[index], normals[index + 1], normals[index + 2]), 1, 1e-5, 'normals stay unit');
   });
 };

@@ -1,130 +1,100 @@
 /**
- * Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`). Twelve characters rolled from the wardrobe
- * catalogue, front view, each drawn with `Kit.body.debug.drawSurface` (dialled shapes as outlines, painted
- * regions as tinted spans, features as dots) over its stick figure, with a close-up of the head in the corner of
- * its cell. Tap to roll twelve more. It exists so a person can judge the catalogue's variety by eye before any
- * real renderer exists; it is a debug view, not the character creator.
+ * Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`). Characters rolled from the wardrobe catalogue,
+ * drawn in 3D by the figure renderer (`Kit.figure.build`) through the toon look, facing the camera, in a grid;
+ * the first is the base person at its default dials. Faces come in through the renderer's `featuresOf` extension
+ * point (`Kit.body.figureHooks`). Tap to roll more. It exists to judge the catalogue by eye; it is not the
+ * character creator.
  *
- * Owns:  the screen: its layout, which twelve characters it shows, and the head inset.
- * Does not own: the catalogue (kit/body-wardrobe.js), baking (kit/body-recipe.js) or drawing (kit/body-debug.js).
+ * Owns:  the screen: which characters it shows, the grid and the camera.
+ * Does not own: the catalogue (kit/body-wardrobe.js), baking (kit/body-recipe.js), the face adapter
+ *        (kit/body-surface.js) or drawing (kit/figure*.js, kit/look-*.js).
  *
- * Registered like a game (after the bodies screen), so the shell gives it a HUD, a back button and clean-up, and
- * the smoke and play tools reach it like any other.
+ * Registered like a game (after the bodies and figures screens), so the shell gives it a HUD, a back button and
+ * clean-up, and the smoke and play tools reach it like any other. It draws its own frame (`render`).
  */
 (() => {
-  if (!Kit.ui || !Kit.ui.html || !Kit.body.wardrobe) return;
-  const { html, css } = Kit.ui;
+  if (!Kit.ui || !Kit.ui.html || !Kit.body.wardrobe || !Kit.figure || !Kit.figure.build) return;
+  const { html } = Kit.ui;
 
-  const BACKDROP_COLOR = 0x10141f;
-  const LAYOUT = Object.freeze({ columns: 4, rows: 3, heightShare: 0.74, groundShare: 0.93, labelSize: 9.5, labelGap: 12, labelInset: 6, insetShare: 0.42, insetZoom: 3.4 });
-  const COLORS = Object.freeze({ label: '#c9d3ea', dim: '#7f8db0', ground: '#273050', inset: '#1a2133', insetEdge: '#33405f', body: '#3a4566' });
-  const CHARACTERS = LAYOUT.columns * LAYOUT.rows;
-  /** Tallest a character can be with every dial at its top, metres: every cell uses one scale so heights compare. */
-  const TALLEST = 2.1;
+  const BACKDROP_COLOR = 0x6a7399;
+  const GRID = Object.freeze({ columns: 4, rows: 2, cellWidth: 0.95, cellHeight: 1.45, margin: 0.06 });
+  const CHARACTERS = GRID.columns * GRID.rows;
+  const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 40 });
+  /** Atlas rows: one block of `Kit.figure.RAMP_SLOTS` per figure, with room for a re-roll before the old block is freed. */
+  const ATLAS_ROWS = 512;
   const TABLE_SEED = 20261116;
-  const { VECTOR_STRIDE } = Kit.rig;
-
-  css(`
-    .wardrobe-sheet { align-self: stretch; flex: 1 1 0; min-height: 0; position: relative; }
-    .wardrobe-sheet canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: manipulation; }
-  `);
-
-  /** The short description under a character: species, then what it wears where it shows most. */
-  const describe = (individual) => {
-    const shown = ['hair', 'top', 'bottom', 'outerwear', 'hat'].map((socket) => individual.fills[socket]).filter(Boolean);
-    return [individual.species, shown.join(' ')];
-  };
+  /** The first character: the base species exactly as drawn (every dial at its default), in plain clothes. */
+  const BASE_PERSON = { species: 'person', seed: 1, overrides: { 'fill:hat': null, 'fill:outerwear': null, 'fill:glasses': null, 'fill:back': null, 'fill:handLeft': null, 'fill:handRight': null } };
 
   Kit.register({
     id: 'wardrobe',
     name: 'Wardrobe sheet',
-    tagline: 'Twelve rolled characters',
-    hook: 'The creator catalogue as outlines, regions and features',
+    tagline: 'Rolled characters from the creator catalogue',
+    hook: 'The wardrobe catalogue drawn by the figure renderer',
     color: '#c99ad6',
     order: 999,
     theme: { skin: 'glass' },
     create(ctx) {
-      ctx.scene.background = ctx.make.color(BACKDROP_COLOR);
-      let canvas = null;
+      const { renderer, size } = ctx;
+      const view = Kit.look.view({ renderer, preset: 'toon', atlasRows: ATLAS_ROWS });
       const catalog = Kit.body.catalog(Kit.body.wardrobe.CATALOG);
       const bakery = catalog.bakery({ capacity: CHARACTERS * 2 });
+      const editor = Kit.body.editor(catalog);
       const table = catalog.table(catalog.speciesIds().map((species) => ({ species })));
+      const cache = Kit.figure.geometryCache();
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAMERA.near, CAMERA.far);
+      /** The base person with every dial at its default value. */
+      const basePerson = () => editor.schema(BASE_PERSON).dials.reduce((recipe, dial) => editor.setDial(recipe, dial.id, dial.default), BASE_PERSON);
       let page = 0;
-      /** The twelve characters of a page: bake, posed world and the two text lines. */
+      let cast = [];
       const castFor = (pageIndex) =>
         Array.from({ length: CHARACTERS }, (_unused, index) => {
-          const bake = bakery.bakeRecipe(table.roll(TABLE_SEED, pageIndex * CHARACTERS + index));
-          const world = Kit.body.worldTransforms(bake.plan, bake.rest, Kit.body.createPose(bake.plan));
-          return { bake, world, lines: describe(bake.individual) };
+          const recipe = pageIndex === 0 && index === 0 ? basePerson() : table.roll(TABLE_SEED, pageIndex * CHARACTERS + index);
+          const bake = bakery.bakeRecipe(recipe);
+          const figure = Kit.figure.build(view, bake, { cache, featuresOf: Kit.body.figureHooks(bake).featuresOf });
+          const column = index % GRID.columns;
+          const row = Math.floor(index / GRID.columns);
+          figure.root.position.x = (column - (GRID.columns - 1) / 2) * GRID.cellWidth;
+          figure.root.position.y = (GRID.rows - 1 - row) * GRID.cellHeight;
+          return { recipe, bake, figure };
         });
-      let cast = castFor(page);
-      const roll = () => {
-        page += 1;
-        cast = castFor(page);
+      const show = (pageIndex) => {
+        cast.forEach((member) => member.figure.dispose());
+        cast = castFor(pageIndex);
       };
-      ctx.ui.mount(html`<div class="wardrobe-sheet"><canvas ref=${(element) => (canvas = element)} onClick=${roll} aria-label="Twelve rolled characters; tap to roll more"></canvas></div>`);
-      const view = { centerX: 0, groundY: 0, scale: 1, turn: 0 };
+      show(page);
+      ctx.ui.mount(html`<div style="position:absolute;inset:0" onClick=${() => show((page += 1))} aria-label="Rolled characters; tap to roll more"></div>`);
 
-      const drawCharacter = (context, member, column, row, cellWidth, cellHeight, pixelRatio) => {
-        const left = column * cellWidth;
-        const top = row * cellHeight;
-        view.scale = (cellHeight * LAYOUT.heightShare) / TALLEST;
-        view.centerX = left + cellWidth * 0.32;
-        view.groundY = top + cellHeight * LAYOUT.groundShare;
-        context.strokeStyle = COLORS.ground;
-        context.lineWidth = pixelRatio;
-        context.beginPath();
-        context.moveTo(left + LAYOUT.labelInset * pixelRatio, view.groundY);
-        context.lineTo(left + cellWidth - LAYOUT.labelInset * pixelRatio, view.groundY);
-        context.stroke();
-        Kit.body.debug.draw(context, member.bake.plan, member.world, view, { boneColor: COLORS.body, showSockets: false });
-        Kit.body.debug.drawSurface(context, member.bake, member.world, view);
-        // The head close-up: the same drawing, zoomed on the head, clipped to a box in the cell's corner.
-        const head = member.bake.plan.boneIndex('head') * VECTOR_STRIDE;
-        const insetSize = cellWidth * LAYOUT.insetShare;
-        const insetLeft = left + cellWidth - insetSize - LAYOUT.labelInset * pixelRatio;
-        const insetTop = top + LAYOUT.labelGap * 2.6 * pixelRatio;
-        context.save();
-        context.fillStyle = COLORS.inset;
-        context.strokeStyle = COLORS.insetEdge;
-        context.fillRect(insetLeft, insetTop, insetSize, insetSize);
-        context.strokeRect(insetLeft, insetTop, insetSize, insetSize);
-        context.beginPath();
-        context.rect(insetLeft, insetTop, insetSize, insetSize);
-        context.clip();
-        const zoomed = { ...view, scale: view.scale * LAYOUT.insetZoom };
-        zoomed.centerX = insetLeft + insetSize / 2 - member.world.translation[head] * zoomed.scale;
-        zoomed.groundY = insetTop + insetSize * 0.62 + (member.world.translation[head + 1] + 0.1) * zoomed.scale;
-        Kit.body.debug.draw(context, member.bake.plan, member.world, zoomed, { boneColor: COLORS.body, showSockets: false });
-        Kit.body.debug.drawSurface(context, member.bake, member.world, zoomed);
-        context.restore();
-        context.fillStyle = COLORS.label;
-        context.fillText(member.lines[0], left + LAYOUT.labelInset * pixelRatio, top + LAYOUT.labelGap * pixelRatio);
-        context.fillStyle = COLORS.dim;
-        context.fillText(member.lines[1], left + LAYOUT.labelInset * pixelRatio, top + LAYOUT.labelGap * 2 * pixelRatio);
+      const fitCamera = () => {
+        const halfWidth = (GRID.columns * GRID.cellWidth) / 2 + GRID.margin;
+        const halfHeight = (GRID.rows * GRID.cellHeight) / 2 + GRID.margin;
+        const aspect = size.w / size.h;
+        const [width, height] = halfWidth / halfHeight > aspect ? [halfWidth, halfWidth / aspect] : [halfHeight * aspect, halfHeight];
+        Object.assign(camera, { left: -width, right: width, top: height, bottom: -height });
+        camera.updateProjectionMatrix();
+        const pitch = (CAMERA.pitchDegrees * Math.PI) / 180;
+        const centerY = halfHeight - GRID.margin - GRID.cellHeight * 0.05;
+        camera.position.set(0, centerY + Math.sin(pitch) * CAMERA.distance, Math.cos(pitch) * CAMERA.distance);
+        camera.lookAt(0, centerY, 0);
       };
 
       return {
-        update() {
-          if (!canvas) return;
-          const pixelRatio = window.devicePixelRatio || 1;
-          const width = Math.round(canvas.clientWidth * pixelRatio);
-          const height = Math.round(canvas.clientHeight * pixelRatio);
-          if (!width || !height) return;
-          if (canvas.width !== width || canvas.height !== height) {
-            canvas.width = width;
-            canvas.height = height;
+        update() {},
+        render() {
+          fitCamera();
+          // Index loop: per-frame posing of every figure, no allocation.
+          for (let index = 0; index < cast.length; index++) {
+            cast[index].figure.rest();
+            cast[index].figure.pose();
           }
-          const context = canvas.getContext('2d');
-          context.clearRect(0, 0, width, height);
-          context.font = `${LAYOUT.labelSize * pixelRatio}px system-ui, sans-serif`;
-          context.lineCap = 'round';
-          context.lineJoin = 'round';
-          const cellWidth = width / LAYOUT.columns;
-          const cellHeight = height / LAYOUT.rows;
-          cast.forEach((member, index) => drawCharacter(context, member, index % LAYOUT.columns, Math.floor(index / LAYOUT.columns), cellWidth, cellHeight, pixelRatio));
+          view.render(camera, { clearColor: BACKDROP_COLOR });
         },
-        debugState: () => ({ page, characters: cast.length, species: cast.map((member) => member.bake.species), bakes: bakery.stats().bakes }),
+        dispose() {
+          cast.forEach((member) => member.figure.dispose());
+          view.dispose();
+          cache.dispose();
+        },
+        debugState: () => ({ page, characters: cast.map((member) => `${member.recipe.species}#${member.recipe.seed}`), bakes: bakery.stats().bakes, stats: view.stats() }),
       };
     },
   });

@@ -102,9 +102,10 @@
    *   none:    nothing is drawn (a mount, a ground point)
    * Any shape may add `at` [x, y, z], an offset in the bone's space, and `scale` [x, y, z], a stretch about `at`
    * (an egg-shaped head is a sphere with a scale). A capsule may add `radius` (default girth / 2) and `taper`
-   * (the far end's radius over the near end's, default 1). A lathe's `along` and an extrude's run the way the bone
-   * runs (down a leg, along a sword); an extrude's `across` is the bone's x axis (its y axis when the bone lies
-   * along x) and its depth is the remaining axis. Dials may change any number in a shape (`shapesWithDials`).
+   * (the far end's radius over the near end's, default 1). A lathe's `along` and an extrude's run along the bone's
+   * positive long axis (a skirt that hangs down states negative heights); an extrude's `across` is
+   * `Kit.figure.ACROSS_AXIS` of the long axis (x for a bone along y, y otherwise) unless the shape states `across`,
+   * and its depth is the remaining axis. These are the conventions of the figure renderer (kit/figure-shapes.js). Dials may change any number in a shape (`shapesWithDials`).
    */
   const SHAPES = Object.freeze({ capsule: [], sphere: ['radius'], box: ['size'], lathe: ['profile'], extrude: ['outline', 'depth'], none: [] });
 

@@ -79,7 +79,7 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `body-samples.js` | `Kit.body.samples`: a biped, a quadruped, a fish, four parts and a family of species, as data |
 | `body-wardrobe.js` | `Kit.body.wardrobe`: an original humanoid catalogue for a character creator (46 dials, 14 colour channels, 21 sockets, 4 species), as data |
 | `body-debug.js` | `Kit.body.debug`: a stick figure with socket markers on any 2D context (runs in node with a recorder) |
-| `body-sheet.js` | needs a browser. The `wardrobe` screen (`Kit.play('wardrobe')`): twelve rolled wardrobe characters drawn with `drawSurface`, tap to roll more |
+| `body-sheet.js` | needs a browser. The `wardrobe` screen (`Kit.play('wardrobe')`): rolled wardrobe characters (the first is the base person at default dials) drawn in 3D by `Kit.figure`, faces through `Kit.body.figureHooks`; tap to roll more |
 | `body-gallery.js` | needs a browser. The `bodies` screen (`Kit.play('bodies')`) |
 
 ```js
@@ -183,8 +183,8 @@ loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
 input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
 lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
-body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery  body-sheet
-look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show
+body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery
+look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show  body-sheet
 games/*.js  ui/gallery
 shell
 ui/menu
