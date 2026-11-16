@@ -169,6 +169,9 @@ started later; the dispatcher forwards each new amendment to every agent as it a
 21. The body system (and movement generally) uses physics simulation and kinematics (forward and
     inverse kinematics, springs, constraints) so motion is fluid, accurate and generalisable, not canned.
 
+22. Every feature is functionally composed from, or broken down into, smaller subsystems that are
+    each reusable on their own; a platform is a thin composition of them, never a monolith.
+
 ## Measures we have gamed before
 
 Each of these was once treated as the goal. None of them is.
