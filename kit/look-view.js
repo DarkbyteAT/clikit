@@ -16,6 +16,9 @@
 (() => {
   /** The fitted depth range is widened by this share of the figures' radius, for limbs that swing past the rest pose. */
   const DEPTH_MARGIN = 0.15;
+  /** Milliseconds of a frame given to figures sculpting a new level of detail (one figure at a time). */
+  const LEVEL_SLICE_MS = 4;
+  const HALF_TURN_DEGREES = 180;
 
   /**
    * @typedef {Object} LookView
@@ -23,7 +26,8 @@
    * @property {boolean} isWebGL2 whether the renderer is WebGL2 (a sculpted crowd needs it)
    * @property {ReturnType<typeof Kit.palette.atlas>} atlas the palette table; `atlas.load(palette)` gives a figure its rows
    * @property {Object} shading from Kit.look.shading: `shading.dress(mesh, part)`
-   * @property {function(THREE.Object3D): Object} add put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
+   * @property {function(THREE.Object3D): Object} add put a figure's root in the scene; returns its dither anchor (pass as part.anchor).
+   *   An anchor given `sized` (`{ height(): metres, resize(pixels, milliseconds), isBusy() }`) is told each frame how tall it is drawn
    * @property {function(THREE.Object3D): void} remove take a figure's root out of the scene and drop its dither anchor
    * @property {function(string, Object=): Object} use switch to a preset, with optional knob overrides; returns the settings
    * @property {function(string, *): Object} set change one knob; returns the settings
@@ -82,6 +86,30 @@
       const centerDepth = -point.copy(sphere.center).applyMatrix4(camera.matrixWorldInverse).z;
       const reach = sphere.radius * (1 + DEPTH_MARGIN);
       return [centerDepth - reach, centerDepth + reach];
+    };
+
+    /**
+     * Tells every figure that asked (an anchor with `sized`: kit/figure.js, `level: 'auto'`) how tall it is drawn
+     * on this frame's target, in target pixels, so it keeps the level of detail that height needs. A pixel
+     * look's target is small, so its figures are sized in texels. Only the first figure still sculpting a new
+     * level is given time this frame; the rest wait their turn, so a crowd of changes never adds up to a hitch.
+     */
+    const sizeFigures = (camera, target) => {
+      let budget = LEVEL_SLICE_MS;
+      for (let index = 0; index < shading.anchors.length; index++) {
+        const { sized, root } = shading.anchors[index];
+        if (!sized) continue;
+        const depth = camera.isOrthographicCamera ? undefined : -root.getWorldPosition(point).applyMatrix4(camera.matrixWorldInverse).z;
+        const pixels = Kit.figure.pixelsTall({
+          height: sized.height(),
+          targetHeight: target.height,
+          viewHeight: camera.isOrthographicCamera ? (camera.top - camera.bottom) / camera.zoom : undefined,
+          depth,
+          fieldOfView: camera.isOrthographicCamera ? undefined : (camera.fov * Math.PI) / HALF_TURN_DEGREES,
+        });
+        sized.resize(pixels, budget);
+        if (sized.isBusy()) budget = 0;
+      }
     };
 
     /**
@@ -147,6 +175,7 @@
         const scale = settings.isIndexed ? Kit.look.texelScale(bufferSize.y, settings.pixelRows) : 1;
         const target = { width: Math.ceil(bufferSize.x / scale), height: Math.ceil(bufferSize.y / scale), scale, bufferHeight: bufferSize.y };
         camera.updateMatrixWorld();
+        sizeFigures(camera, target);
         // Below native resolution a hull line is one texel; at native resolution it is the knob's width in device pixels.
         const lineWidth = scale > 1 ? 1 : settings.inkWidth * pixelRatio;
         shading.apply(settings, { width: target.width, height: target.height, lineWidth, depthRange: fitDepthRange(camera) });

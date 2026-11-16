@@ -1091,8 +1091,13 @@
       return (low + high) / 2;
     };
 
-    /** The six nodes beside a node. */
-    const besideStep = [1, -1, stepY, -stepY, stepZ, -stepZ];
+    /**
+     * The 18 nodes beside a node squarely or across one edge of the grid: the edge of the layer above may pass a
+     * cell slantwise. Measured on four dressed bodies from 26 directions: the six square neighbours alone left
+     * pinholes at hems; these leave none (with the wall depth of kit/figure-sculpt.js); the eight corner ones add nothing.
+     */
+    const besideStep = [];
+    for (let z = -1; z <= 1; z++) for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) if ((x || y || z) && Math.abs(x) + Math.abs(y) + Math.abs(z) < VECTOR) besideStep.push(x + y * stepY + z * stepZ);
     /** Is a cell wholly under a layer above: each of its inside corners hidden there, and no node beside one bare? */
     const isCellHidden = (hiddenAt, base, mask) => {
       for (let index = 0; index < CORNER_COUNT; index++) {

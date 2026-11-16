@@ -34,6 +34,12 @@
     weightSpread: 0.03,
     /** A layer keeps what lies within this distance inside the surface it sits on (its cut edges), and drops the rest. */
     buriedDepth: 0.002,
+    /**
+     * And at least this share of a grid cell: the mesh of the surface below sags between its vertices by about
+     * a fifth of a cell across a limb, and where that surface is not meshed under the layer (kit/sculpt.js
+     * `surface`, `under`) the layer's wall must reach past the sag or a gap opens at the hem.
+     */
+    wallShare: 0.3,
     /** The sculpting pose swings a limb this far (radians) from the trunk when its joint is `fullSpreadAt` or more to the side; less when nearer; not at all within `midline`. */
     spread: 0.75,
     fullSpreadAt: 0.1,
@@ -527,7 +533,7 @@
    * The sculpted layers kept for reuse: equal bakes (a crowd of one look, a recoloured body, an undo) share one
    * set of arrays. The most recently used are held: at most `SCULPT.kept` of them and `SCULPT.keptBytes` bytes,
    * and always the last one made. What a figure still draws stays alive with the figure, kept here or not.
-   * @type {{clear: function(): void, size: function(): number, bytes: function(): number}}
+   * @type {{clear: function(): void, size: function(): number, bytes: function(): number, has: function(string): boolean}}
    */
   const sculptCache = {
     clear: () => {
@@ -536,6 +542,8 @@
     },
     size: () => kept.size,
     bytes: () => keptBytes,
+    /** Is the bake of this signature (`sculptSignature`, a task's `signature`) kept? Does not count as a use. */
+    has: (signature) => kept.has(signature),
   };
   /** Keeps a sculpted bake, and lets the least recently used go while there are too many or they are too large. */
   const keep = (sculpted) => {
@@ -685,7 +693,7 @@
         const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
         // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
         const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
-        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: SCULPT.buriedDepth, walls: !isPaint, cover, under: cover });
+        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: Math.max(SCULPT.buriedDepth, cell * SCULPT.wallShare), walls: !isPaint, cover, under: cover });
         if (cloth.indices.length) cloths[index] = layerOf(`region:${garment.key}`, garment.ramp, cloth, offset);
         yield undefined;
       }
