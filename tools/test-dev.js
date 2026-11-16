@@ -22,6 +22,7 @@ const { parseTscOutput, countByFile, compareWithBaseline } = require('./dev/type
 const { reuseRatio, appendLedgerRow, tokensByTier } = require('./dev/metrics');
 const { judge } = require('./bench');
 const { parseArgs } = require('./dev');
+const { parseSize } = require('./dev/browser');
 
 let passed = 0;
 const test = (name, run) => {
@@ -284,6 +285,15 @@ test('bench verdicts and argument parsing', () => {
   assert.strictEqual(judge(0.4, 1).verdict, 'SLOWER');
   assert.strictEqual(judge(3, 1).verdict, 'faster');
   assert.deepStrictEqual(parseArgs(['miner', '--secs', '4', '--landscape', 'x']), { positionals: ['miner', 'x'], flags: { secs: '4', landscape: true } });
+});
+
+test('play --size reads <width>x<height> and names what it rejects', () => {
+  assert.deepStrictEqual(parseSize('1200x900'), { width: 1200, height: 900 });
+  assert.deepStrictEqual(parseSize(' 390x780 '), { width: 390, height: 780 });
+  assert.throws(() => parseSize('1200'), /not a viewport size/);
+  assert.throws(() => parseSize('1200x'), /not a viewport size/);
+  assert.throws(() => parseSize('50x900'), /from 100 to 2400/, 'too small to hold the page');
+  assert.throws(() => parseSize('1200x9000'), /from 100 to 2400/, 'software GL would take seconds per frame');
 });
 
 console.log(`${passed} tests passed`);
