@@ -181,5 +181,5 @@
     return Kit.body.plan({ id: `${bodyPlan.id.split('[')[0]}[${outfit}]`, bones, sockets, capabilities: [...declared], filled });
   };
 
-  Kit.body = Object.assign(Kit.body || {}, { part, canAttach, openSockets, assemble, SOCKET_PATH_SEPARATOR: PATH_SEPARATOR, compareSocketPaths: byDepthThenName });
+  Kit.body = Object.assign(Kit.body || {}, { part, canAttach, openSockets, assemble, SOCKET_PATH_SEPARATOR: PATH_SEPARATOR, MOUNT_BONE, compareSocketPaths: byDepthThenName });
 })();
