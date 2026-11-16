@@ -224,7 +224,7 @@
       const inOrder = Object.freeze(Object.fromEntries(Object.keys(filled).sort(byDepthThenName).map((path) => [path, filled[path]])));
       return Object.freeze({ ...bodyPlan, id, filled: inOrder, spec: Object.freeze({ ...bodyPlan.spec, id, filled: inOrder, features, regions }) });
     }
-    return Kit.body.plan({ id, bones, sockets, capabilities: [...declared], filled, features, regions });
+    return Kit.body.plan({ id, bones, sockets, capabilities: [...declared], filled, features, regions, ...(bodyPlan.spec.anchors ? { anchors: bodyPlan.spec.anchors } : {}) });
   };
 
   Kit.body = Object.assign(Kit.body || {}, { part, canAttach, openSockets, assemble, SOCKET_PATH_SEPARATOR: PATH_SEPARATOR, MOUNT_BONE, HOST_BONE, compareSocketPaths: byDepthThenName });

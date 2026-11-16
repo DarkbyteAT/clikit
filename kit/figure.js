@@ -346,7 +346,8 @@
     const isReplaced = (piece) => Boolean(skin && skin.replaced.has(piece.id));
 
     const addPiece = (piece) => {
-      if (isReplaced(piece)) return;
+      // A carving piece is a shape taken out of the sculpted surface, never a thing to draw.
+      if (isReplaced(piece) || piece.carve) return;
       const mesh = new THREE.Mesh(cache.acquire(piece));
       // The matrix is written from the pose every frame; three.js must not rebuild it from position and rotation.
       mesh.matrixAutoUpdate = false;
@@ -631,7 +632,7 @@
     const canSculpt = options.sculpt !== false && Boolean(Kit.figure.sculptLayers) && view.isWebGL2 === true;
     const sculpted = canSculpt ? Kit.figure.sculptLayers(bake, pieceLayout) : null;
     const meshes = pieceLayout.pieces
-      .filter((piece) => !sculpted || !sculpted.replaced.has(piece.id))
+      .filter((piece) => !piece.carve && (!sculpted || !sculpted.replaced.has(piece.id)))
       .map((piece) => {
         const mesh = new THREE.InstancedMesh(cache.acquire(piece), undefined, count);
         // Members wander over the whole stage; the geometry's own bounds would cull them wrongly.

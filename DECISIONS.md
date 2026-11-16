@@ -1189,4 +1189,45 @@ machine at load 20 to 40, so only the ratios mean anything.
   slit between two coarse vertices; stipple at low detail turns to short dashes; an umbrella's canopy still
   passes through the head (a hold pose is the movement layer's); sit, kick and dive rows do not exist on
   this branch, so cloth was judged in walk, run and swim only.
+## Faces, hair and species anatomy as relief and vocabularies (sculpt-faces branch)
+
+- **A face is relief on the head, not lumps beside it.** A feature's solid painted as its bone, or marked
+  `carve`, is a *mark* (`Kit.sculpt.relief`, kit/sculpt-relief.js): it is folded into the bone's own solid by a
+  smooth minimum (pressed on) or maximum (pressed in) with its own fillet (`blend`), so the sampler sees one
+  head. A nose, both ears, a ridge, cheeks, a chin, lips and two sockets then blend with each other, never
+  band where three meet, and may be thinner than a grid cell where they lie on the head. `Solid.plain` keeps
+  the bare base, so cloth and paint give way where a mark stands more than `SCULPT.proud` off it (a hair cap
+  no longer swells over an ear). A solid of another paint (a moustache) stays a solid of its own.
+  Rejected: (a) features as more solids in the body's field: the sampler fillets only the two nearest solids,
+  so a nose beside a cheek and a lip banded, and anything under a cell was dropped; (b) a k-way blend in the
+  kernel's sampler: right in principle, but it is the kernel owner's inner loop, costs every node of every
+  body, and still needs a way to carve; (c) displacement of the finished mesh: no new silhouette for an ear,
+  and the normals would need rebuilding.
+- **Named anchors on the plan.** `plan.anchors` says where this head keeps its eye, brow, nose, mouth, ear,
+  cheek and chin (`AnchorSpec`); a feature that names an anchor is placed from it. The same `face.nose('hooked')`
+  sits right on a chibi head, a tall head, a hound's muzzle and a fish. Rejected: per-part azimuths and
+  elevations (every part re-tuned per head; the reason faces drifted off relief), and anchors computed from
+  the head's shape (a muzzle and a skull need different answers that only the designer knows).
+- **Shape vocabularies as data.** kit/body-face.js: style rows (`NOSES`, `EARS`) and builders that turn a row
+  into features at any scale; a dial addresses the features by id (`nose`, `earTip`, `ridge`, `cheek`, `chin`,
+  `mouth`), so a new style needs no new dial. `lean` tips a feature's solid out of the surface (ear flare, nose
+  tip). kit/body-hair.js: hair primitives (mass, lock, fringe, parting, bun, tail, braid, sideburns, fall)
+  placed by azimuth and rise on a head ellipsoid, returning ordinary bone rows; a style is a few calls. Long
+  hair is `fall`, a drape that `hangs` on head, neck and spine through the existing wear mechanism.
+  Rejected: hair as raised painted regions only (no silhouette beyond an offset shell, which is what read as a
+  helmet), and one strand bone per lock with no shared placement (every style hand-placed in metres).
+- **A plan may extend a plan** (`extends`, one step deep): the sample species' faces live on `bipedFaced`,
+  `quadrupedFaced` and `fishFaced`, which add `anchors` and `features` to skeletons that tests and other
+  catalogues keep using bare. Rejected: putting the face on the bare plans (fixtures that count pieces and pin
+  shapes are about skeletons) and copying the bone lists (two sources of one skeleton).
+- **Proof framing.** A body cell is sized by what the figure sweeps when it turns (`Kit.figure.measureSwept`,
+  props included); a head cell is centred on the ball of the head bone's own surface, every species' head drawn
+  the same size, and the tool photographs each close-up cell alone (`solo`) so a hound's back never covers the
+  next head. `--only` narrows options and extremes to the sockets or dials under review; `--framing head`
+  judges them close up. Rejected: scissoring each cell in the renderer (the look's passes share full-screen
+  targets) and widening head cells until bodies fit (no longer a close-up).
+  Not done, and why: worn solids (hair masses, a hat) still carry the faces buried in the head, which is most
+  of the triangle rise on a haired figure (dropping them belongs to the worn-layer code and its closed-mesh
+  test); the stipple of a buzz cut and stubble is still paint and still blotches at some sizes; sample bipeds
+  keep capsule torsos and their bone counts because fixtures pin them, so a wing has two blades and no arm bone.
 

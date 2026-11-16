@@ -44,6 +44,8 @@ const KIT_FILES = [
   'body-recipe',
   'body-edit',
   'body-store',
+  'body-face',
+  'body-hair',
   'body-samples',
   'motion',
   'gait',

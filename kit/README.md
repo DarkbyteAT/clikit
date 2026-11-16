@@ -89,6 +89,9 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `body-recipe.js` | `Kit.body.catalog`: species over `Kit.lineage`; `resolve`, `validate`, `normalize`, `encode` / `decode`, `hash`, `table`, `bakery` |
 | `body-edit.js` | `Kit.body.editor`: a schema of every dial, colour and socket; pure edits; what changed between two bakes |
 | `body-store.js` | `Kit.body.store`: instances as columns (position, heading, phase, detail, recipe index) |
+| `sculpt-relief.js` | `Kit.sculpt.relief`: a base solid with marks pressed on (a nose) or in (an eye socket), as one solid; `smoothMax` |
+| `body-face.js` | `Kit.body.face`: a face as relief, as data: `anchors`, style tables `NOSES` and `EARS`, builders for a nose, ears, brow ridge, cheeks, chin, lips, eye sockets, plain eyes, mouth and nose pad |
+| `body-hair.js` | `Kit.body.hair.on(head)`: hair primitives as bone rows (mass, lock, fringe, parting, bun, tail, braid, sideburns, fall), placed by azimuth and rise on a head |
 | `body-samples.js` | `Kit.body.samples`: a biped, a quadruped, a fish, four parts and a family of species, as data |
 | `body-wardrobe.js` | `Kit.body.wardrobe`: an original humanoid catalogue for a character creator (46 dials, 14 colour channels, 21 sockets, 4 species), as data |
 | `body-debug.js` | `Kit.body.debug`: a stick figure with socket markers on any 2D context (runs in node with a recorder) |
@@ -215,7 +218,7 @@ loot  crowd  craft  net  net-trust  net-claude  dice  sight  tabletop
 input  fx  sfx  make  theme  ui  ui/logic  ui/core  ui/scroll  ui/button  ui/layout  ui/meter  ui/tabs  ui/collection  ui/field
 ui/dialog  ui/notice  ui/popover  views  post  ballistics  loadout  physics  bodies  touch  pixel  dev
 lineage  flags  columns  seeded  pack  palette  surface  region  rig  reach  dynamics
-body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-samples  body-wardrobe  body-debug  body-gallery
+body-plan  body-parts  body-surface  body-recipe  body-edit  body-store  body-face  body-hair  body-samples  body-wardrobe  body-debug  body-gallery
 look-settings  look-toon  look-ink  look-view  look-panel  look-show  figure-shapes  figure-layout  figure  figure-show  body-sheet
 creator-rows  creator-session  creator-slots  creator-camera  creator-icons  creator-perform  creator-controls  creator-stage  creator-panels  creator-theme  creator
 games/*.js  ui/gallery

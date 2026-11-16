@@ -61,6 +61,11 @@
   /** The role kit/body-parts.js gives every bone of an attached part. */
   const PROP_ROLE = 'prop';
   const VECTOR = 3;
+  /** Numbers in a 4x4 matrix, and in one of its columns (column-major, as THREE stores it). */
+  const MATRIX = 16;
+  const COLUMN = 4;
+  /** One coordinate (`axis` 0, 1 or 2) of a point carried by a 4x4 matrix. */
+  const alongAxis = (matrix, axis, x, y, z) => matrix[axis] * x + matrix[axis + COLUMN] * y + matrix[axis + COLUMN * 2] * z + matrix[axis + COLUMN * 3];
 
   const fail = (where, message) => {
     throw new Error(`Kit.figure.${where}: ${message}`);
@@ -119,6 +124,9 @@
    * @property {boolean} [stamps] the shape is of kind 'stamps' (flat polygons that carry their own paint): it is
    *   drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
    * @property {boolean} [outlined] false: the piece gets no hull outline of its own (a nose inside a face)
+   * @property {boolean} [carve] the solid is pressed into the bone's surface when the body is sculpted (an eye
+   *   socket); it is never drawn as a piece
+   * @property {number} [blend] metres: the fillet that joins the solid to its bone's surface when sculpted
    */
 
   /**
@@ -225,6 +233,7 @@
   const featurePiece = (feature, id, base, boneGroup, level) => ({
     ...base,
     id,
+    isFeature: true,
     shape: feature.shape,
     key: Kit.figure.shapeKey(feature.shape, level),
     ramp: feature.ramp === undefined ? base.ramp : feature.ramp,
@@ -237,6 +246,9 @@
     ...(feature.stamps ? { stamps: true } : {}),
     ...(feature.faces ? { faces: feature.faces } : {}),
     ...(feature.outlined === false ? { outlined: false } : {}),
+    // A relief mark's own numbers (kit/sculpt-relief.js): how it is modelled out of its bone when the body is sculpted.
+    ...(feature.carve ? { carve: true } : {}),
+    ...(feature.blend === undefined ? {} : { blend: feature.blend }),
   });
 
   /** The body system's hooks, when it is loaded and the bake carries a surface; else none. */
@@ -297,7 +309,7 @@
 
   /** What makes a drawn piece the same piece: its identity, its surface and everything its material reads. */
   const pieceSignature = (piece) =>
-    [piece.id, piece.key, piece.ramp, piece.inkGroup, piece.shiny ? 1 : 0, piece.emissive ? 1 : 0, piece.tone === undefined ? '' : piece.tone, piece.regions ? piece.regions.key : '', piece.shell || 0, piece.outlined === false ? 0 : 1].join('|');
+    [piece.id, piece.key, piece.ramp, piece.inkGroup, piece.shiny ? 1 : 0, piece.emissive ? 1 : 0, piece.tone === undefined ? '' : piece.tone, piece.regions ? piece.regions.key : '', piece.shell || 0, piece.outlined === false ? 0 : 1, piece.carve ? 1 : 0].join('|');
 
   /**
    * @typedef {Object} FigureUpdate
@@ -367,7 +379,7 @@
    * @example const { lowestY } = Kit.figure.measureRest(layout, restWorld, (piece) => cache.positions(piece));
    */
   const measureRest = (figureLayout, world, positionsOf) => {
-    const matrix = new Float32Array(16);
+    const matrix = new Float32Array(MATRIX);
     const box = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity };
     let lowestPropY = Infinity;
     figureLayout.pieces.forEach((piece) => {
@@ -403,6 +415,59 @@
   };
 
   /**
+   * @typedef {Object} SweptMeasure
+   * @property {number[]} center [x, y, z] the middle of the measured pieces' box, in the space of `world`
+   * @property {number} radius the furthest any measured point is from `center`, metres: a ball that holds them however they are turned
+   * @property {number} sweep the furthest any measured point is from the vertical axis through the origin, metres:
+   *   what a figure turning about that axis sweeps
+   * @property {number} lowestY
+   * @property {number} highestY
+   */
+
+  /**
+   * Measures chosen pieces of a figure as it is posed, worn things included: the ball that holds them and the
+   * cylinder they sweep when the figure turns about its own axis. `measureRest` grounds and centres a body by
+   * its own surfaces; this is for framing what is seen (a head with its ears, a body with its wings and hat).
+   * @param {FigureLayout} figureLayout
+   * @param {{translation: Float32Array, rotation: Float32Array, scale: Float32Array}} world the pose's world transforms (a figure's `world`)
+   * @param {function(Object): Float32Array} positionsOf a piece's surface points in its bone's space
+   * @param {function(Object): boolean} [includes] which pieces count (default all)
+   * @returns {?SweptMeasure} null when no piece counts
+   * @complexity O(vertices of the pieces that count), two passes
+   * @example const head = Kit.figure.measureSwept(figure.layout, figure.world, cache.positions, (piece) => piece.bone === headBone);
+   */
+  const measureSwept = (figureLayout, world, positionsOf, includes = () => true) => {
+    const matrix = new Float32Array(MATRIX);
+    const pieces = figureLayout.pieces.filter(includes);
+    const low = [Infinity, Infinity, Infinity];
+    const high = [-Infinity, -Infinity, -Infinity];
+    const center = [0, 0, 0];
+    let [radius, sweep] = [0, 0];
+    /** Calls `visit(x, y, z)` for every point of the pieces, in the space of `world`. */
+    const eachPoint = (visit) =>
+      pieces.forEach((piece) => {
+        Kit.figure.writeBoneMatrix(world, piece.bone, matrix);
+        const positions = positionsOf(piece);
+        // Measured hot loop over typed arrays (thousands of vertices): plain index arithmetic.
+        for (let offset = 0; offset < positions.length; offset += VECTOR) {
+          const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
+          visit(alongAxis(matrix, 0, x, y, z), alongAxis(matrix, 1, x, y, z), alongAxis(matrix, 2, x, y, z));
+        }
+      });
+    eachPoint((x, y, z) => {
+      [x, y, z].forEach((value, axis) => {
+        low[axis] = Math.min(low[axis], value);
+        high[axis] = Math.max(high[axis], value);
+      });
+      sweep = Math.max(sweep, Math.hypot(x, z));
+    });
+    if (low[0] === Infinity) return null;
+    center.forEach((_unused, axis) => (center[axis] = (low[axis] + high[axis]) / 2));
+    eachPoint((x, y, z) => (radius = Math.max(radius, Math.hypot(x - center[0], y - center[1], z - center[2]))));
+    return { center, radius, sweep, lowestY: low[1], highestY: high[1] };
+  };
+
+  /**
    * @typedef {Object} ViewWindow
    * An orthographic camera's window onto a figure: the world point at its centre and its half extents.
    * @property {number} centerX world units across the camera (0: the figure's vertical axis)
@@ -435,5 +500,5 @@
     return { centerX: 0, centerY: (bottom + top) / 2, halfWidth: halfHeight * aspect, halfHeight };
   };
 
-  Kit.figure = Object.assign(Kit.figure || {}, { INK_GROUPS, PART_GROUPS, SHINY_CHANNELS, resolveRamps, resolveChannels, inkKeyOf, inkGroupOf, layout, planUpdate, measureRest, fitView });
+  Kit.figure = Object.assign(Kit.figure || {}, { INK_GROUPS, PART_GROUPS, SHINY_CHANNELS, resolveRamps, resolveChannels, inkKeyOf, inkGroupOf, layout, planUpdate, measureRest, measureSwept, fitView });
 })();

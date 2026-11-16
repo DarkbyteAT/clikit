@@ -166,6 +166,11 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
   /** A fresh, writable copy of the sample catalogue, changed by `edit`. */
   const sampleVariant = (edit, base = body.samples.CATALOG) => {
     const copy = JSON.parse(JSON.stringify(base));
+    // The sample species wear faces of their own (`PLANS.<plan>Faced`). A variant is a blank body for the feature
+    // under test, so its species stand on the bare skeletons: what a case places is then all there is to count.
+    Object.values(copy.nodes).forEach((node) => {
+      if (node.set && typeof node.set.plan === 'string') node.set.plan = node.set.plan.replace(/Faced$/, '');
+    });
     edit(copy);
     return copy;
   };

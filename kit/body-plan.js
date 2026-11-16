@@ -321,6 +321,9 @@
    *   elevation: `FeatureSpec` rows of kit/body-surface.js, kept as data on `spec` and laid out by that file
    * @property {Object[]} [regions] painted areas of bones (a sleeve, a hairline, stripes): `RegionSpec` rows of
    *   kit/body-surface.js, kept as data on `spec`
+   * @property {Object<string, Object>} [anchors] named places on this body's bones (an eye, a nose, an ear):
+   *   `AnchorSpec` rows of kit/body-surface.js by name, kept as data on `spec`. A feature that names an anchor
+   *   sits there, so a nose made for one head sits right on any head that says where its nose is
    */
 
   /**

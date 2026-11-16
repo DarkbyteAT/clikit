@@ -63,6 +63,8 @@
     beside: Object.freeze(['arm', 'hand']),
     /** A draped bone's `clings` when its row states none, metres (see `WEARS`). */
     clings: 0.1,
+    /** A painted layer lies on a bone's own surface: where a relief mark stands further off it than this (an ear, a nose), the mark shows through. */
+    proud: 0.018,
     /** A draped object's vertex is shared between the body solids within this many metres of being its nearest. */
     drapeSpread: 0.16,
     /** Within that, a vertex stays with its nearest solid by this power of nearness (`Kit.sculpt.weights`). */
@@ -269,6 +271,25 @@
   /** The pieces of worn objects the sculpt takes, by the wear of their bones. */
   const wornPieces = (figureLayout, wears) => figureLayout.pieces.filter((piece) => piece.isProp && wears[piece.bone] && isSolidPiece(piece));
 
+  /**
+   * The relief marks among a body's sculpted pieces, by the piece they are modelled out of: a feature's solid
+   * (`isFeature`) on a bone that has a surface of its own, painted as that surface or pressed into it (`carve`).
+   * A feature of another paint (a moustache on a face) is no mark: it stays a solid of its own.
+   * @param {Object[]} pieces the layout pieces that can be sculpted
+   * @param {Object} plan the bake's plan
+   * @returns {Map<Object, Object[]>} host piece -> its marks, in layout order
+   */
+  const marksByHost = (pieces, plan) => {
+    const hosts = new Map();
+    pieces.forEach((piece) => !piece.isFeature && piece.id === plan.boneNames[piece.bone] && hosts.set(piece.bone, piece));
+    const marks = new Map();
+    pieces.forEach((piece) => {
+      const host = piece.isFeature ? hosts.get(piece.bone) : null;
+      if (host && (piece.carve || piece.ramp === host.ramp)) marks.set(host, [...(marks.get(host) || []), piece]);
+    });
+    return marks;
+  };
+
   /** Steps of correction when points are carried between poses (`carry`): the error shrinks about fivefold a step. */
   const CARRY_STEPS = 4;
 
@@ -465,9 +486,11 @@
    * @param {Garment} garment
    * @param {Object} field a `Field` of kit/sculpt.js whose solids carry `inverse`
    * @param {Object[]} frames `Kit.body.surfaceLayout(plan).frames`
+   * @param {number} [mostProud] metres: the cut leaves out points further than this from the bone's own surface
+   *   (`Solid.plain`, set by `Kit.sculpt.relief`), so an ear or a nose shows through what is painted round it
    * @returns {function(number, number, number): boolean}
    */
-  const cutOf = (garment, field, frames) => {
+  const cutOf = (garment, field, frames, mostProud = Infinity) => {
     const { solids } = field;
     /** Per solid of the field: the garment's predicates on its bone, or null (most solids: answered at once). */
     const testsOf = solids.map((part) => garment.tests.get(part.owner) || null);
@@ -477,6 +500,8 @@
       const tests = index >= 0 ? testsOf[index] : null;
       if (!tests) return false;
       const part = solids[index];
+      // Over a relief mark that stands well off the bone (an ear under a hairline), the garment gives way.
+      if (part.plain && part.plain(x, y, z) > mostProud) return false;
       const inverse = part.inverse;
       const localX = inverse[0] * x + inverse[1] * y + inverse[2] * z + inverse[3];
       const localY = inverse[4] * x + inverse[5] * y + inverse[6] * z + inverse[7];
@@ -720,7 +745,7 @@
   const sculptSignature = (bake, figureLayout, detail = figureLayout.level) => {
     const { wears, hangs, ranks, clings, covers } = wearOf(bake.plan);
     const pieces = [...figureLayout.pieces.filter(isSculpted), ...wornPieces(figureLayout, wears)].map((piece) =>
-      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone], ranks[piece.bone], clings[piece.bone], covers[piece.bone]].join('~')
+      [piece.id, piece.bone, piece.key, piece.ramp, piece.inkGroup, piece.regions ? piece.regions.key : '', wears[piece.bone], hangs[piece.bone], ranks[piece.bone], clings[piece.bone], covers[piece.bone], piece.carve ? 'carve' : '', piece.blend === undefined ? '' : piece.blend].join('~')
     );
     const rest = bake.rest || Kit.body.createPose(bake.plan);
     // Every array of the pose: a size dial (a height) writes `uniform` alone, and two bodies that differ only
@@ -833,15 +858,35 @@
           detail
         )
       : 0;
-    const meshed = candidates.map((piece) => ({ piece, part: fittedSolid(piece, matrices, limbLead, cell) })).filter(({ part }) => part);
+    // A feature's solid painted as its bone (a nose, a brow ridge) or pressed into it (an eye socket) is not a
+    // solid beside the bone but a mark modelled out of it (kit/sculpt-relief.js): one surface, one fillet each.
+    const marks = marksByHost(candidates, plan);
+    const marked = new Set([...marks.values()].flat());
+    const meshed = candidates
+      .filter((piece) => !marked.has(piece) && !piece.carve)
+      .map((piece) => ({ piece, part: fittedSolid(piece, matrices, limbLead, cell) }))
+      .filter(({ part }) => part);
     const replaced = new Set(meshed.map(({ piece }) => piece.id));
+    meshed.forEach((entry) => {
+      const own = marks.get(entry.piece);
+      if (!own) return;
+      // A mark pressed on is thickened to what the grid can hold, like any solid; one too thin even for that stays a rigid piece.
+      const fitted = own.map((piece) => ({ piece, solid: piece.carve ? solidOf(piece, matrices, limbLead) : fittedSolid(piece, matrices, limbLead, cell) })).filter(({ solid }) => solid);
+      entry.part = Kit.sculpt.relief(
+        entry.part,
+        fitted.map(({ piece, solid }) => ({ solid, blend: piece.blend, carve: piece.carve }))
+      );
+      fitted.forEach(({ piece }) => replaced.add(piece.id));
+    });
     // The shells the layout made for raised regions are replaced along with the surfaces they were copies of.
     figureLayout.pieces.filter((piece) => piece.shell && replaced.has(piece.id.split('~')[0])).forEach((piece) => replaced.add(piece.id));
     /** Body solids by ramp: each paint of the body is one blended skin. */
     const groups = new Map();
     meshed.forEach(({ piece, part }) => {
-      const group = groups.get(piece.ramp) || { ramp: piece.ramp, inkGroup: piece.inkGroup, solids: [] };
+      const group = groups.get(piece.ramp) || { ramp: piece.ramp, inkGroup: piece.inkGroup, solids: [], dressed: [] };
       group.solids.push(part);
+      // Garments are worn by a bone's own surface, never by a feature lying on it in another paint (a moustache).
+      if (!piece.isFeature) group.dressed.push(part.owner);
       groups.set(piece.ramp, group);
     });
 
@@ -861,7 +906,7 @@
     /** Per bone: how far the outermost raised garment on it stands off the skin (what a drape over it must clear). */
     const lifts = new Float32Array(plan.boneCount);
     for (const group of groups.values()) {
-      const bones = [...new Set(group.solids.map((part) => part.owner))];
+      const bones = [...new Set(group.dressed)];
       const specs = regions && frames ? stackGarments(garmentsOn(bones, regions)) : [];
       specs.filter((spec) => !spec.isPaint).forEach((spec) => spec.garment.tests.forEach((_tests, bone) => (lifts[bone] = Math.max(lifts[bone], spec.offset))));
       const field = yield* Kit.sculpt.sampleSteps(group.solids, { cell, margin: Math.max(0, ...specs.map((spec) => spec.offset)) });
@@ -886,7 +931,9 @@
       /** Paint waiting for its turn: the canvas, the pattern, and the place in the list its sheet takes. */
       const paints = [];
       for (const { garment, offset, host, isPaint } of specs) {
-        const own = cutOf(garment, field, frames);
+        // Over a relief mark that stands proud of the bone (an ear under a hairline) the garment gives way: it is
+        // neither painted nor raised there, and so covers nothing there either.
+        const own = cutOf(garment, field, frames, offset + SCULPT.proud);
         if (isPaint) {
           const canvas = host ? layerOfGarment.get(host.key) : skin;
           // On a raised garment, paint is on the seen side: its outer surface and its hem's wall, not its underside.
