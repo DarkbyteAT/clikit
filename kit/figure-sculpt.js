@@ -490,6 +490,215 @@
     };
   };
 
+  const HALF = 0.5;
+  /** Paint lies on the seen side of a raised garment: on what is within this many cells of its outer surface (its hem's wall, not its underside). */
+  const PAINT_DEPTH_CELLS = 1;
+  /** Steps of bisection when a pattern's edge is found along a triangle's edge (2^-7 of the edge). */
+  const PAINT_STEPS = 7;
+
+  /**
+   * A mesh of only the vertices its triangles use, in order of first use, with their normals and skin.
+   * @param {{positions: ArrayLike<number>, normals: ArrayLike<number>, owners: ArrayLike<number>, weights: ArrayLike<number>}} source
+   * @param {ArrayLike<number>} triangles three vertex numbers of `source` each
+   * @returns {?{positions: Float32Array, normals: Float32Array, indices: Uint16Array|Uint32Array, owners: Uint16Array, weights: Float32Array}} null when there are no triangles
+   */
+  const usedMesh = (source, triangles) => {
+    if (!triangles.length) return null;
+    const renumbered = new Int32Array(source.positions.length / VECTOR).fill(-1);
+    let used = 0;
+    for (let corner = 0; corner < triangles.length; corner++) if (renumbered[triangles[corner]] < 0) renumbered[triangles[corner]] = used++;
+    const mesh = { positions: new Float32Array(used * VECTOR), normals: new Float32Array(used * VECTOR), owners: new Uint16Array(used * OWNERS), weights: new Float32Array(used * OWNERS) };
+    renumbered.forEach((to, vertex) => {
+      if (to < 0) return;
+      for (let axis = 0; axis < VECTOR; axis++) {
+        mesh.normals[to * VECTOR + axis] = source.normals[vertex * VECTOR + axis];
+        mesh.positions[to * VECTOR + axis] = source.positions[vertex * VECTOR + axis];
+      }
+      for (let slot = 0; slot < OWNERS; slot++) {
+        mesh.owners[to * OWNERS + slot] = source.owners[vertex * OWNERS + slot];
+        mesh.weights[to * OWNERS + slot] = source.weights[vertex * OWNERS + slot];
+      }
+    });
+    const indices = Array.from(triangles, (vertex) => renumbered[vertex]);
+    return { ...mesh, indices: used > MOST_SHORT_INDEX ? Uint32Array.from(indices) : Uint16Array.from(indices) };
+  };
+
+  /** A covered surface is kept this many triangles in from the edge of what covers it (a hem seen from below still has skin behind it). */
+  const COVER_RINGS = 1;
+
+  /**
+   * What is left of a layer when a layer above covers part of it: the triangles a viewer can still see, plus
+   * a margin of `rings` triangles under the cover's edge. A layer under a garment is never seen, and drawing it
+   * costs its triangles for nothing (and lets it poke through the garment in a deep bend).
+   * @param {SculptLayer} layer
+   * @param {function(number, number, number): boolean} covers is this point of the layer under the cover?
+   * @param {function(number): boolean} mayHold can `covers` hold on vertices owned by this bone? (it is not asked elsewhere)
+   * @param {number} [rings] triangles kept in from the cover's edge
+   * @returns {?Object} the mesh left (see `usedMesh`); the layer itself when nothing is covered; null when all of it is
+   * @complexity O(vertices) calls of `covers`, O(rings * triangles) besides
+   * @example
+   * const seen = Kit.figure.uncovered(skin, (x, y, z) => y < 1, () => true); // skin under a knee-length robe: gone, but for a band under its hem
+   */
+  const uncovered = (layer, covers, mayHold, rings = COVER_RINGS) => {
+    const { positions, indices, owners } = layer;
+    const hidden = Uint8Array.from({ length: positions.length / VECTOR }, (_unused, vertex) => (mayHold(owners[vertex * OWNERS]) && covers(positions[vertex * VECTOR], positions[vertex * VECTOR + 1], positions[vertex * VECTOR + 2]) ? 1 : 0));
+    if (!hidden.includes(1)) return layer;
+    for (let ring = 0; ring < rings; ring++) {
+      const shown = new Uint8Array(hidden.length);
+      for (let corner = 0; corner < indices.length; corner += VECTOR) {
+        if (hidden[indices[corner]] && hidden[indices[corner + 1]] && hidden[indices[corner + 2]]) continue;
+        for (let turn = 0; turn < VECTOR; turn++) shown[indices[corner + turn]] = 1;
+      }
+      shown.forEach((isShown, vertex) => {
+        if (isShown) hidden[vertex] = 0;
+      });
+    }
+    const kept = [];
+    for (let corner = 0; corner < indices.length; corner += VECTOR) {
+      if (!(hidden[indices[corner]] && hidden[indices[corner + 1]] && hidden[indices[corner + 2]])) kept.push(indices[corner], indices[corner + 1], indices[corner + 2]);
+    }
+    return kept.length === indices.length ? layer : usedMesh(layer, kept);
+  };
+
+  /** Edges are keyed by their two vertex numbers; this many vertices fit in half a key. */
+  const EDGE_KEY = 0x4000000;
+
+  /**
+   * Paint on a layer: the layer's surface parted where a predicate holds (stripes, a trim, a tattoo) into a
+   * painted sheet and the rest, both made of the layer's own triangles. A sheet meshed on its own and laid
+   * over the surface is faceted differently from it and crosses it in ragged bands, shades by normals of its
+   * own, takes skin weights of its own, and costs its triangles twice; the two parts here share every vertex
+   * on the cut, its normal and its skin, so they shade as one surface, never part in a pose, and add only the
+   * triangles the cut itself makes.
+   *
+   * The pattern's edge is found exactly: the predicate is asked at every vertex; an edge whose ends differ is
+   * crossed once, at a point placed by bisection; an edge whose ends agree is asked at its middle too, and split
+   * there when the middle differs (a stripe narrower than a triangle is still seen, at any level of detail). A
+   * crossing or a split is decided per edge, so the two triangles on it agree and neither part has cracks.
+   * @param {SculptLayer} canvas the layer painted on (a skin, or a raised garment)
+   * @param {function(number, number, number): boolean} keep is a point of the canvas painted? (in the canvas's space)
+   * @param {function(number): boolean} mayHold can the predicate hold on vertices owned by this bone? (it is not asked elsewhere)
+   * @returns {{painted: ?SculptMesh, rest: ?SculptMesh}} the painted sheet and what is left of the canvas (positions, normals, indices, owners, weights); either is null when empty
+   * @complexity O(vertices + triangles of the canvas), with about one predicate call per vertex and edge near the paint and 7 per crossing
+   * @example
+   * const { painted, rest } = Kit.figure.paintedOn(skin, (x, y, z) => Math.floor(y * 20) % 2 === 0, () => true);
+   * // hoops 5 cm wide: painted and rest together cover the skin exactly, and meet along level lines
+   */
+  const paintedOn = (canvas, keep, mayHold) => {
+    // Working vertices: the canvas's own, then the middles and crossings made here.
+    const positions = Array.from(canvas.positions);
+    const normals = Array.from(canvas.normals);
+    const owners = Array.from(canvas.owners);
+    const weights = Array.from(canvas.weights);
+    /** Per working vertex: 1 painted, 0 not, -1 not asked yet. */
+    const flags = new Array(canvas.positions.length / VECTOR).fill(-1);
+    const isPainted = (vertex) => {
+      if (flags[vertex] < 0) flags[vertex] = keep(positions[vertex * VECTOR], positions[vertex * VECTOR + 1], positions[vertex * VECTOR + 2]) ? 1 : 0;
+      return flags[vertex];
+    };
+    /** A new working vertex `share` of the way from one to another: position, normal and skin blended. */
+    const between = (from, to, share, flag) => {
+      const vertex = flags.length;
+      for (let axis = 0; axis < VECTOR; axis++) positions.push(positions[from * VECTOR + axis] + (positions[to * VECTOR + axis] - positions[from * VECTOR + axis]) * share);
+      const normal = [0, 1, 2].map((axis) => normals[from * VECTOR + axis] + (normals[to * VECTOR + axis] - normals[from * VECTOR + axis]) * share);
+      const length = Math.hypot(...normal) || 1;
+      normals.push(normal[0] / length, normal[1] / length, normal[2] / length);
+      // The owners of both ends, each by its end's share; the strongest four, made to sum to one.
+      const shares = new Map();
+      for (let slot = 0; slot < OWNERS; slot++) {
+        shares.set(owners[from * OWNERS + slot], (shares.get(owners[from * OWNERS + slot]) || 0) + weights[from * OWNERS + slot] * (1 - share));
+        shares.set(owners[to * OWNERS + slot], (shares.get(owners[to * OWNERS + slot]) || 0) + weights[to * OWNERS + slot] * share);
+      }
+      const strongest = [...shares].filter(([, held]) => held > 0).sort((first, second) => second[1] - first[1]).slice(0, OWNERS);
+      const total = strongest.reduce((sum, [, held]) => sum + held, 0) || 1;
+      for (let slot = 0; slot < OWNERS; slot++) {
+        owners.push(slot < strongest.length ? strongest[slot][0] : 0);
+        weights.push(slot < strongest.length ? strongest[slot][1] / total : 0);
+      }
+      flags.push(flag);
+      return vertex;
+    };
+    const edgeKey = (first, second) => (first < second ? first * EDGE_KEY + second : second * EDGE_KEY + first);
+    /** The middle of each canvas edge the pattern's edge may pass through, by edge; -1 for an edge it does not. */
+    const middles = new Map();
+    const middleOf = (first, second) => {
+      const key = edgeKey(first, second);
+      if (middles.has(key)) return middles.get(key);
+      // Ends that differ have one crossing between them, found by bisection; ends that agree may still have a
+      // stripe (or a gap) pass between them, which only the middle can tell.
+      let middle = -1;
+      if (isPainted(first) === isPainted(second)) {
+        const at = [0, 1, 2].map((axis) => (positions[first * VECTOR + axis] + positions[second * VECTOR + axis]) / 2);
+        const flag = keep(at[0], at[1], at[2]) ? 1 : 0;
+        if (flag !== flags[first]) middle = between(first, second, HALF, flag);
+      }
+      middles.set(key, middle);
+      return middle;
+    };
+    /** Where the pattern's edge crosses the edge between a painted and an unpainted working vertex, by edge. */
+    const crossings = new Map();
+    const crossingOf = (inside, outside) => {
+      const key = edgeKey(inside, outside);
+      if (crossings.has(key)) return crossings.get(key);
+      let [low, high] = [0, 1];
+      for (let step = 0; step < PAINT_STEPS; step++) {
+        const share = (low + high) / 2;
+        const at = [0, 1, 2].map((axis) => positions[inside * VECTOR + axis] + (positions[outside * VECTOR + axis] - positions[inside * VECTOR + axis]) * share);
+        if (keep(at[0], at[1], at[2])) low = share;
+        else high = share;
+      }
+      const crossing = between(inside, outside, (low + high) / 2, 1);
+      crossings.set(key, crossing);
+      return crossing;
+    };
+    const painted = [];
+    const rest = [];
+    /** Parts a triangle whose corners know whether they are painted between the two lists; the winding is kept. */
+    const part = (first, second, third) => {
+      const corners = [first, second, third];
+      const inside = corners.filter((vertex) => flags[vertex] === 1).length;
+      if (inside === 0 || inside === VECTOR) {
+        (inside ? painted : rest).push(first, second, third);
+        return;
+      }
+      // Turned so the odd corner out (the one painted, or the one not) comes first.
+      const odd = corners.findIndex((vertex) => (flags[vertex] === 1) === (inside === 1));
+      const [lone, next, last] = [corners[odd], corners[(odd + 1) % VECTOR], corners[(odd + 2) % VECTOR]];
+      const [toNext, toLast] = inside === 1 ? [crossingOf(lone, next), crossingOf(lone, last)] : [crossingOf(next, lone), crossingOf(last, lone)];
+      (inside === 1 ? painted : rest).push(lone, toNext, toLast);
+      (inside === 1 ? rest : painted).push(next, last, toLast, next, toLast, toNext);
+    };
+    const source = canvas.indices;
+    for (let corner = 0; corner < source.length; corner += VECTOR) {
+      const corners = [source[corner], source[corner + 1], source[corner + 2]];
+      if (!corners.some((vertex) => mayHold(canvas.owners[vertex * OWNERS]))) {
+        rest.push(...corners);
+        continue;
+      }
+      const split = [middleOf(corners[0], corners[1]), middleOf(corners[1], corners[2]), middleOf(corners[2], corners[0])];
+      const splits = split.filter((middle) => middle >= 0).length;
+      if (splits === 0) part(...corners);
+      else if (splits === VECTOR) {
+        part(corners[0], split[0], split[2]);
+        part(split[0], corners[1], split[1]);
+        part(split[2], split[1], corners[2]);
+        part(split[0], split[1], split[2]);
+      } else {
+        const lead = splits === 1 ? split.findIndex((middle) => middle >= 0) : split.findIndex((middle, index) => middle >= 0 && split[(index + 2) % VECTOR] < 0);
+        const [first, second, third] = [corners[lead], corners[(lead + 1) % VECTOR], corners[(lead + 2) % VECTOR]];
+        const [firstMiddle, secondMiddle] = [split[lead], split[(lead + 1) % VECTOR]];
+        part(first, firstMiddle, third);
+        if (splits === 1) part(firstMiddle, second, third);
+        else {
+          part(firstMiddle, secondMiddle, third);
+          part(firstMiddle, second, secondMiddle);
+        }
+      }
+    }
+    const working = { positions, normals, owners, weights };
+    return { painted: usedMesh(working, painted), rest: usedMesh(working, rest) };
+  };
+
   /** Numbers in a signature are rounded to this many decimals (a hundredth of a millimetre). */
   const SIGNATURE_DECIMALS = 5;
 
@@ -662,20 +871,61 @@
       const bare = Kit.sculpt.surface(field);
       yield undefined;
       const skin = layerOf(`skin:${group.ramp}`, group.ramp, bare, 0);
-      skin.faceShare = shareOf(skin, isHeadBone);
-      layers.push(skin);
+      const first = layers.push(skin) - 1;
+      /** How far each layer of this group stands off the skin, and each raised garment's cut. */
+      const standsOff = new Map([[skin, 0]]);
+      const raisedCuts = new Map();
       yield undefined;
+      /** The layer each raised garment of this group became, by garment key: what its paint is painted on. */
+      const layerOfGarment = new Map();
+      /** Paint waiting for its turn: the canvas, the pattern, and the place in the list its sheet takes. */
+      const paints = [];
       for (const { garment, offset, host, isPaint } of specs) {
         const own = cutOf(garment, field, frames);
-        const within = host ? cutOf(host, field, frames) : null;
-        const cut = within ? (x, y, z) => own(x, y, z) && within(x, y, z) : own;
-        // Paint lies a hair above what it is painted on, as an open sheet: flush to the eye, never fighting for depth.
-        const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
-        const cloth = Kit.sculpt.surface(field, { offset, cut, near, depth: SCULPT.buriedDepth, walls: !isPaint });
-        if (cloth.indices.length) layers.push(layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
+        if (isPaint) {
+          const canvas = host ? layerOfGarment.get(host.key) : skin;
+          // On a raised garment, paint is on the seen side: its outer surface and its hem's wall, not its underside.
+          const least = offset - SCULPT.paintLift - cell * PAINT_DEPTH_CELLS;
+          const keep = host ? (x, y, z) => own(x, y, z) && Kit.sculpt.valueAt(field, x, y, z) >= least : own;
+          if (canvas) paints.push({ canvas, keep, garment, at: layers.push(null) - 1 });
+        } else {
+          const near = Uint8Array.from(group.solids, (part) => (garment.tests.has(part.owner) ? 1 : 0));
+          const cloth = Kit.sculpt.surface(field, { offset, cut: own, near, depth: SCULPT.buriedDepth });
+          if (cloth.indices.length) {
+            layerOfGarment.set(garment.key, layerOf(`region:${garment.key}`, garment.ramp, cloth, offset));
+            layers.push(layerOfGarment.get(garment.key));
+            standsOff.set(layerOfGarment.get(garment.key), offset);
+            raisedCuts.set(garment, { own, offset });
+          }
+        }
         yield undefined;
       }
+      // Paint is cut out of the surface it is on, the last painted first: where two patterns overlap, the later
+      // one shows, and no triangle is drawn twice.
+      for (const { canvas, keep, garment, at } of paints.reverse()) {
+        const { painted, rest } = paintedOn(canvas, keep, (bone) => garment.tests.has(bone));
+        if (painted) {
+          layers[at] = { id: `region:${garment.key}`, ramp: garment.ramp, inkGroup: group.inkGroup, inkClass: garment.ramp, ...painted };
+          standsOff.set(layers[at], standsOff.get(canvas));
+          Object.assign(canvas, rest || { indices: new Uint16Array(0) });
+        }
+        yield undefined;
+      }
+      // The layering rule: what a raised garment covers is not drawn. Each layer of this group gives up what
+      // lies under a garment standing further off the skin than it does.
+      for (let at = first; at < layers.length; at++) {
+        if (!layers[at]) continue;
+        for (const [garment, { own, offset }] of raisedCuts) {
+          if (!(offset > standsOff.get(layers[at]) + SCULPT.paintLift)) continue;
+          const left = uncovered(layers[at], own, (bone) => garment.tests.has(bone));
+          if (left !== layers[at]) layers[at] = left ? Object.assign(layers[at], left) : null;
+          if (!layers[at]) break;
+        }
+        yield undefined;
+      }
+      skin.faceShare = shareOf(skin, isHeadBone);
     }
+    for (let at = layers.length - 1; at >= 0; at--) if (!layers[at]) layers.splice(at, 1);
     const worn = yield* wornSteps(bake, figureLayout, { cell, matrices, bodyPieces: meshed.map(({ piece }) => piece), limbLead, lifts });
     worn.forEach(({ layer, pieces }) => {
       layers.push(layer);
@@ -919,5 +1169,5 @@
     return made;
   }
 
-  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers, sculptTask });
+  Kit.figure = Object.assign(Kit.figure || {}, { SCULPT, paintedOn, uncovered, restMatrices, limbsOf, spreadPose, limbClearance, sculptSignature, sculptCache, sculptLayers, sculptTask });
 })();
