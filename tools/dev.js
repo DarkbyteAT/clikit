@@ -300,6 +300,7 @@ const COMMANDS = {
 const printHelp = () => {
   console.log('node tools/dev.js <command>     (every command is also a make target: `make help`)\n');
   Object.keys(COMMANDS).forEach((name) => console.log(`  ${COMMANDS[name].usage}\n      ${COMMANDS[name].about}\n      e.g. ${COMMANDS[name].example}\n`));
+  console.log('Version control (make only; see AGENTS.md "Version control and worktrees"):\n  make worktree NAME=<branch>   a checkout of your own for a piece of work\n  make worktrees                list them\n  make land NAME=<branch>       merge a finished branch into main after its tests pass\nEvery command here works from any worktree: paths are relative to the checkout and servers pick a free port.');
 };
 
 async function main() {

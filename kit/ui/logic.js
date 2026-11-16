@@ -2,7 +2,7 @@
  * Kit ui logic: the decisions the components make, as pure functions.
  *
  * Owns:  `Kit.uiLogic`: the notice queue (what is showing, what waits), roving focus (which item an arrow key
- *        lands on), selection (single and multiple), text search over rows, and fraction clamping.
+ *        lands on), selection (single and multiple), text search over rows, fraction clamping and where a popover goes.
  * Does not own: any element or event (the component files beside this one apply these decisions to the DOM).
  *
  * Pure: runs in node and is unit-tested by tools/test-kit.js. It loads before kit/ui.js and needs nothing.
@@ -108,5 +108,24 @@
   /** A meter's value as a fraction 0..1; anything that is not a finite number counts as empty. */
   const clampFraction = (value) => (Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0);
 
-  Kit.uiLogic = { createQueue, enqueue, dismiss, rovingIndex, toggleSelection, isSelected, searchRows, clampFraction };
+  /** Space kept between a popover and the screen edge, and between it and its button, CSS pixels. */
+  const EDGE_MARGIN_PX = 8;
+
+  /**
+   * Where a panel goes: under its anchor (above when there is no room below), kept on screen sideways.
+   * Pure geometry: boxes in, a position out.
+   * @param {{left: number, top: number, bottom: number, width: number}} anchor the button's box
+   * @param {{width: number, height: number}} panel the panel's size
+   * @param {{width: number, height: number}} viewport
+   * @returns {{left: number, top: number}} viewport coordinates of the panel's top-left corner
+   */
+  const placePanel = (anchor, panel, viewport) => {
+    const centred = anchor.left + anchor.width / 2 - panel.width / 2;
+    const left = Math.max(EDGE_MARGIN_PX, Math.min(centred, viewport.width - panel.width - EDGE_MARGIN_PX));
+    const below = anchor.bottom + EDGE_MARGIN_PX;
+    const fitsBelow = below + panel.height <= viewport.height - EDGE_MARGIN_PX;
+    return { left, top: fitsBelow ? below : Math.max(EDGE_MARGIN_PX, anchor.top - EDGE_MARGIN_PX - panel.height) };
+  };
+
+  Kit.uiLogic = { createQueue, enqueue, dismiss, rovingIndex, toggleSelection, isSelected, searchRows, clampFraction, placePanel };
 })();

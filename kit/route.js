@@ -51,6 +51,7 @@
    * @param {Anchor[]} anchors
    * @param {number} radius  maximum snapping distance, world units
    * @returns {Anchor|null}
+   * @complexity O(anchors) time, O(1) space
    */
   const snap = (point, anchors, radius) =>
     anchors.reduce((best, anchor) => (line.dist(point, anchor) <= radius && (!best || line.dist(point, anchor) < line.dist(point, best)) ? anchor : best), null);
@@ -98,6 +99,7 @@
    * @param {Anchor[]} anchors
    * @param {number} radius  world units
    * @returns {Stop[]}
+   * @complexity O(anchors x points) time, O(anchors) space
    */
   const stops = (points, anchors, radius) =>
     anchors
@@ -177,6 +179,7 @@
    * @param {Point[]} points
    * @param {number} width  world units
    * @returns {{ left: Point, right: Point }[]}  one pair per input point, left / right of the direction of travel
+   * @complexity O(points) time and space
    */
   const ribbon = (points, width) =>
     points.map((point, index) => {
@@ -263,5 +266,13 @@
     return { x: at.x, y: at.y, tx: at.tx * follower.direction, ty: at.ty * follower.direction };
   };
 
-  Kit.follow = { start: (along = 0, direction = 1) => ({ along, direction }), advance, pose };
+  /**
+   * A follower at the start of its track (or anywhere on it).
+   * @param {number} [along=0]     distance from the start, world units
+   * @param {1|-1} [direction=1]   1 = toward the end
+   * @returns {Follower}
+   */
+  const start = (along = 0, direction = 1) => ({ along, direction });
+
+  Kit.follow = { start, advance, pose };
 })();

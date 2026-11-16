@@ -95,20 +95,25 @@
   const openDialog = ({ title, body, actions, variant, dismissable }) => {
     if (!title) throw new Error('Kit.ui.openDialog: `title` is required (it names the dialog for screen readers), e.g. openDialog({ title: "Backpack", body }).');
     const isOpen = signal(true);
+    const dismissNow = () => (isOpen.value = false);
+    openDialogs.add(dismissNow);
     return new Promise((resolve) => {
       const mounted = mount(
         html`<${Dialog} open=${isOpen} title=${title} variant=${variant} dismissable=${dismissable} actions=${actions} onClose=${(value) => {
+          openDialogs.delete(dismissNow);
           // Unmount after the close event has finished, so focus has already gone back to the opener.
           queueMicrotask(() => mounted.dispose());
           resolve(value);
         }}>${body}<//>`,
         document.body
       );
-      openDialog.dismissAll.push(() => (isOpen.value = false));
     });
   };
-  /** Closers of dialogs opened through openDialog; the HUD's dispose() runs them when a game ends. */
-  openDialog.dismissAll = [];
+
+  /** Closers of the dialogs openDialog is showing right now. */
+  const openDialogs = new Set();
+  /** Closes every dialog opened through openDialog (the HUD's dispose() calls this when a game ends). */
+  const closeDialogs = () => [...openDialogs].forEach((dismissNow) => dismissNow());
 
   css(`
     .ui-dialog {
@@ -138,5 +143,5 @@
     @keyframes ui-sheet-in { from { transform: translateY(40%); opacity: 0; } }
   `);
 
-  Object.assign(Kit.ui, { Dialog, Sheet, openDialog });
+  Object.assign(Kit.ui, { Dialog, Sheet, openDialog, closeDialogs });
 })();

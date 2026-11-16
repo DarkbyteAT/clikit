@@ -9,24 +9,7 @@
 (() => {
   if (!Kit.ui.html) return;
   const { html, classes, css, uid, useRef } = Kit.ui;
-  /** Space kept between a popover and the screen edge, and between it and its button, CSS pixels. */
-  const EDGE_MARGIN_PX = 8;
-
-  /**
-   * Where a panel goes: under its anchor (above when there is no room below), kept on screen sideways.
-   * Pure geometry: boxes in, a position out.
-   * @param {{left: number, top: number, bottom: number, width: number}} anchor the button's box
-   * @param {{width: number, height: number}} panel the panel's size
-   * @param {{width: number, height: number}} viewport
-   * @returns {{left: number, top: number}} viewport coordinates of the panel's top-left corner
-   */
-  const placePanel = (anchor, panel, viewport) => {
-    const centred = anchor.left + anchor.width / 2 - panel.width / 2;
-    const left = Math.max(EDGE_MARGIN_PX, Math.min(centred, viewport.width - panel.width - EDGE_MARGIN_PX));
-    const below = anchor.bottom + EDGE_MARGIN_PX;
-    const fitsBelow = below + panel.height <= viewport.height - EDGE_MARGIN_PX;
-    return { left, top: fitsBelow ? below : Math.max(EDGE_MARGIN_PX, anchor.top - EDGE_MARGIN_PX - panel.height) };
-  };
+  const { placePanel } = Kit.uiLogic;
 
   /**
    * A button with a floating panel.
@@ -53,13 +36,13 @@
 
   /**
    * A short description attached to something. Shown on hover and on keyboard focus; on touch, press the target.
-   * The target should be focusable (a Button, a Card with onClick); plain content is made focusable for you.
-   * @param {{text: string, children?: *}} props
+   * Wrap something focusable (a Button, a Card with onClick), or pass `focusable` to give plain content a tab stop.
+   * @param {{text: string, focusable?: boolean, children?: *}} props
    * @example html`<${Tooltip} text="Doubles ore for 10 s"><${Button}>Surge<//><//>`
    */
-  const Tooltip = ({ text, children }) => {
+  const Tooltip = ({ text, focusable = false, children }) => {
     const tipId = useRef(uid('tip')).current;
-    return html`<span class="ui-tooltip" aria-describedby=${tipId} tabindex="0">
+    return html`<span class="ui-tooltip" aria-describedby=${tipId} tabindex=${focusable ? 0 : undefined}>
       ${children}
       <span class="ui-tip" role="tooltip" id=${tipId}>${text}</span>
     </span>`;
@@ -82,5 +65,5 @@
     .ui-tooltip:hover .ui-tip, .ui-tooltip:focus-within .ui-tip, .ui-tooltip:active .ui-tip { opacity: 1; visibility: visible; }
   `);
 
-  Object.assign(Kit.ui, { Popover, Tooltip, placePanel });
+  Object.assign(Kit.ui, { Popover, Tooltip });
 })();

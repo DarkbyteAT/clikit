@@ -172,7 +172,7 @@
    * The pieces a player can change are kept in a short list apart from the fixed board, because the solver makes
    * dozens of child states per position and most are duplicates: a child is then a copied list of a few pieces
    * (and its key a string built from that list), and the full grid is only assembled for positions that get explored.
-   * Measured in scratch/prism/bench.js: 1.2 ms per explored state with a grid per child, about a tenth of that this way.
+   * scratch/prism/bench.js times it; the machine was too loaded when this was written for the gain to be stated honestly.
    * @typedef {object} State
    * @property {object} fixed - a Kit.grid of the pieces that never change (hedges, lanterns, flowers, fixed glass); null elsewhere
    * @property {(Piece & {x: number, y: number})[]} loose - the turnable and movable pieces on the bed, with their cells

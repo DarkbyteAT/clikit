@@ -5,6 +5,10 @@
  *        (choose, banner, panel) and the adapters that draw a Kit model (shop and offer for
  *        Kit.upgrades, checklist for Kit.goals). Everything it adds is removed by `dispose()`,
  *        which the shell calls when the game exits or restarts.
+ *        It is also the compatibility layer over the component library in kit/ui/: every call above keeps its
+ *        name, its return value and its markup (game themes style `.stat`, `.action`, `#modal .modal-card`,
+ *        `.sheet-body` ...), while the modal host is now a native <dialog>, the sheet body is the kit's scroll
+ *        pane, and `mount` / `dialog` / `html` open the library to a game. New views should be components.
  * Does not own: how the HUD looks (the base stylesheet in index.html and the game's theme, see
  *        theme.js; a theme may also rebuild a component through `theme.components`), the models
  *        themselves (model.js) or canvas input (input.js).
@@ -133,12 +137,17 @@
       const box = track(component('stat', { label, value: valueElement }) || h('div', 'stat'));
       if (!box.contains(valueElement)) box.append(h('span', null, label), valueElement);
       statsRow.appendChild(box);
+      // The last text written, kept here: reading it back from the DOM every frame cost about twenty times more
+      // than this comparison (see "UI components" in DECISIONS.md).
+      let shownText = valueElement.textContent;
       return {
         el: box,
         set(nextValue) {
           const text = String(formatValue(nextValue));
           // Games call set() every frame; only touch the DOM when the text really changed.
-          if (text !== valueElement.textContent) valueElement.textContent = text;
+          if (text === shownText) return;
+          shownText = text;
+          valueElement.textContent = text;
         },
         pulse: () => restartAnimation(box, 'pulse'),
       };
@@ -279,24 +288,46 @@
 
     // ---- modals: each pauses the game while open and resolves when dismissed ----
 
+    /** Hides the modal host; when it is a native <dialog> this also gives focus back to whatever had it. */
+    const hideModal = () => {
+      if (modal.open) modal.close();
+      modal.hidden = true;
+      modal.textContent = '';
+    };
+
     /**
      * Opens the modal with an empty card and hands it to `build(card, close)`. Calling `close(value)`
      * hides the modal, resumes the game and resolves the returned promise with the value.
+     *
+     * The host is a native <dialog> shown with showModal(): the browser keeps keyboard focus inside it, makes the
+     * rest of the page inert and returns focus when it closes. Focus starts on the card, not on a button, so a
+     * key the player was already holding for the game cannot press an option the moment the modal appears.
+     * @param {function(HTMLElement, function(*=): void): void} build
+     * @param {{escapeCloses?: boolean}} [options] `escapeCloses`: Escape dismisses the modal (resolving undefined);
+     *   leave it off when the player must answer
      */
-    function openModal(build) {
+    function openModal(build, { escapeCloses = false } = {}) {
       ctx.paused = true;
       modal.textContent = '';
       const card = h('div', 'modal-card');
+      card.tabIndex = -1;
       modal.appendChild(card);
       modal.hidden = false;
-      return new Promise((resolve) =>
-        build(card, (value) => {
-          modal.hidden = true;
-          modal.textContent = '';
+      if (modal.showModal && !modal.open) modal.showModal();
+      card.focus({ preventScroll: true });
+      return new Promise((resolve) => {
+        const close = (value) => {
+          hideModal();
           ctx.paused = false;
           resolve(value);
-        })
-      );
+        };
+        // Escape raises `cancel` on a dialog. The browser's own closing is always declined: close() must run so the game resumes.
+        modal.oncancel = (event) => {
+          event.preventDefault();
+          if (escapeCloses) close();
+        };
+        build(card, close);
+      });
     }
 
     /** One option button of a choose() modal. */
@@ -358,12 +389,21 @@
      * @example ui.panel({ title: 'Backpack', build: (body, close) => inventory.bag.forEach((item) => body.append(ui.h('div', 'item', item.name))) });
      */
     const panel = ({ title, build, closeLabel = 'Close' }) =>
-      openModal((card, close) => {
-        card.classList.add('sheet');
-        const body = h('div', 'sheet-body');
-        card.append(h('h2', null, title), body, button('primary', closeLabel, () => close()));
-        build(body, close);
-      });
+      openModal(
+        (card, close) => {
+          card.classList.add('sheet');
+          const body = h('div', 'sheet-body');
+          // The body is the kit's scroll pane (kit/ui/scroll.js): fade edges, contained overscroll, keyboard scrolling.
+          const stopWatching = Kit.ui.scrollable ? Kit.ui.scrollable(body, { label: title }) : () => {};
+          const closePanel = (value) => {
+            stopWatching();
+            close(value);
+          };
+          card.append(h('h2', null, title), body, button('primary', closeLabel, () => closePanel()));
+          build(body, closePanel);
+        },
+        { escapeCloses: true }
+      );
 
     // ---- adapters: views generated from Kit models (model.js). Model in, HUD out; they redraw when the model changes ----
 
@@ -476,14 +516,54 @@
       return { el: box, refresh };
     }
 
-    /** Removes everything this HUD added and closes any open modal. */
-    const dispose = () => {
-      ownedElements.forEach((element) => element.remove());
-      modal.hidden = true;
-      modal.textContent = '';
+    // ---- the component library (kit/ui/): views built from Kit.ui components, owned by this HUD ----
+
+    /** Disposers of the component views this HUD mounted. */
+    const mountedViews = [];
+    /** Where `mount` can put a view: the HUD regions of index.html. */
+    const SLOTS = { layer: hudLayer, stats: statsRow, actions: actionBar };
+
+    /**
+     * Mounts a component view (kit/ui/) into the HUD; it is removed with the rest of the HUD when the game ends.
+     * @param {*} view a template built with `ui.html` from Kit.ui components
+     * @param {'layer'|'stats'|'actions'} [slot='layer'] the HUD region: the middle layer, the top stats row or the bottom bar
+     * @returns {{el: HTMLElement, dispose: function(): void}}
+     * @example
+     * const { html, signal, Meter } = Kit.ui; const heat = signal(0);
+     * ctx.ui.mount(html`<${Meter} label="Heat" value=${heat} />`);   // then just: heat.value = 0.7
+     */
+    const mount = (view, slot = 'layer') => {
+      if (!Kit.ui.mount) throw new Error('ui.mount: the component library did not load (see the console warning from kit/ui/core.js).');
+      if (!SLOTS[slot]) throw new Error(`ui.mount: unknown slot "${slot}". Use one of: ${Object.keys(SLOTS).join(', ')}.`);
+      const mounted = Kit.ui.mount(view, SLOTS[slot]);
+      mountedViews.push(mounted.dispose);
+      return mounted;
     };
 
-    return { stat, progress, actions, choose, banner, toast, hint, el, pips, panel, shop, offer, checklist, h, dispose };
+    /**
+     * A component dialog or sheet (Kit.ui.openDialog) that pauses the game while it is open.
+     * @param {Object} spec see Kit.ui.openDialog: `{ title, body, actions, variant: 'dialog' | 'sheet', dismissable }`
+     * @returns {Promise<*>} the value passed to `close(value)`; undefined when dismissed
+     * @example const pick = await ctx.ui.dialog({ title: 'Bait', variant: 'sheet', body: (close) => html`<${List} label="Bait" items=${baits} onSelect=${close} />` });
+     */
+    const dialog = (spec) => {
+      ctx.paused = true;
+      return Kit.ui.openDialog(spec).then((value) => {
+        ctx.paused = false;
+        return value;
+      });
+    };
+
+    /** Removes everything this HUD added and closes any open modal, dialog or notice. */
+    const dispose = () => {
+      ownedElements.forEach((element) => element.remove());
+      mountedViews.splice(0).forEach((disposeView) => disposeView());
+      if (Kit.ui.closeDialogs) Kit.ui.closeDialogs();
+      if (Kit.ui.clearNotices) Kit.ui.clearNotices();
+      hideModal();
+    };
+
+    return { stat, progress, actions, choose, banner, toast, hint, el, pips, panel, shop, offer, checklist, h, mount, dialog, html: Kit.ui.html, dispose };
   };
 
   /** The element builder is also available without a HUD instance (the shell builds the menu with it). */

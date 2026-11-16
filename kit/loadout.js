@@ -63,6 +63,8 @@
       place,
       /**
        * Step a slot to the next id in `ids` that fits the budget, wrapping round: the one-tap way to edit a loadout.
+       * @param {number} slot Slot index, from 0.
+       * @param {string[]} ids The ids on offer, in the order to step through.
        * @returns {string|null} the slot's pick afterwards (unchanged when nothing else fits).
        */
       cycle(slot, ids) {
@@ -73,7 +75,11 @@
         if (next !== undefined) place(slot, next);
         return picks[slot];
       },
-      /** Subscribe to changes. @returns {() => void} unsubscribe. */
+      /**
+       * Subscribe to changes.
+       * @param {(change: { slot: number, id: string|null }) => void} listener
+       * @returns {() => void} unsubscribe.
+       */
       on: (listener) => bus.on('change', listener),
     };
   };

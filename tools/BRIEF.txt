@@ -204,3 +204,6 @@ In your game: return debugState() from create() next to update(); it feeds play 
 Kit.register now throws at load for a missing or duplicate id, a create that is not a function, or an unknown skin, and warns (development only)
 for a missing theme, a fourth stat, a HUD element off-screen, a THREE.Color passed to make.*, or a wrong argument type to ui.* / ctx.after / every / tween.
 Browser tools take one of the machine-wide browser slots, like smoke. `make setup` installs Biome and TypeScript (dev only; check SKIPs them if absent).
+
+VERSION CONTROL (amendment 20)
+The project is the Git repository "clikit". New work starts in its own worktree: make worktree NAME=<branch>, work and commit there, report the branch; the dispatcher lands it with make land. See AGENTS.md "Version control and worktrees".

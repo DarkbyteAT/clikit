@@ -194,8 +194,9 @@ machine at load 20 to 40, so only the ratios mean anything.
   `scratch/prism/solve.js` on every campaign bed (night-garden: 108 states instead of 908). Revisit if a bed needs a
   piece set down in the dark on purpose.
 - **Search state.** Options: one grid per position (uniform, but building a Kit.grid per child cost most of the time);
-  fixed board + short list of loose pieces, grid assembled only for explored positions. **Chosen:** the list. Measured
-  with `scratch/prism/bench.js` under heavy machine load: about 1200 us to 650 us per explored state; the rest is
+  fixed board + short list of loose pieces, grid assembled only for explored positions. **Chosen:** the list. `scratch/prism/bench.js`
+  read about 1200 us per explored state before and 650 after, but under a load average of 35 the same run varies
+  several-fold, so treat the gain as unproven; the profile's top entries afterwards are
   `Kit.grid.find` and grid construction, which allocate an object per cell.
 - **Forged beds.** Options: random board then keep the solvable ones (most random boards are unsolvable or trivial);
   hand-written only (ends after 14 beds); build a solved layout, scramble it, then let the solver find the true minimum

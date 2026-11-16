@@ -216,9 +216,9 @@
     { id: 'freight', name: 'Mixed freight', bench: 'motion', brief: 'Glass and steel take turns. Land 4 in a row, each off a bumper', pattern: ['glass', 'steel'], fixed: [], tray: ['ramp', 'bell', 'bumper', 'funnel'], budget: 7, par: 3, streak: 4, needs: { touch: ['bumper'] } },
     { id: 'whirl', name: 'Whirligig', bench: 'motion', brief: 'Land 3 in a row, each through the spinner', pattern: ['glass'], fixed: [fixedPiece(1, 'spinner', 3, 3, 0)], tray: ['ramp', 'bell', 'funnel', 'booster'], budget: 7, par: 4, streak: 3, needs: { touch: ['spinner'] } },
     { id: 'sorter', name: 'Sorting office', bench: 'motion', brief: 'Steel in the bucket, glass anywhere else: 6 in a row', pattern: ['glass', 'steel'], fixed: [], tray: ['ramp', 'bumper', 'funnel', 'booster'], budget: 7, par: 4, streak: 6, needs: { land: ['steel'] } },
-    { id: 'doorbell', name: 'Doorbell', bench: 'logic', brief: 'A shelf covers the bucket and its gate is shut. Land 3 in a row', pattern: ['glass'], fixed: [fixedPiece(1, 'ramp', 3, 7, 4), fixedPiece(2, 'gate', 4, 7, 0), fixedPiece(3, 'ramp', 5, 7, 4)], tray: ['ramp', 'bell', 'bumper', 'funnel'], budget: 6, par: 3, streak: 3, needs: {} },
+    { id: 'doorbell', name: 'Doorbell', bench: 'logic', brief: 'A shelf covers the bucket and its gate is shut. Land 3 in a row', pattern: ['glass'], fixed: [fixedPiece(1, 'ramp', 3, 7, 4), fixedPiece(2, 'gate', 4, 7, 0), fixedPiece(3, 'gate', 5, 7, 0), fixedPiece(4, 'ramp', 6, 7, 4)], tray: ['ramp', 'bell', 'bumper', 'funnel'], budget: 6, par: 3, streak: 3, needs: {} },
     { id: 'third', name: 'Every third', bench: 'logic', brief: 'Only every third marble may land: 6 in a row', pattern: ['glass'], fixed: [], tray: ['ramp', 'bumper', 'funnel', 'gate', 'counter'], budget: 8, par: 5, streak: 6, needs: { landEvery: 3 } },
-    { id: 'bounce', name: 'Rubber room', bench: 'logic', brief: 'Rubber and steel: land 4 in a row', pattern: ['rubber', 'steel'], fixed: [], tray: ['ramp', 'funnel', 'gate', 'counter', 'splitter'], budget: 8, par: 5, streak: 4, needs: {} },
+    { id: 'bounce', name: 'Rubber room', bench: 'logic', brief: 'Rubber and steel take turns. Land 4 in a row, each touching 3 kinds of part', pattern: ['rubber', 'steel'], fixed: [], tray: ['ramp', 'funnel', 'gate', 'counter', 'splitter'], budget: 8, par: 5, streak: 4, needs: { chain: 3 } },
   ];
 
   /**

@@ -163,6 +163,9 @@ started later; the dispatcher forwards each new amendment to every agent as it a
 19. Really solid, competent UX. We are web-native: use real HTML and CSS capabilities and a proper component
     library (a real scrollable pane, dialogs, lists, tabs) with clean templating, so the UI is intuitive and snappy.
 
+20. Proper architecture and organisation under version control: a Git repository (`clikit`) with
+    worktrees, so improvements and demos run in parallel.
+
 ## Measures we have gamed before
 
 Each of these was once treated as the goal. None of them is.

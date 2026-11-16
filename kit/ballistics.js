@@ -53,6 +53,8 @@
    * @param {(point: Vector, index: number) => boolean} [options.stopWhen] True when the point is inside an obstacle.
    * @returns {{ points: Vector[], end: Vector, isBlocked: boolean }} `points` are the free-flight positions after each step,
    *   `end` is the blocked point (or the last free one when nothing was hit), `isBlocked` says which.
+   * @complexity O(maxSteps) calls of `stopWhen` and O(maxSteps) points of memory; with an obstacle list the caller's
+   *   `stopWhen` makes it O(maxSteps x obstacles).
    * @example
    * const flight = Kit.ballistics.trace({ origin, velocity, stopWhen: (point) => point.y < ballRadius });
    * flight.points.filter((_, index) => index % 3 === 0).forEach(placeDot);
@@ -76,6 +78,7 @@
    * @param {number} radius Sphere radius.
    * @param {Box} box
    * @returns {boolean}
+   * @complexity O(1): three axis comparisons.
    */
   const sphereTouchesBox = (point, radius, box) =>
     ['x', 'y', 'z'].every((axis) => point[axis] > box.min[axis] - radius && point[axis] < box.max[axis] + radius);

@@ -41,6 +41,7 @@
    * @param {number} dt     seconds elapsed
    * @param {string} [key='timer']
    * @returns {{ running: Item[], expired: Item[] }}  copies with ticked timers, in their original order
+   * @complexity O(items) time and space
    * @example
    *   const { running, expired } = Kit.timer.tickAll(orders, dt);
    *   expired.forEach(loseHeart);

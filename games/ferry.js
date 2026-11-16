@@ -6,8 +6,11 @@
  * Does not own: the rules, the data tables or the depth plan (games/ferry-sim.js, pure and tested), the look of the HUD
  *       (games/ferry-theme.js), stroke clean-up (Kit.route), view bookkeeping (Kit.crowd.views) or the HUD parts (ctx.ui).
  *
- * The three timescales of depth are written out at the top of games/ferry-sim.js. What this file adds to them is
- * legibility: every rule the simulation applies is something the player can see (arrows for currents, a boat waiting off
+ * Depth, in short (the full plan and its rules are at the top of games/ferry-sim.js):
+ *   Seconds (mastery): the shape of a stroke - short, uncrossed, through several docks, or a circuit that rides the current.
+ *   Minutes (decisions): boat class per route, supply lines against delivery lines, which shipyard card the coins go to.
+ *   Hours (the long arc): commissions unlock classes, the Crane and two more charts with tides, gyres and processing chains.
+ * What this file adds is legibility: every rule the simulation applies is something the player can see (arrows for currents, a boat waiting off
  * a busy dock, a smaller wake when it gives way, a legend under each island saying what it makes and needs).
  */
 (() => {
