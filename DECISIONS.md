@@ -761,3 +761,32 @@ machine at load 20 to 40, so only the ratios mean anything.
   `degrade`); faces at under about 25 texels across must carry expression (they do not: author a small-face
   frame set); thumbnails of parts are wanted (render a figure to a small target with a shared view and
   `atlas.free`).
+
+## Looks and rolls: lighting, ink, pixel and roll rules that hold for any roll (looks branch)
+
+- **Light is a key, a capped fill and a back light, in view space** (`Kit.look.LIGHTING`, mirrored in script by
+  `Kit.look.lightOf`). A part's `LookPart.response` ('form' or 'face') says how much of the fill it takes: a
+  face never falls wholly into the shadow band, a body keeps its form shadow. Rejected: a brighter ambient
+  (flattens bodies) and blending normals towards a sphere (needs a per-vertex head centre the figure does not
+  pass). Band edges are set from measured sphere shares (about 18 % shadow, 12 % highlight at three tones).
+- **A ramp is sampled at `Kit.palette.TONE_POSITIONS`**, with a part's own colour in the middle at every tone
+  count, and a seventh "deep" column for inner lines. Rejected: evenly spaced tones (pastel highlights, a
+  black shadow on dark skins). Authored `{tones}` ramps are still resampled as before. One test changed with
+  it: a five-shade ramp at five tones is no longer its five shades byte for byte.
+- **Indexed rows are nine bits.** The pixel path drew every row past 255 in another ramp's colours; the row's
+  high bit now rides in the tone byte and `apply` throws on a row past 511. Rejected: a second target.
+- **Inner lines are a contact shadow in the part's own ramp** (deep column), silhouettes stay in ink; depth
+  steps are counted in texels so line weight holds across figure sizes; class lines are drawn only when a
+  texel is small enough to carry them. One `LINE_WIDTH` of 2 px serves toon and soft; the hull sits 0.012
+  units back so it never draws over a near neighbour.
+- **Dither fades with texel size and with curvature** (`Kit.look.ditherAt`, screen derivatives): it stays on
+  broad slow gradients and leaves faces and small sprites in clean clusters.
+- **Roll rules are data on the species** (`colorWeights`, `follow`, `harmony`, `contrast`, `occupies`) and one
+  mechanism in kit/body-recipe.js. Colours derive from the seed alone, so a recipe is still six bytes; a
+  species without rules rolls exactly as before. Followers re-follow an override. `catalog.clashes` names
+  what breaks a rule, `catalog.reconcile` re-picks rolled channels against kept ones (the creator's locks).
+  Rejected: storing rolled colours in the recipe (longer recipes), rejection sampling of whole individuals
+  (unbounded, and locks cannot steer it). Cost: O(channels x palette x rules) per roll, a few hundred steps.
+- **Revisit if** one skinned mesh carries head and body (then `response` must be per vertex or per region, not
+  per mesh); a catalogue passes 511 palette rows; a contrast rule proves unsatisfiable for a palette (the roll
+  falls back a tier and `clashes` reports it: 48 of 5000 wardrobe rolls miss harmony, none miss contrast).
