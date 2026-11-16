@@ -22,6 +22,12 @@ const CONTENT_TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.png': 
 const VENDOR_SWAPS = [
   [/https:\/\/cdn\.jsdelivr\.net\/npm\/three@0\.147\.0\//g, 'vendor/three/'],
   [/https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/cannon\.js\/0\.6\.2\/cannon\.min\.js/g, 'vendor/cannon.min.js'],
+  // The component library's runtime (kit/ui/): Preact, hooks, htm and signals.
+  [/https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/preact\/10\.24\.3\//g, 'vendor/ui/'],
+  [/https:\/\/cdn\.jsdelivr\.net\/npm\/preact@10\.24\.3\/hooks\/dist\//g, 'vendor/ui/'],
+  [/https:\/\/cdn\.jsdelivr\.net\/npm\/htm@3\.1\.1\/dist\//g, 'vendor/ui/'],
+  [/https:\/\/cdn\.jsdelivr\.net\/npm\/@preact\/signals-core@1\.8\.0\/dist\//g, 'vendor/ui/'],
+  [/https:\/\/cdn\.jsdelivr\.net\/npm\/@preact\/signals@1\.3\.0\/dist\//g, 'vendor/ui/'],
 ];
 const BROWSER_ARGS = ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
 /** Real milliseconds: for the page to settle after load, for a game to build, and for bloom to render before a screenshot. */

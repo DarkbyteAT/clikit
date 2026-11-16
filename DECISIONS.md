@@ -364,6 +364,42 @@ machine at load 20 to 40, so only the ratios mean anything.
   than `performance.now()` in the handler. That fixes the headless case and, more to the point, a real phone that
   drops a few frames during a tap.
 
+## Tower Smash: the shot is a headless simulation; the presenter only listens
+
+- **Options.** (a) Rules inside the game file, driven by the frame loop (what the first rewrite had: nothing could be
+  checked without a browser). (b) A pure reducer over plain data, as Soulwake does (not possible: the state is a
+  cannon.js world). (c) A simulation object that owns the physics world and the rules, takes optional mesh factories
+  and emits events (`games/sling-sim.js`), with data in `games/sling-data.js`.
+- **Chosen.** (c). The same code runs in the page and in node, so `scratch/sling/solve.js` searches aims per level
+  (about 110 simulated shots per shot taken, 20 s a level) and `tools/test-kit.js` tests chains, counters and preview
+  accuracy against the real engine. Cost: collide callbacks may only schedule; `step()` applies. Memory O(blocks).
+- **Revisit if.** cannon.js is replaced (the event names are the contract; only the sim changes).
+
+## Tower Smash: aim search restarts from a snapshot of settled rubble, not by replaying shots
+
+- **Options.** Replay every earlier shot before each candidate (exact, O(shots squared x candidates) simulated shots).
+  Clone the cannon world (no supported way). Rebuild a fresh world from where the surviving blocks came to rest
+  (`sim.snapshot()` / `createSim({ startFrom })`: O(blocks) per candidate, loses sub-sleep-speed velocities).
+- **Chosen.** Snapshot. Blocks are asleep when a shot is over, so what is lost is below the sleep threshold.
+
+## Tower Smash: levels beyond the hand-made ones are generated from modules, rated, then given shots and budget
+
+- **Options.** Hand-make every level (best quality, does not scale, no endless mode). Fully random block soup
+  (unreadable towers). Modules (tower, steps, arch, crib, keg stand, shielded gem) laid side by side, dressed in the
+  world's materials by seeded chance, then a rating formula sets shots, loadout budget and chain par.
+- **Chosen.** Modules plus rating, O(modules + blocks). The rating formula is a guess checked by the solver: a grid-search
+  bot with only the heavy ball clears all 18 campaign levels, so the formula is not too stingy; whether it is too
+  generous for a human thumb is unmeasured.
+
+## Physics surfaces: pairwise `phys.surface` / `phys.contact` beside `Kit.physics.surfaces`
+
+- **Options.** `Kit.physics.surfaces(phys, rows)` in kit/bodies.js (one row per moving thing against one kind of
+  scenery: simple, enough for marbles). Pairwise named surfaces (`phys.surface(body, name)`,
+  `phys.contact(a, b, { restitution })`): any pair, needed here because a ball meets two kinds of scenery (solid and
+  bumper) and the rubber ball bounces off both differently.
+- **Chosen.** Added the pairwise primitive to kit/physics.js. The two overlap: `surfaces` could be rewritten as a few
+  `contact` calls. Left for the kit steward to merge; neither changes the other's behaviour.
+
 ## Open, for whoever picks them up (record the outcome here)
 
 - Renderer: three.js 0.147 classic scripts (works on the hosted page today) vs current three.js as ES modules vs

@@ -161,7 +161,7 @@
 
   /** @typedef {{ x: number, y: number, z: number, size: Size, materialId: string }} BlockSpec Centre relative to the platform top centre. */
 
-  const SHAPES = { brick: [1.1, 0.7, 1], halfBrick: [0.54, 0.7, 1], post: [0.9, 0.8, 1], cube: [0.8, 0.8, 0.8], lintel: [4.6, 0.4, 1], beam: [2.2, 0.6, 0.9], slab: [1.3, 1.5, 0.3], backboard: [2.6, 2.6, 0.3] };
+  const SHAPES = { brick: [1.1, 0.7, 1], halfBrick: [0.54, 0.7, 1], post: [0.9, 0.8, 1], cube: [0.8, 0.8, 0.8], lintel: [4.6, 0.4, 1], beam: [2.2, 0.6, 0.9], slab: [1.3, 1.1, 0.3], backboard: [2.6, 2.6, 0.3] };
   /** Hairline gaps keep neighbouring boxes from starting in contact overlap, which makes cannon push them apart at wake-up. */
   const STACK_GAP = 0.001;
   const ROW_GAP = 0.02;
@@ -204,8 +204,8 @@
       })
     ).flat();
   /**
-   * A target hidden behind a stone slab with a bumper backboard behind it: bank a ball off the board, lob over the
-   * slab, or topple the slab onto the target.
+   * A target behind a stone slab with a bumper backboard behind it: bank a ball off the board, lob over the slab, or
+   * topple the slab onto the target. The slab is lower than the target's marker, so the player can see what it hides.
    */
   const shieldedGem = (x, targetId = 'gem') => [
     piece(x, 0, 1.0, SHAPES.slab, 'stone'),
