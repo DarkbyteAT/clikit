@@ -1,13 +1,14 @@
 /**
  * Spot Kick Showdown performances: the one place the game asks a character to act. The game calls an actor's
  * `stand`, `ready`, `runUp`, `kick`, `dive`, `celebrate` and `slump`; this file turns each into a performance
- * of the kit (`Kit.act`: kick, keeperReady, dive, catch, celebrate, slump, with walking, breathing, blinking and
+ * of the kit (`Kit.act`: kick, keeperReady, the save family, celebrate, slump, with walking, breathing, blinking and
  * a gaze under them from `Kit.act.character`).
  *
- * Owns:  `SPOT_KICK_PERFORM.actor(figure)`: the adapter between the game and a figure, and the timing that
- *        makes a performance meet the rules: a kick is played at the rate that puts the boot on the ball when
- *        the game strikes it, a dive at the rate that puts the hands on the rules' point when the rules' keeper
- *        arrives there.
+ * Owns:  `SPOT_KICK_PERFORM.actor(figure)`: the adapter between the game and a figure. It says when a
+ *        performance must meet the rules (the boot on the ball when the game strikes it, the hands on the rules'
+ *        point when the rules' keeper arrives there) and the kit fits the lead-in to that moment
+ *        (`Kit.act.play` with `reach: { mark: 'contact', in }`). A save is the kit's `save` family: the body
+ *        catches, jumps, drops or dives by where the point is against its own reach.
  * Does not own: the performances themselves (kit/act*.js), where the keeper's hands are (games/penalty-sim.js:
  *        the body follows the rules, never the other way round), figures (kit/figure.js) or gaits (kit/gait.js).
  *
@@ -22,20 +23,14 @@
 
   /**
    * Timings, seconds. `strikeAt`: from `kick()` to the boot meeting the ball. `settle`: the cross-fade into a
-   * performance. `leastDive`: the quickest a dive is played, however little time the rules leave (a body
-   * thrown faster than this no longer reads as a dive).
+   * performance. `leastSave`: the quickest a save's lead-in is played, however little time the rules leave (a
+   * body thrown faster than this no longer reads as a dive).
    */
-  const TIMING = Object.freeze({ strikeAt: 0.4, settle: 0.12, leastDive: 0.16 });
-  /**
-   * After a dive's contact the body falls and lands at the speed it was authored at, whatever rate got the
-   * hands there in time; once it has landed (`landedAt` of the way through) it gets up `getUpRate` times as fast,
-   * so the next kick is not kept waiting.
-   */
-  const AFTER_CONTACT = Object.freeze({ landedAt: 0.62, getUpRate: 2.5 });
+  const TIMING = Object.freeze({ strikeAt: 0.4, settle: 0.12, leastSave: 0.16 });
   /** Numbers per bone position in a pose's `translation`. */
   const STRIDE = Kit.rig.VECTOR_STRIDE;
-  /** A point closer to the standing keeper than this (world metres across) is gathered standing, not dived for. */
-  const STANDING_REACH = 0.55;
+  /** The family of performances a keeper stops a ball with (kit/act-sport.js), and the moment of each the rules time. */
+  const SAVE = Object.freeze({ family: 'save', mark: 'contact' });
   /** Where a taker looks to show a side: this far across and ahead of them, at this height, world metres. */
   const TELL_LOOK = Object.freeze({ across: 2.4, ahead: 8, height: 0.8, from: 0.45 });
 
@@ -53,37 +48,29 @@
     const scale = figure.root.scale.x;
     const motion = Kit.act.cast(Kit.motion.state(figure.bake, Kit.act.character({ fidgets: [] })), figure.bake.seed || 1);
     const place = { x: 0, z: 0, heading: 0 };
-    /** What the actor is doing, as the game named it; `run`: the run-up under way; `queued`: a reaction waiting for a dive to finish. */
-    const state = { mode: 'stand', seconds: 0, run: null, pendingDive: null, queued: null, diveRate: 0 };
+    /** What the actor is doing, as the game named it; `run`: the run-up under way; `queued`: a reaction waiting for a save to finish; `form`: the save being played. */
+    const state = { mode: 'stand', seconds: 0, run: null, pendingDive: null, queued: null, form: null };
     const rootOffset = [0, 0];
     const footing = (figure.footing = { x: 0, z: 0 });
     const inFigure = (value) => value / scale;
     const playAt = (id, point, options) => Kit.act.play(motion, id, { target: [inFigure(point.x), inFigure(point.y), inFigure(point.z)], ...options });
-    /**
-     * The play options that put a one-shot's moment of contact `seconds` from now. This is the only place that
-     * knows how: today by a rate for the whole performance (so a fast dive also lands and gets up fast); when
-     * `Kit.act.play` takes a contact time, this returns that option instead and nothing else changes.
-     */
-    const contactIn = (id, seconds) => ({ rate: (Kit.act.REPERTOIRE[id].seconds * Kit.act.CONTACT[id]) / Math.max(seconds, TIMING.leastDive) });
-    /**
-     * The share of real time this body's motion advances by: 1, except after the contact of a dive, where the
-     * rate that `contactIn` asked for is undone (the stand-in for a contact time in `Kit.act.play`: with that
-     * option this returns 1 always).
-     */
-    const timeShare = (id) => {
-      if (!state.diveRate || !Kit.act.CONTACT[id] || Kit.act.progress(motion) < Kit.act.CONTACT[id]) return 1;
-      return (Kit.act.progress(motion) < AFTER_CONTACT.landedAt ? 1 : AFTER_CONTACT.getUpRate) / state.diveRate;
-    };
+    /** The play options that put a performance's moment of contact `seconds` from now; what follows the contact runs as authored. */
+    const contactIn = (seconds) => ({ reach: { mark: SAVE.mark, in: Math.max(seconds, TIMING.leastSave) } });
     const hands = ['handLeft', 'handRight'].map((name) => figure.bake.plan.boneIndex(name));
-    /** How far the nearer hand is from the point the rules sent the hands to, world metres; smallest seen in this dive. */
-    const reach = { target: null, shortfall: Infinity };
-    const measureReach = () => {
+    const handPoint = { x: 0, y: 0, z: 0 };
+    /** Where a hand is in the world now, metres (written into `handPoint`). */
+    const handAt = (bone) => {
       const { translation } = figure.world;
       const [sine, cosine] = [Math.sin(place.heading), Math.cos(place.heading)];
+      const [x, y, z] = [translation[bone * STRIDE] * scale, translation[bone * STRIDE + 1] * scale, translation[bone * STRIDE + 2] * scale];
+      return Object.assign(handPoint, { x: place.x + x * cosine + z * sine, y, z: place.z - x * sine + z * cosine });
+    };
+    /** How far the nearer hand is from the point the rules sent the hands to, world metres across the keeper's plane; smallest seen in this save. */
+    const reach = { target: null, shortfall: Infinity };
+    const measureReach = () => {
       hands.forEach((bone) => {
-        const [x, y, z] = [translation[bone * STRIDE] * scale, translation[bone * STRIDE + 1] * scale, translation[bone * STRIDE + 2] * scale];
-        const distance = Math.hypot(place.x + x * cosine + z * sine - reach.target.x, y - reach.target.y);
-        reach.shortfall = Math.min(reach.shortfall, distance);
+        const hand = handAt(bone);
+        reach.shortfall = Math.min(reach.shortfall, Math.hypot(hand.x - reach.target.x, hand.y - reach.target.y));
       });
     };
 
@@ -96,11 +83,9 @@
     };
 
     const startDive = ({ target, seconds }) => {
-      const id = Math.abs(target.x - place.x) < STANDING_REACH ? 'catch' : 'dive';
       Object.assign(reach, { target, shortfall: Infinity });
-      const timing = contactIn(id, seconds);
-      state.diveRate = timing.rate || 0;
-      playAt(id, { x: target.x, y: target.y, z: place.z }, { ...timing, fade: Math.min(TIMING.settle, seconds / 2) });
+      playAt(SAVE.family, { x: target.x, y: target.y, z: place.z }, { ...contactIn(seconds), fade: Math.min(TIMING.settle, seconds / 2) });
+      state.form = Kit.act.playing(motion);
     };
 
     return {
@@ -113,8 +98,8 @@
        */
       stand(x, z, heading) {
         Object.assign(place, { x, z, heading });
-        Object.assign(state, { mode: 'stand', seconds: 0, run: null, pendingDive: null, queued: null });
-      reach.target = null;
+        Object.assign(state, { mode: 'stand', seconds: 0, run: null, pendingDive: null, queued: null, form: null });
+        reach.target = null;
         Kit.act.base(motion, null);
         Kit.act.stop(motion, 0);
         Kit.act.takeRootMotion(motion, rootOffset);
@@ -142,16 +127,28 @@
       kick(ball) {
         Object.assign(state, { mode: 'kick', seconds: 0, run: null });
         Kit.act.lookAhead(motion);
-        playAt('kick', ball, { ...contactIn('kick', TIMING.strikeAt), fade: TIMING.settle });
+        playAt('kick', ball, { ...contactIn(TIMING.strikeAt), fade: TIMING.settle });
       },
       /**
-       * Dives so that the hands are on a point of the keeper's plane at a moment the rules chose.
+       * Saves so that the hands are on a point of the keeper's plane at a moment the rules chose: caught standing,
+       * jumped for, dropped onto or dived at, as the point lies against this body's reach.
        * @param {{target: {x: number, y: number}, delay?: number, seconds: number}} dive `target`: world x and
        *   height; `delay`: seconds before the keeper moves at all (a keeper still reading the ball);
        *   `seconds`: from the first movement to the hands arriving
        */
       dive({ target, delay = 0, seconds }) {
         Object.assign(state, { mode: 'dive', seconds: 0, pendingDive: { target, delay, seconds }, queued: null });
+      },
+      /**
+       * Moves the moment (and the point) of a save already asked for: the ball has been struck, and where it
+       * will be when is now known. A save still waiting to begin is simply asked for again.
+       * @param {{target: {x: number, y: number}, delay?: number, seconds: number}} dive as `dive` takes it
+       */
+      retime(dive) {
+        if (state.pendingDive || state.form === null || Kit.act.playing(motion) !== state.form) return this.dive(dive);
+        reach.target = dive.target;
+        Kit.act.aim(motion, 'target', inFigure(dive.target.x), inFigure(dive.target.y), inFigure(place.z));
+        return Kit.act.meet(motion, SAVE.mark, Math.max(dive.seconds, TIMING.leastSave));
       },
       /** Arms up: now, or as soon as a dive has finished. */
       celebrate() {
@@ -181,8 +178,7 @@
           startDive(pendingDive);
           state.pendingDive = null;
         }
-        const oneShot = Kit.act.playing(motion);
-        const isDiving = state.pendingDive || oneShot === 'dive' || oneShot === 'catch';
+        const isDiving = Boolean(state.pendingDive) || (state.form !== null && Kit.act.playing(motion) === state.form);
         if (state.queued && !isDiving) {
           collectTravel();
           Kit.act.base(motion, null);
@@ -190,7 +186,7 @@
           state.mode = state.queued;
           state.queued = null;
         }
-        Kit.motion.advance(motion, dt * (isDiving ? timeShare(oneShot) : 1), inFigure(place.x), 0, inFigure(place.z), place.heading);
+        Kit.motion.advance(motion, dt, inFigure(place.x), 0, inFigure(place.z), place.heading);
         Kit.rig.copy(motion.pose, figure.local);
         figure.root.position.set(place.x, 0, place.z);
         figure.root.rotation.set(0, place.heading, 0);
@@ -203,10 +199,26 @@
         if (reach.target && isDiving) measureReach();
       },
       /**
-       * How close the hands got to the point of the last dive (for the contact sheet of a playtest).
-       * @returns {{target: ?{x: number, y: number}, shortfall: number}} `shortfall`: world metres, across the keeper's plane
+       * How close the hands got to the point of the last save (for the contact sheet of a playtest).
+       * @returns {{target: ?{x: number, y: number}, shortfall: number, form: ?string}} `shortfall`: world metres,
+       *   across the keeper's plane; `form`: the performance of the save family that was played
        */
-      handsOff: () => ({ target: reach.target, shortfall: reach.shortfall }),
+      handsOff: () => ({ target: reach.target, shortfall: reach.shortfall, form: state.form }),
+      /**
+       * How far the nearer hand is from a point now, across the keeper's plane (what the rules judge a save in).
+       * @param {{x: number, y: number}} point world metres
+       * @returns {number} metres
+       */
+      handsFrom: (point) => Math.min(...hands.map((bone) => Math.hypot(handAt(bone).x - point.x, handAt(bone).y - point.y))),
+      /**
+       * Where the hands are now: the point half way between them.
+       * @returns {{x: number, y: number, z: number}} world metres (a new object)
+       */
+      hands() {
+        const first = { ...handAt(hands[0]) };
+        const second = handAt(hands[1]);
+        return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2, z: (first.z + second.z) / 2 };
+      },
       /** Which performance is on (for the flow and the debug state). */
       mode: () => state.mode,
     };
