@@ -13,7 +13,8 @@
  *   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });   // contact at half way: Kit.act.progress(motion) >= 0.5
  *   Kit.act.play(motion, 'dive', { target: [x, y, z] });               // hands on the point at 0.4 of the way
  *   Kit.act.takeRootMotion(motion, offset);                            // afterwards: the kick stepped, the dive flew
- * The moment of contact of each move is `Kit.act.CONTACT[id]`, 0..1 through it.
+ * The moment of contact of each move is `Kit.act.CONTACT[id]`, 0..1 through it, and `Kit.act.marks(id).contact`
+ * in seconds; `Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: seconds } })` meets it on time.
  *
  * Pure (no DOM, no THREE): data only; unit-tested by tools/test-act.js.
  */
@@ -21,9 +22,6 @@
   const AHEAD = Math.PI / 2;
   const STANDING = { atLeast: { legs: 2 } };
   const ARMS_NEEDED = { atLeast: { arms: 2, legs: 2 } };
-
-  /** When each move meets its point, 0..1 through it: the frame a game launches the ball or stops it. */
-  const CONTACT = Object.freeze({ kick: 0.5, dive: 0.4, catch: 0.42, parry: 0.36 });
 
   /** A keeper's stance, shared by the loop and by the start of a dive. */
   const READY = { shift: [0, -0.17, 0.04], turn: [0.24, 0, 0], spine: [0.12, 0, 0], head: [-0.32, 0, 0], arms: [0.95, 0.95, 0.78, 0.5], feet: [0.2, 0, 0, 0] };
@@ -33,6 +31,7 @@
     {
       // Authored for the right foot; played mirrored when the ball is on the left.
       id: 'kick',
+      marks: { plant: 0.32, contact: 0.5 },
       label: 'Kick',
       seconds: 1.5,
       needs: STANDING,
@@ -115,6 +114,7 @@
     {
       // Authored to the left; played mirrored when the point is on the right.
       id: 'dive',
+      marks: { takeoff: 0.2, contact: 0.4, land: 0.54 },
       label: 'Dive',
       seconds: 2.7,
       needs: ARMS_NEEDED,
@@ -180,10 +180,11 @@
         { limb: 'hands', target: 'target', offset: [0.08, 0, 0], in: [0.2, 0.39], out: [0.46, 0.56] },
         { limb: 'head', target: 'target', in: [0, 0.12], out: [0.46, 0.6] },
       ],
-      travel: { target: 'target', start: 0.16, arrive: 0.4, land: 0.54, keep: 0.8, most: 1.2, mostUp: 0.5, axes: [1, 1, 0.5] },
+      travel: { target: 'target', start: 0.16, arrive: 0.4, land: 0.54, keep: 0.8, most: 1.6, mostUp: 0.5, axes: [1, 1, 0.5] },
     },
     {
       id: 'catch',
+      marks: { contact: 0.42 },
       label: 'Catch',
       seconds: 1.3,
       needs: ARMS_NEEDED,
@@ -203,6 +204,7 @@
     {
       // Authored for the left hand; the hand on the point's side is the one that goes.
       id: 'parry',
+      marks: { contact: 0.36 },
       label: 'Parry',
       seconds: 1,
       needs: ARMS_NEEDED,
@@ -262,5 +264,9 @@
     },
   ];
   MOVES.forEach(Kit.act.define);
-  Kit.act.CONTACT = CONTACT;
+  /**
+   * When each move meets its point, 0..1 through it: the frame a game launches the ball or stops it. The same
+   * moments, in seconds, are `Kit.act.marks(id).contact`; `Kit.act.play` can be asked to meet one at a given time.
+   */
+  Kit.act.CONTACT = Object.freeze(Object.fromEntries(MOVES.filter((move) => move.marks && 'contact' in move.marks).map((move) => [move.id, move.marks.contact])));
 })();

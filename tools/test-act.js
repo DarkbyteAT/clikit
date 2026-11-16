@@ -180,6 +180,60 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     });
   });
 
+  test('act: a play can meet a named mark at a given time: the lead-in is warped, what follows runs as authored (control: unwarped it takes its own time)', () => {
+    const marks = act.marks('dive');
+    assert.ok(marks.takeoff < marks.contact && marks.contact < marks.land, JSON.stringify(marks));
+    assert.ok(Math.abs(marks.contact - act.REPERTOIRE.dive.seconds * act.CONTACT.dive) < 1e-6, 'marks are seconds at the authored speed');
+    /** Seconds until the dive has reached its contact mark, and until it is over. */
+    const timed = (params) => {
+      const state = cast(person);
+      run(state, 1);
+      const point = defaultPoint(person, 'dive');
+      act.play(state, 'dive', { target: point, ...params });
+      let contactAt = -1;
+      let seconds = 0;
+      let reachedBy = -1;
+      while (act.playing(state) === 'dive') {
+        run(state, FRAME);
+        seconds += FRAME;
+        if (contactAt < 0 && act.progress(state) >= act.CONTACT.dive) {
+          contactAt = seconds;
+          reachedBy = Math.min(distance(jointOf(state, 'handLeft'), point), distance(jointOf(state, 'handRight'), point));
+        }
+      }
+      return { contactAt, seconds, reachedBy };
+    };
+    const authored = timed({});
+    assert.ok(Math.abs(authored.contactAt - marks.contact) < 2 * FRAME, `control: unhurried, contact comes at its mark (${authored.contactAt})`);
+    [0.3, 2].forEach((wanted) => {
+      const met = timed({ reach: { mark: 'contact', in: wanted } });
+      assert.ok(Math.abs(met.contactAt - wanted) < 2 * FRAME, `contact asked for in ${wanted} s came at ${met.contactAt}`);
+      assert.ok(Math.abs(met.seconds - met.contactAt - (authored.seconds - authored.contactAt)) < 2 * FRAME, 'the landing and getting up take as long as authored');
+      assert.ok(met.reachedBy < 0.05, `the hands are still on the point at contact (${met.reachedBy} m)`);
+    });
+    const state = cast(person);
+    assert.throws(() => act.play(state, 'dive', { reach: { mark: 'release', in: 1 } }), /no mark "release".*takeoff, contact, land/s);
+    assert.throws(() => act.play(state, 'dive', { reach: { mark: 'contact', in: 0 } }), /greater than 0/);
+    assert.throws(() => act.performance({ id: 'broken', seconds: 1, marks: { contact: 2 }, keys: [{ at: 0.5, head: [0, 0, 0] }] }), /mark "contact"/);
+    assert.strictEqual(Object.keys(act.marks('wave')).length, 0, 'a performance without marks has none');
+  });
+
+  test('act: a dive reaches eight points spread over a goal-sized area, low and high, both sides, on a squat body and a tall one', () => {
+    [person, samples.bakery().bakeRecipe({ species: 'human', seed: 1 })].forEach((bake) => {
+      const { stature, high } = act.rig(bake.plan, bake.rest);
+      // A goal is about four statures wide and one and a third high; the keeper stands in the middle of it.
+      const points = [-2, -1, 1, 2].flatMap((across) => [0.16, 1.13].map((up) => [across * stature, up * stature, 0.1 * high]));
+      points.forEach((point) => {
+        const state = cast(bake);
+        run(state, 1);
+        act.play(state, 'dive', { target: point });
+        run(state, act.marks('dive').contact);
+        const nearest = Math.min(distance(jointOf(state, 'handLeft'), point), distance(jointOf(state, 'handRight'), point));
+        assert.ok(nearest < 0.08 * stature, `${bake.plan.id}: the leading hand is ${nearest} m from ${point}`);
+      });
+    });
+  });
+
   test('act: a wave is layered over a walk: the feet land where they would have anyway (control: the hand does not)', () => {
     const plain = cast(person);
     const waving = cast(person);

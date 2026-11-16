@@ -12,6 +12,8 @@
  *   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });  // the foot swings through that world point
  *   Kit.act.play(motion, 'dive', { target: [x, y, z] });              // dives to the side the point is on, hands to it
  *   Kit.act.aim(motion, 'target', x, y, z);                           // the point moved (a ball in flight)
+ *   Kit.act.marks('dive').contact                                     // seconds into a dive that the hands arrive
+ *   Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: 0.3 } }); // hands there in 0.3 s; landing as authored
  *   Kit.act.playing(motion)                                           // 'dive' until it has finished, then null
  *   Kit.act.takeRootMotion(motion, offset)                            // after a kick or a dive: where the body ended up
  *   Kit.act.base(motion, 'keeperReady');                              // the loop it returns to between one-shots
@@ -24,7 +26,7 @@
  *        `REPERTOIRE` / `define` (the performances by id), `rig` (what a plan's roles are, measured once),
  *        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
  *        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
- *        controls (`play`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+ *        controls (`play`, `marks`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
  *        `takeRootMotion`, `cast`), `refusal`,
  *        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
  * Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
@@ -132,6 +134,8 @@
   /** Tunables of running a performance. */
   const TUNING = Object.freeze({
     fadeSeconds: 0.22, // cross-fade between two performances
+    /** The lowest a `travel` that rises takes the hips at its arrival, in statures above the ground: a body flying flat, not yet landed. */
+    lowestFlight: 0.2,
     legStretch: 0.985, // the furthest a leg is asked to straighten (a dead-straight limb has no bend direction)
     hangPitch: 2.4, // radians a foot's toes drop per leg length it has been lifted clear by the body
     mostHangPitch: 0.9,
@@ -195,6 +199,8 @@
    * @property {Object<string, number[]>} [defaults] target name -> [left, up, forward] from where the body stands, in
    *   units of how high its hands reach (`ActRig.high`; its standing height when it has no arms): where the
    *   point is when the caller gives none, so a default is within reach of a long body and a squat one alike
+   * @property {Object<string, number>} [marks] named moments on its own timeline, each 0..1 through it (`contact`,
+   *   `release`, `land`): a game reads them with `Kit.act.marks` and can ask `play` to meet one at a given time
    * @property {PerformanceKey[]} keys
    * @property {PerformanceReach[]} [reaches]
    * @property {PerformanceTravel} [travel]
@@ -320,6 +326,12 @@
         index * VECTOR_STRIDE
       );
     });
+    const marks = {};
+    Object.keys(spec.marks || {}).forEach((name) => {
+      const at = spec.marks[name];
+      if (!(at >= 0 && at <= 1)) fail(where, `the mark "${name}" must be a moment 0..1 through the performance, got ${JSON.stringify(at)}.`);
+      marks[name] = at * spec.seconds;
+    });
     const uses = new Uint8Array(GROUP_NAMES.length);
     used.forEach((name) => (uses[GROUP[CHANNELS[name].group]] = 1));
     const movesBody = uses[GROUP.body] === 1;
@@ -344,6 +356,7 @@
       travel,
       targets: Object.freeze(targets),
       defaults,
+      marks: Object.freeze(marks),
     });
   };
 
@@ -647,6 +660,8 @@
       now: null,
       time: 0,
       rate: 1,
+      leadUntil: 0,
+      leadRate: 1,
       isMirrored: false,
       values: new Float32Array(VALUE_COUNT),
       weights: new Float32Array(GROUP_NAMES.length),
@@ -688,6 +703,10 @@
     acting.now = compiled;
     acting.time = 0;
     acting.rate = params && params.rate > 0 ? params.rate : 1;
+    // A mark to be met at a given moment: the lead-in up to it is time-warped, what follows runs as authored.
+    const meeting = compiled && params && params.reach;
+    acting.leadUntil = meeting ? compiled.marks[meeting.mark] : 0;
+    acting.leadRate = meeting ? compiled.marks[meeting.mark] / meeting.in : 1;
     acting.travel.fill(0);
     acting.travelled.fill(0);
     if (!compiled) return;
@@ -739,7 +758,8 @@
     const flat = Math.hypot(left, forward);
     const cap = flat > travel.most * measured.stature ? (travel.most * measured.stature) / flat : 1;
     acting.travel[0] = left * cap;
-    acting.travel[1] = travel.land < 0 ? 0 : clamp(up, 0, travel.mostUp * measured.stature);
+    // A low point is dived at low: the hips come down towards it, though never to the ground before the landing.
+    acting.travel[1] = travel.land < 0 ? 0 : clamp(up, Math.min(0, TUNING.lowestFlight * measured.stature - hipHeight), travel.mostUp * measured.stature);
     acting.travel[2] = forward * cap;
   };
 
@@ -803,7 +823,12 @@
     acting.fade = Math.min(1, acting.fade + dt / acting.fadeSeconds);
     const compiled = acting.now;
     if (!compiled) return;
-    acting.time += dt * acting.rate;
+    if (acting.time < acting.leadUntil) {
+      // Up to the mark time runs at the lead-in's rate; a step that crosses it spends its remainder at the authored one.
+      const needed = (acting.leadUntil - acting.time) / acting.leadRate;
+      acting.time = dt < needed ? acting.time + dt * acting.leadRate : acting.leadUntil + (dt - needed) * acting.rate;
+      if (dt >= needed) acting.leadUntil = 0;
+    } else acting.time += dt * acting.rate;
     if (compiled.loop) {
       if (acting.time >= compiled.seconds) acting.time -= compiled.seconds;
       return;
@@ -1207,20 +1232,41 @@
    * @param {string|Object} performanceOrId an id of `Kit.act.REPERTOIRE`, or a compiled performance
    * @param {Object} [params] named world points ({ target: [x, y, z] }; a performance's own default otherwise),
    *   `side` ('left' or 'right': which hand waves, which foot kicks; default: the side its point is on, or the
-   *   authored one), `rate` (speed, default 1) and `fade` (seconds of cross-fade)
+   *   authored one), `rate` (speed, default 1), `fade` (seconds of cross-fade) and `reach` ({ mark, in }: meet
+   *   the named mark of the performance `in` seconds from now - the lead-in up to the mark is sped up or slowed
+   *   to fit, and everything after it runs at `rate`, so a dive hurried to a shot still lands and gets up as authored)
    * @returns {boolean} false, changing nothing, when this body cannot do it (`Kit.act.refusal` says why)
-   * @throws {Error} for an unknown id
+   * @throws {Error} for an unknown id, a mark the performance does not declare, or a time that is not positive
    * @complexity O(needs) the first time a body is asked for a performance, O(targets) after
    * @example
    * Kit.act.play(motion, 'kick', { target: [ball.x, ball.y, ball.z] });
+   * Kit.act.play(keeper, 'dive', { target: [x, y, z], reach: { mark: 'contact', in: secondsUntilTheBallArrives } });
    */
   const play = (motion, performanceOrId, params) => {
     const compiled = resolve('play', performanceOrId);
+    if (params && params.reach) {
+      const { mark, in: seconds } = params.reach;
+      if (!(mark in compiled.marks)) fail('play', `the "${compiled.id}" performance has no mark "${mark}". Its marks: ${Object.keys(compiled.marks).join(', ') || 'none'}.`);
+      if (!(compiled.marks[mark] > 0)) fail('play', `the mark "${mark}" of "${compiled.id}" is at its very start: there is no lead-in to fit to a time.`);
+      if (!(seconds > 0)) fail('play', `\`reach.in\` must be seconds greater than 0, got ${JSON.stringify(seconds)}.`);
+    }
     const acting = actingOf(motion);
     if (!canPerform(motion, acting, compiled)) return false;
     begin(motion, acting, compiled, params);
     return true;
   };
+
+  /**
+   * The named moments of a performance, in seconds from its start at the authored speed (`contact`, `land`...).
+   * @param {string|Object} performanceOrId an id of `Kit.act.REPERTOIRE`, or a compiled performance
+   * @returns {Object<string, number>} mark name -> seconds; frozen, empty when it declares none
+   * @throws {Error} for an unknown id
+   * @complexity O(1)
+   * @example
+   * const lead = Kit.act.marks('dive').contact;   // seconds a dive needs to get its hands there, unhurried
+   * if (ballArrivesIn < lead) Kit.act.play(keeper, 'dive', { target, reach: { mark: 'contact', in: ballArrivesIn } });
+   */
+  const marks = (performanceOrId) => resolve('marks', performanceOrId).marks;
 
   const setBase = (motion, compiled) => {
     const acting = actingOf(motion);
@@ -1404,6 +1450,7 @@
     stop,
     aim,
     playing,
+    marks,
     progress,
     rootMotion,
     keepInPlace,

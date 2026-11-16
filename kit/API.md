@@ -90,9 +90,9 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [motion.js](#motionjs) (29) - Kit motion: movement as small stages that compose.
 - [gait.js](#gaitjs) (23) - Kit gait: walking, trotting and running for a body with any number of legs, as `Kit.motion` stages.
 - [swim.js](#swimjs) (7) - Kit swim: movement for bodies that are a chain - a fish's spine and tail, a snake - as `Kit.motion` stages.
-- [act.js](#actjs) (26) - Kit act: performances.
+- [act.js](#actjs) (27) - Kit act: performances.
 - [act-moves.js](#act-movesjs) (1) - Kit act moves: the everyday repertoire, as data.
-- [act-sport.js](#act-sportjs) (0) - Kit act sport: the moves a ball game needs, as data.
+- [act-sport.js](#act-sportjs) (1) - Kit act sport: the moves a ball game needs, as data.
 - [act-life.js](#act-lifejs) (0) - Kit act life: what a body does when it is doing nothing, as small `Kit.motion` stages to sequence with anything - a walk, a swim, a performa
 - [gait-gallery.js](#gait-galleryjs) (0) - Kit gait gallery: the `gaits` screen (`Kit.play('gaits')`).
 - [body-sheet.js](#body-sheetjs) (0) - Kit body sheet: the `wardrobe` screen (`Kit.play('wardrobe')`).
@@ -9284,6 +9284,8 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 >   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });  // the foot swings through that world point
 >   Kit.act.play(motion, 'dive', { target: [x, y, z] });              // dives to the side the point is on, hands to it
 >   Kit.act.aim(motion, 'target', x, y, z);                           // the point moved (a ball in flight)
+>   Kit.act.marks('dive').contact                                     // seconds into a dive that the hands arrive
+>   Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: 0.3 } }); // hands there in 0.3 s; landing as authored
 >   Kit.act.playing(motion)                                           // 'dive' until it has finished, then null
 >   Kit.act.takeRootMotion(motion, offset)                            // after a kick or a dive: where the body ended up
 >   Kit.act.base(motion, 'keeperReady');                              // the loop it returns to between one-shots
@@ -9296,7 +9298,7 @@ const motion = Kit.motion.state(carpBake, Kit.swim.swim());
 >        `REPERTOIRE` / `define` (the performances by id), `rig` (what a plan's roles are, measured once),
 >        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
 >        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
->        controls (`play`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+>        controls (`play`, `marks`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
 >        `takeRootMotion`, `cast`), `refusal`,
 >        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
 > Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
@@ -9534,7 +9536,7 @@ does): it cross-fades in over what the body was doing, and a one-shot hands back
 
 - `motion` *Object* - a `MotionState`
 - `performanceOrId` *string\|Object* - an id of `Kit.act.REPERTOIRE`, or a compiled performance
-- `[params]` *Object* - named world points ({ target: [x, y, z] }; a performance's own default otherwise), `side` ('left' or 'right': which hand waves, which foot kicks; default: the side its point is on, or the authored one), `rate` (speed, default 1) and `fade` (seconds of cross-fade)
+- `[params]` *Object* - named world points ({ target: [x, y, z] }; a performance's own default otherwise), `side` ('left' or 'right': which hand waves, which foot kicks; default: the side its point is on, or the authored one), `rate` (speed, default 1), `fade` (seconds of cross-fade) and `reach` ({ mark, in }: meet the named mark of the performance `in` seconds from now - the lead-in up to the mark is sped up or slowed to fit, and everything after it runs at `rate`, so a dive hurried to a shot still lands and gets up as authored)
 
 **Returns** *boolean* false, changing nothing, when this body cannot do it (`Kit.act.refusal` says why)
 
@@ -9542,6 +9544,7 @@ does): it cross-fades in over what the body was doing, and a one-shot hands back
 
 ```js
 Kit.act.play(motion, 'kick', { target: [ball.x, ball.y, ball.z] });
+Kit.act.play(keeper, 'dive', { target: [x, y, z], reach: { mark: 'contact', in: secondsUntilTheBallArrives } });
 ```
 
 ### `Kit.act.base(motion, performanceOrId)`
@@ -9607,6 +9610,21 @@ The base loop does not count.
 
 ```js
 if (Kit.act.playing(player) !== 'kick') startNextMove();
+```
+
+### `Kit.act.marks(performanceOrId)`
+
+The named moments of a performance, in seconds from its start at the authored speed (`contact`, `land`...).
+
+- `performanceOrId` *string\|Object* - an id of `Kit.act.REPERTOIRE`, or a compiled performance
+
+**Returns** *Object\<string, number\>* mark name -> seconds; frozen, empty when it declares none
+
+**Complexity** O(1)
+
+```js
+const lead = Kit.act.marks('dive').contact;   // seconds a dive needs to get its hands there, unhurried
+if (ballArrivesIn < lead) Kit.act.play(keeper, 'dive', { target, reach: { mark: 'contact', in: ballArrivesIn } });
 ```
 
 ### `Kit.act.progress(motion)`
@@ -9735,6 +9753,7 @@ const blinkGap = Kit.seeded.unit(Kit.act.seedOf(motion), BLINK_FIELD, count);
   - `[side]` *string* - 'left' or 'right': the side it is authored for; played mirrored for the other
   - `[sideBy]` *string* - the name of a target: the side is the one that point is on
   - `[defaults]` *Object\<string, number[]\>* - target name -> [left, up, forward] from where the body stands, in units of how high its hands reach (`ActRig.high`; its standing height when it has no arms): where the point is when the caller gives none, so a default is within reach of a long body and a squat one alike
+  - `[marks]` *Object\<string, number\>* - named moments on its own timeline, each 0..1 through it (`contact`, `release`, `land`): a game reads them with `Kit.act.marks` and can ask `play` to meet one at a given time
   - `keys` *PerformanceKey[]*
   - `[reaches]` *PerformanceReach[]*
   - `[travel]` *PerformanceTravel*
@@ -9805,9 +9824,15 @@ The fidgets: what `Kit.act.character` lets a standing body do on its own now and
 >   Kit.act.play(motion, 'kick', { target: [ballX, ballY, ballZ] });   // contact at half way: Kit.act.progress(motion) >= 0.5
 >   Kit.act.play(motion, 'dive', { target: [x, y, z] });               // hands on the point at 0.4 of the way
 >   Kit.act.takeRootMotion(motion, offset);                            // afterwards: the kick stepped, the dive flew
-> The moment of contact of each move is `Kit.act.CONTACT[id]`, 0..1 through it.
+> The moment of contact of each move is `Kit.act.CONTACT[id]`, 0..1 through it, and `Kit.act.marks(id).contact`
+> in seconds; `Kit.act.play(motion, 'dive', { target, reach: { mark: 'contact', in: seconds } })` meets it on time.
 >
 > Pure (no DOM, no THREE): data only; unit-tested by tools/test-act.js.
+
+### `Kit.act.CONTACT`
+
+When each move meets its point, 0..1 through it: the frame a game launches the ball or stops it. The same
+moments, in seconds, are `Kit.act.marks(id).contact`; `Kit.act.play` can be asked to meet one at a given time.
 
 ## act-life.js
 
