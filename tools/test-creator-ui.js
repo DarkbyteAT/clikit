@@ -23,6 +23,10 @@ const { touchDrag, explainDrag } = require('./touch-scroll');
 const MIN_HIT_PX = 44;
 /** Real milliseconds for a click's effects, and for software-GL frames, to land on a loaded machine. */
 const SETTLE_MS = 450;
+/** How long a one-shot performance may take to hand back to idling: the page's clock runs on drawn frames, so a loaded machine plays it slower than the wall clock. */
+const HANDBACK_DEADLINE_MS = 20000;
+/** How often a waited-for state is read. */
+const POLL_MS = 100;
 /** Slider inputs sent when timing input to figure. */
 const LATENCY_INPUTS = 14;
 
@@ -94,6 +98,14 @@ async function main() {
   const { page } = session;
   const settle = (ms = SETTLE_MS) => page.waitForTimeout(ms);
   const read = (expression) => page.evaluate(expression);
+  /** Waits until `isTrue()` holds, reading it every `POLL_MS`; false when `deadlineMs` passes first. */
+  const until = async (isTrue, deadlineMs) => {
+    for (let waited = 0; waited < deadlineMs; waited += POLL_MS) {
+      if (await isTrue()) return true;
+      await settle(POLL_MS);
+    }
+    return isTrue();
+  };
   const shot = async (name) => session.shot(path.join(shotsDir, `${name}-${suffix}.png`));
   /** Clicks an element through the DOM (layout cannot block it), then settles. Returns whether it was found. */
   const press = async (selector) => {
@@ -349,8 +361,8 @@ async function main() {
   await settle(700);
   check('performance picker: a one-shot plays over what the character was doing', (await state()).performance === 'wave' && session.errors.length === 0, session.errors);
   await shot('waving');
-  await settle(3200);
-  check('performance picker: when the one-shot is over the character idles again', (await state()).performance === 'idle', (await state()).performance);
+  const handedBack = await until(async () => (await state()).performance === 'idle', HANDBACK_DEADLINE_MS);
+  check('performance picker: when the one-shot is over the character idles again', handedBack, (await state()).performance);
 
   // ---- saves ----
   await press('#cr-open-saves');
