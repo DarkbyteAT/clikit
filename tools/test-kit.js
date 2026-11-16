@@ -2581,4 +2581,5 @@ for (const file of ['games/arena-data.js', 'games/arena-sim.js', 'games/arena-bo
 }
 // ---- Kit.body and the generic subsystems it is composed of ----
 require('./test-body.js')({ Kit, sandbox, test, assert });
+require('./test-gait.js')({ Kit, sandbox, test, assert });
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });
