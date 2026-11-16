@@ -344,3 +344,115 @@ machine at load 20 to 40, so only the ratios mean anything.
   weapon slots, either-or choices and evolutions by adding fields to rows. `offer`, `canBuy` and the shop adapters
   honour them without change.
 - **Revisit if.** A game needs a slot that an upgrade frees again, or exclusions between groups rather than rows.
+
+## Kit.body: one abstraction, split into generic subsystems
+
+- **The abstraction.** A thing is a graph of typed sockets filled by parts, described by a small recipe
+  `{ species, seed, overrides }`. Likeness (one recipe, many renderers), species (tables roll recipes) and
+  performance (movement by capability) all read the same compiled plan.
+- **Options for the shape of the code.** One `Kit.body` module that owns everything. Or small generic pieces
+  with `Kit.body` as a thin composition (amendment 22).
+- **Chosen.** The split. Generic, body-free: `Kit.lineage` (parent chain + ordered traits + owned limits),
+  `Kit.flags` (bitmask requirements with named failures), `Kit.columns` (pooled struct-of-arrays store),
+  `Kit.seeded` (counter-based hash), `Kit.pack` (bytes and share codes), `Kit.palette` (colour ramps),
+  `Kit.rig` (forward kinematics over a parents array), `Kit.reach` (inverse kinematics), `Kit.dynamics`
+  (spring and point chain). Body-specific: `body-plan`, `body-parts`, `body-recipe`, `body-edit`, `body-store`.
+  Cost: 16 files and one more name to learn per piece; bought: each piece is testable and reusable alone
+  (the store has no body in it, the IK has no plan in it).
+- **Duplicates found, not merged.** `Kit.physics.layers` (kit/bodies.js) has its own name -> bit table and could be
+  rebuilt on `Kit.flags`. `Kit.physics` has its own fixed-step accumulator (1/60 s, 4 steps) beside
+  `Kit.dynamics.stepsDue` (1/120 s, 12 steps). `Kit.seeded.pick` reuses `Kit.math.randomTools`; nothing new there.
+- **Revisit if.** A second consumer of `Kit.lineage` wants limits that clamp instead of reject: make it an option.
+
+## Kit.body: parts are plans, and an assembled body is a plan
+
+- **Options.** A separate prop system (attachments tracked beside the skeleton, drawn and posed by their own
+  code). Or attaching compiles a NEW plan: host bones, then per filled socket a mount bone and the part's bones.
+- **Chosen.** The second. Kinematics, dials, capabilities, the debug renderer and the bake cache need no special
+  case for props; wings from a part give the wearer the `wings` capability because capabilities derive from bone
+  roles; a dropped sword is `part.plan`. Cost: one extra bone per attached part (the mount, which keeps the host
+  bone's stretch out of the part) and a recompile per distinct outfit (cached by the bakery: 7 outfits for 20
+  recipes in the bench).
+- **Revisit if.** Outfits change every frame (they do not in any game here): then attach by index ranges in place.
+
+## Kit.body: transforms (what scale means)
+
+- **Options.** (a) Translation, rotation and three-axis scale, all inherited: standard, but a rotated child of a
+  non-uniformly scaled parent shears, and a pose no longer composes as rigid transforms. (b) A 4x3 matrix per
+  bone: exact and general, 12 floats, and the shear is still there to look wrong. (c) Rigid transforms plus two
+  scales: a three-axis `scale` that stretches a bone's own content (children's offsets, sockets, tail, girth) and
+  is NOT inherited, and a one-number `uniform` that IS inherited.
+- **Chosen.** (c). "Longer legs" is the first kind, "bigger head, hat included" is the second, nothing shears, the
+  forward pass is about 60 multiplications a bone, and mass follows as rest mass x the three scale factors
+  (twice the size, eight times the mass: tested). Cost: no inherited squash and stretch of a whole subtree.
+- **Revisit if.** A renderer needs skinning matrices: derive them from position, rotation and scale per bone.
+
+## Kit.body: limits reject variants and clamp individuals
+
+- **Options.** Clamp everything out of range. Reject everything out of range. Reject authored data, clamp
+  individuals.
+- **Chosen.** The third. A variant whose dial range leaves its species' limit is a mistake in a table, caught at
+  load with the node, the path and the owner of the limit (`Kit.lineage`). A recipe comes from a player, an old
+  save or a slider drag: `resolve` clamps and snaps it, and `validate` still lists it as `out-of-range`.
+- **Trait conflicts.** Two traits of one node writing the same socket throw (`exclusive: ['fills']`); everywhere
+  else the later trait wins and the node's own `set` always wins. Making every path exclusive was the other
+  option; it would forbid the useful case of two traits nudging the same dial.
+
+## Kit.seeded: counter-based derivation, and how fields are named in saved data
+
+- **Options for derivation.** A stream (`Kit.rng`): field n depends on fields 1..n-1, so adding a dial re-rolls
+  everything after it. A hash of (seed, field name): each field stands alone.
+- **Chosen.** The hash (FNV-1a of the name, MurmurHash3's finaliser to mix). Tested: adding a dial and a colour
+  channel leaves every old field of 40 seeds x 4 species unchanged.
+- **Options for field ids in the binary form.** Position in the species' field list (smallest; breaks on
+  insert). An author-assigned number per field (stable; a chore, and a second source of truth). The 32-bit hash
+  of the field's name (stable, free, 4 bytes per override).
+- **Chosen.** The name hash for fields and parts (collisions are checked per species at load); an explicit
+  `code` for species, because every recipe carries it, a varint keeps it to one byte, and a node without a code
+  is how an archetype says it is abstract. A bare recipe is 6 bytes (8 characters as text); an override costs 5
+  or 8. A nested socket the species never declared is spelt out by name.
+- **Quantising.** A dial has 255 steps, so a value is one byte, `decode(encode(r))` equals `normalize(r)` exactly
+  and equal looks hash equally. Cost: a dial resolves to 0.4% of its range.
+- **The look hash** is a whole number below 2^53 from two 32-bit lanes: a Map key with no string or BigInt
+  allocation. Not a security boundary.
+
+## Kit.reach: chain solver
+
+- **Options.** CCD (turn one joint at a time so the tip swings towards the target): works on rotations, so limits
+  clamp naturally at every step, but each step needs the tip's new position, O(joints^2) a pass here, and it
+  curls the tip first. FABRIK (drag joint positions to the target and back along the bone lengths): O(joints) a
+  pass on positions alone, spreads the bend along the chain, has a closed form when the target is out of reach,
+  and needs one extra O(joints) pass to turn positions into rotations. Jacobian methods: smoothest, heaviest.
+- **Chosen.** FABRIK, with limits applied as rotations are written back (`Kit.reach.follow`). Measured in the
+  tests: a five-link chain reaches 1 mm in under the 12-pass limit. Cost, stated in the docstring: limits are not
+  part of the iteration, so a tightly limited chain stops short instead of finding another way round.
+- **Two-bone limbs** are solved exactly (law of cosines, a bend hint, no iteration); in the bench, 500 bodies
+  with every foot solved cost 1.8 ms a frame in node against 0.4 ms without.
+- **Revisit if.** Spines need limits respected exactly: add a CCD pass after FABRIK for limited chains only.
+
+## Kit.dynamics: a fixed clock
+
+- **Options.** Integrate with the frame's dt (frame-rate dependent; another game here was bitten). The closed
+  form of a critically damped spring (exact at any dt, but only for one spring with a constant target). A fixed
+  step with an accumulator.
+- **Chosen.** Fixed 120 Hz steps (semi-implicit Euler for the spring, Verlet with position-based length
+  constraints for the chain), at most 12 a call. Tested: the same motion at 60 and 20 frames a second within
+  2% (spring) and 8 cm on a 1 m chain. A spring too stiff for the step is refused when it is made.
+- **Revisit if.** Hundreds of springs per frame show up in a profile: the closed form is the cheaper brick.
+
+## Colour as palette ramps, shape as data
+
+- **Chosen** (amendment 23). A colour channel names a palette; an individual stores the index of a ramp (shades
+  dark to light with a hue drift); a bake exposes `boneRamp` (per bone, which of the individual's ramps paints
+  it). No RGB is stored on an individual, so palette-indexed toon and pixel shaders read it directly. A bone's
+  `shape` is a primitive or a lathe / extrude profile in bone space, so dials deform it through the bone's scale.
+  Rejected: free RGB per channel (cannot be banded by a shader without a lookup) - not supported at all today.
+
+## Benchmarks: a vm sandbox is about ten times slower than a page
+
+- **Measured.** The same code, same machine, load average 0.3: resolving a recipe took 15 499 ns in a
+  `vm.createContext` sandbox and 852 ns loaded into the main context; a 500-body frame 1.38 ms against 0.38 ms.
+  Every global the kit reads inside a sandbox (Kit, Math, typed-array constructors) goes through an interceptor.
+- **Chosen.** `tools/bench-body.js` loads the kit with `vm.runInThisContext`. `tools/bench.js` still uses a
+  sandbox; its scores are relative to a calibration loop in the same sandbox, which cancels some of this but not
+  all (the calibration reads fewer globals). Proposal for the tooling owner: load the kit the same way there.
