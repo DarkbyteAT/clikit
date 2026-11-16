@@ -2533,4 +2533,50 @@ for (const file of ['games/arena-data.js', 'games/arena-sim.js', 'games/arena-bo
     assert.ok(evade >= idle, `evading pilot (${evade}s) should outlast the idle one (${idle}s)`);
   });
 }
+// ---- kit/ui/logic.js: the pure decisions behind the component library ----
+{
+  loadKitFile('kit/ui/logic.js');
+  const { createQueue, enqueue, dismiss, rovingIndex, toggleSelection, isSelected, searchRows, clampFraction, placePanel } = Kit.uiLogic;
+  const idsOf = (notices) => notices.map((notice) => notice.id).join();
+  test('uiLogic notice queue: shows up to the limit, holds the rest, promotes in arrival order', () => {
+    const full = [1, 2, 3, 4, 5].reduce((queue, id) => enqueue(queue, { id }), createQueue(3));
+    assert.strictEqual(idsOf(full.showing), '1,2,3'); assert.strictEqual(idsOf(full.waiting), '4,5');
+    const afterOne = dismiss(full, 2);
+    assert.strictEqual(idsOf(afterOne.showing), '1,3,4', 'the longest-waiting notice takes the freed slot'); assert.strictEqual(idsOf(afterOne.waiting), '5');
+    assert.strictEqual(idsOf(dismiss(full, 5).waiting), '4', 'a waiting notice can be withdrawn'); assert.strictEqual(idsOf(dismiss(full, 5).showing), '1,2,3');
+    assert.strictEqual(idsOf(dismiss(full, 99).showing), '1,2,3', 'an unknown id changes nothing'); assert.strictEqual(idsOf(full.showing), '1,2,3', 'the input queue is not mutated');
+    const one = enqueue(enqueue(createQueue(), { id: 'a' }), { id: 'b' });
+    assert.strictEqual(idsOf(one.showing), 'a', 'the default limit is one'); assert.strictEqual(idsOf(dismiss(one, 'a').showing), 'b');
+  });
+  test('uiLogic rovingIndex: arrows step and wrap, Home and End jump, disabled items are skipped', () => {
+    assert.strictEqual(rovingIndex('ArrowRight', 0, 3), 1); assert.strictEqual(rovingIndex('ArrowDown', 2, 3), 0, 'wraps forward');
+    assert.strictEqual(rovingIndex('ArrowLeft', 0, 3), 2, 'wraps backward'); assert.strictEqual(rovingIndex('ArrowUp', 2, 3), 1);
+    assert.strictEqual(rovingIndex('Home', 2, 4), 0); assert.strictEqual(rovingIndex('End', 0, 4), 3);
+    const secondDisabled = (index) => index === 1;
+    assert.strictEqual(rovingIndex('ArrowRight', 0, 3, secondDisabled), 2, 'steps over a disabled item');
+    assert.strictEqual(rovingIndex('Home', 2, 3, (index) => index === 0), 1, 'Home lands on the first enabled item');
+    assert.strictEqual(rovingIndex('End', 0, 3, (index) => index === 2), 1, 'End lands on the last enabled item');
+    assert.strictEqual(rovingIndex('ArrowRight', 0, 3, (index) => index !== 0), -1, 'nowhere to go when every other item is disabled');
+    assert.strictEqual(rovingIndex('a', 0, 3), -1, 'other keys are not focus keys'); assert.strictEqual(rovingIndex('ArrowRight', 0, 0), -1);
+  });
+  test('uiLogic selection: single replaces, multiple toggles', () => {
+    assert.strictEqual(toggleSelection('a', 'b'), 'b'); same(toggleSelection(['a'], 'b', true), ['a', 'b']); same(toggleSelection(['a', 'b'], 'a', true), ['b']);
+    same(toggleSelection(undefined, 'a', true), ['a'], 'no selection yet');
+    assert.strictEqual(isSelected('a', 'a'), true); assert.strictEqual(isSelected(['a', 'b'], 'b'), true); assert.strictEqual(isSelected(['a'], 'b'), false); assert.strictEqual(isSelected(null, 'a'), false);
+  });
+  test('uiLogic searchRows: every word must appear in some field, any case; empty keeps all', () => {
+    const rows = [{ id: 1, name: 'Neon Run', tagline: 'Swipe to dodge' }, { id: 2, name: 'Core Miner', tagline: 'Tap the ore' }, { id: 3, name: 'Run Aground' }];
+    const found = (query) => searchRows(rows, query, ['name', 'tagline']).map((row) => row.id).join();
+    assert.strictEqual(found('run'), '1,3'); assert.strictEqual(found('RUN swipe'), '1', 'words may match different fields'); assert.strictEqual(found('ore'), '2', 'matches inside a word');
+    assert.strictEqual(found('run ore'), '', 'all words are required'); assert.strictEqual(found('   '), '1,2,3'); assert.strictEqual(found(undefined), '1,2,3');
+  });
+  test('uiLogic clampFraction and placePanel', () => {
+    assert.strictEqual(clampFraction(1.4), 1); assert.strictEqual(clampFraction(-2), 0); assert.strictEqual(clampFraction(0.25), 0.25); assert.strictEqual(clampFraction(NaN), 0); assert.strictEqual(clampFraction('x'), 0);
+    const viewport = { width: 390, height: 780 }, panel = { width: 200, height: 100 };
+    same(placePanel({ left: 150, top: 100, bottom: 144, width: 90 }, panel, viewport), { left: 95, top: 152 }, 'centred under its anchor');
+    assert.strictEqual(placePanel({ left: 0, top: 100, bottom: 144, width: 50 }, panel, viewport).left, 8, 'kept on screen at the left edge');
+    assert.strictEqual(placePanel({ left: 340, top: 100, bottom: 144, width: 50 }, panel, viewport).left, 182, 'kept on screen at the right edge');
+    assert.strictEqual(placePanel({ left: 150, top: 700, bottom: 744, width: 90 }, panel, viewport).top, 592, 'flips above when there is no room below');
+  });
+}
 pending.then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

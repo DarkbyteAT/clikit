@@ -35,6 +35,7 @@ share the machine; the load column says so.
 | 21 | Soulwake (zombie roguelike) | new game, pick-up of a cancelled agent | fable | 451k | 82 | 10+ agents | standard, theme, depth (simulated) | 0 so far; 6 binding amendments arrived mid-task (theme, AGENTS.md, depth, north star, orchestration, web-native UX) | lead only: no Agent tool in this session, so nothing was dispatched to lower tiers; kit: crowd.js, craft.js, views.js; pacing proven by scratch/souls/career.js |
 | 22 | Ferry Lines (new game) + kit/route.js, kit/timer.js | pick-up from a cancelled agent: new game + standard + theme + depth | fable (no leaves: this agent had no Agent tool, so amendment 17 could not be followed) | not measured (the agent cannot read its own usage) | not measured; long, one sitting | 10+ agents | standard (22 lint magic-number notes left in the 3D model dimensions), theme, depth (simulated: 3 h x 3 seeds x 4 bots) | 1 inside the task: the first build was a one-minute slice, rebuilt when depth arrived | 9 amendments arrived mid-task; 8 browser runs, 1 foreign page error (prism); the pacing simulation overturned the first tables twice |
 | 23 | Prism Garden | depth (shelf, 3 new rules, forge, daily, garden) + theme + file split | fable | not measured (the agent cannot read its own usage) | about 150 | 12+ agents, load average 35 | standard, theme, depth | 0 so far (amendments 14 to 19 arrived mid-task and were absorbed) | 14 proven beds, endless forged beds; kit/puzzle.js grew search.generate, search.difficulty, beam passes and one-way glass, level medals; `make sim GAME=prism` works |
+| 24 | Tower Smash | depth (sim split, generator, loadout, worlds, progression) | fable | not measured by the agent | not measured (about 75 by file times) | 12+ agents | standard, theme, depth | 0 so far | 3 files; headless solver clears 18/18; Agent tool not available to this session, so nothing was dispatched |
 
 ## Orchestrated work (from amendment 17)
 
@@ -42,6 +43,7 @@ One row per piece a lead dispatched or kept. This is what tests whether tiered, 
 
 | Lead (game or area) | Piece | Tier | Effort | Tokens | Passed review first time? | Notes |
 |---|---|---|---|---|---|---|
+| Tower Smash | all pieces (data tables, sim, generator, menus, tests, solver) | fable | medium | not measured | n/a | kept by the lead: this session has no Agent tool, so no leaf could be dispatched |
 | Sky Stack | all pieces (rules split, depth tables, pacing simulation, theme, views, QA) | fable | medium | not measured | n/a | no Agent tool in this session, so nothing could be dispatched; the pieces that would have gone to leaves: achievement / blueprint tables with stated targets (sonnet/low), the bot simulation script (sonnet/medium), JSDoc pass (haiku/low) |
 | Prism Garden | all pieces (rule design, model, forge, 6 new beds and 8 reworked, view, theme, pacing sim, QA) | fable | medium | not measured | n/a | no Agent tool in this session, so nothing could be dispatched; pieces that would have gone to leaves: hand-designing beds against solve.js (sonnet/low to medium), the playtest script (sonnet/low), JSDoc and bed text (haiku/low), the rating heuristic (opus/medium) |
 | Neon Run | whole pass (refactor, theme, kit additions, depth rules, pacing simulation, QA) | fable | medium | not measured | n/a | kept by the lead: this session has no Agent tool, so nothing could be dispatched |
@@ -122,3 +124,6 @@ entries become the next tooling work.
 | `Kit.grid.find` and grid construction allocate an object per cell; they were the top of the solver's profile | prism | worked around in games/prism-model.js (facts cached per bed, loose-piece state); a non-allocating `grid.find` would fix it for everyone |
 | Values built in the test sandbox fail `assert.deepStrictEqual` (another realm's prototypes) | prism | worked around with a JSON compare in the puzzle tests; test-kit could export one `same()` helper |
 | Reaching late-game states in a playtest meant hand-building a save object | prism | open: `make play` could take a save seed |
+| Play runner cannot call a game's debug hooks (jump to a level, grant stars), so deep states still need hand-written Playwright | sling | open: a `do <expression>` step in tools/dev/play.js |
+| Smoke fails on another game's or the kit's in-flight error, so a clean run of your own game is luck | sling | partly: worktrees (amendment 20) |
+| No kit view for a level map, a loadout row or an upgrade list inside a sheet; each game styles its own | sling | for the UI lead (kit/ui/) |

@@ -12,6 +12,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
+const { touchDrag, explainDrag, MENU_SCROLLER } = require('./touch-scroll');
 
 const ROOT = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
@@ -107,6 +108,11 @@ async function run(browser, base, id) {
   if (id === 'menu') {
     await shot('menu.png');
     console.log(`menu: games registered = [${ids.join(', ')}]`);
+    // The list of games must scroll under a real finger drag (tools/touch-scroll.js); a list that fits has nothing to prove.
+    const drag = await touchDrag(page, MENU_SCROLLER);
+    const dragFailure = explainDrag(MENU_SCROLLER, drag);
+    if (dragFailure && (!drag.found || drag.room > 0)) errors.push('touch scroll: ' + dragFailure);
+    console.log(`menu: finger drag moved the list ${drag.moved}px of ${drag.travel}px (${drag.room}px of room)`);
   } else {
     if (!ids.includes(id)) errors.push(`game "${id}" is not registered (registered: ${ids.join(', ') || 'none'})`);
     else {
@@ -114,7 +120,13 @@ async function run(browser, base, id) {
       const skin = flag('skin', null);
       if (skin) await page.evaluate(([gameId, name]) => (Kit.games.find((g) => g.id === gameId).theme = { skin: name }), [id, skin]);
       // Started through the DOM, not a Playwright click: a card that layout has pushed out of reach must not block a test.
-      await page.evaluate((gameId) => document.getElementById('card-' + gameId).click(), id);
+      // A game that registered after the menu was built has no card; Kit.play starts it all the same.
+      const started = await page.evaluate((gameId) => {
+        const card = document.getElementById('card-' + gameId);
+        if (card) card.click();
+        return card ? true : Kit.play(gameId);
+      }, id);
+      if (!started) errors.push(`could not start "${id}": it has no menu card and Kit.play refused it`);
       await page.waitForTimeout(600);
       await gestures(page, SECS / 2, GESTURE);
       await shot(`${id}-mid.png`);

@@ -16,8 +16,8 @@
  */
 (() => {
   const { rand, damp, clamp } = Kit.math;
-  const { data: D, sim, meta, bots, theme } = window.Arena;
-  const { CAPACITY, ENEMIES, BOSS, LEVEL_UP, MINE } = D;
+  const { data: DATA, sim, meta, bots, theme } = window.Arena;
+  const { CAPACITY, ENEMIES, BOSS, LEVEL_UP, MINE } = DATA;
   const { times } = sim;
 
   // =====================================================================================================================
@@ -128,7 +128,12 @@
   };
 
   /** Chained kills and pickups climb in pitch by these steps. */
-  const PITCH = { killStep: 0.075, gemStep: 0.06, grazeBase: 1.6, tell: 1.6, wave: 0.7, lance: 1.5 };
+  const PITCH = { killBase: 0.7, killStep: 0.075, gemBase: 0.9, gemStep: 0.06, graze: 1.6, tell: 1.6, wave: 0.7, lance: 1.5, burn: 0.6 };
+  /** Random pitch ranges [low, high], so repeated sounds do not drone. */
+  const PITCH_RANGE = { hit: [0.9, 1.4], down: [0.7, 0.9], shoot: [0.9, 1.15], boom: [0.9, 1.1], mine: [0.5, 0.6] };
+  /** Corners of the flat shapes that are not enemy types, and the numbers per vertex in a position or colour buffer. */
+  const SIDES = { nose: 3, mine: 3, blade: 4, gem: 4 };
+  const NUMBERS_PER_VERTEX = 3;
 
   /** Effect sizes per event. Ring, shake and hitstop are saved for heavy kills and the hero's own moments, so they stay an event. */
   const FEEDBACK = {
@@ -188,7 +193,7 @@
         if (!tagsHelped.length) return null;
         const missingAfter = Object.keys(entry.row.needs).reduce((missing, tag) => missing + entry.row.needs[tag] - entry.have[tag] - (tagsHelped.includes(tag) ? 1 : 0), 0);
         const tag = tagsHelped[0];
-        return missingAfter === 0 ? `Completes ${entry.row.name} (${entry.row.desc})` : `${tag} ${entry.have[tag] + 1}/${entry.row.needs[tag]} toward ${entry.row.name}`;
+        return missingAfter === 0 ? `Completes ${entry.row.name} (${entry.row.desc})` : `${tag[0].toUpperCase()}${tag.slice(1)} ${entry.have[tag] + 1}/${entry.row.needs[tag]} toward ${entry.row.name}`;
       })
       .filter(Boolean);
     // A completion is the news; otherwise the first step is enough to hint at the set.
@@ -214,8 +219,8 @@
 
   /** The text that says how a locked ship, arena or tier is opened. */
   const unlockTextOf = (row) => {
-    if (row.rank) return `Clear ${D.TIERS[row.rank - 2].name}`;
-    const achievement = D.ACHIEVEMENTS.find((each) => each.unlocks === row.unlock);
+    if (row.rank) return `Clear ${DATA.TIERS[row.rank - 2].name}`;
+    const achievement = DATA.ACHIEVEMENTS.find((each) => each.unlocks === row.unlock);
     return achievement ? achievement.text : 'Locked';
   };
 
@@ -231,7 +236,7 @@
   function create(ctx) {
     const { make, input, fx, sfx, ui, save, THREE, scene } = ctx;
     const profile = meta.createProfile(save);
-    let loadout = meta.validLoadout(profile, save.get('loadout', D.DEFAULT_LOADOUT));
+    let loadout = meta.validLoadout(profile, save.get('loadout', DATA.DEFAULT_LOADOUT));
     /** Set once a run is launched: advances and draws one frame. */
     let stepFrame = null;
 
@@ -270,9 +275,9 @@
         trophies.append(line);
       });
       body.replaceChildren(
-        rack('Ship', D.SHIPS, meta.isUnlocked, 'shipId', (ship) => `${ship.desc} ${ship.passive}.`),
-        rack('Arena', D.ARENAS, meta.isUnlocked, 'arenaId', (arena) => arena.desc),
-        rack('Threat', D.TIERS, meta.isTierOpen, 'tierId', (tier) => tier.desc),
+        rack('Ship', DATA.SHIPS, meta.isUnlocked, 'shipId', (ship) => `${ship.desc} ${ship.passive}.`),
+        rack('Arena', DATA.ARENAS, meta.isUnlocked, 'arenaId', (arena) => arena.desc),
+        rack('Threat', DATA.TIERS, meta.isTierOpen, 'tierId', (tier) => tier.desc),
         trophies
       );
     };
@@ -297,7 +302,7 @@
       const buildStarLayer = (layer) => {
         const positions = new Float32Array(times(layer.count, () => [rand(-BACKDROP.spread, BACKDROP.spread), 0, rand(-BACKDROP.spread, BACKDROP.spread)]).flat());
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, NUMBERS_PER_VERTEX));
         const material = new THREE.PointsMaterial({ color: make.color(layer.color), size: layer.pixels, sizeAttenuation: false, transparent: true, opacity: layer.opacity, depthWrite: false, toneMapped: false });
         const points = new THREE.Points(geometry, material);
         points.frustumCulled = false; // the layer slides under the camera, so its bounds are never a useful test
@@ -326,7 +331,7 @@
           return [offset, 0, -halfChord, offset, 0, halfChord, -halfChord, 0, offset, halfChord, 0, offset];
         }).flat();
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, NUMBERS_PER_VERTEX));
         const material = new THREE.LineBasicMaterial({ color: make.color(color), transparent: true, opacity, toneMapped: false });
         scene.add(new THREE.LineSegments(geometry, material));
         return material;
@@ -342,7 +347,7 @@
         const vertexCount = geometry.attributes.position.count;
         // RingGeometry lists the inner edge's vertices first, then the outer edge's: one grey level for each half.
         const shades = times(vertexCount, (index) => (index < vertexCount / 2 ? innerShade : outerShade)).flatMap((shade) => [shade, shade, shade]);
-        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(shades), 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(shades), NUMBERS_PER_VERTEX));
         make.mesh(geometry, wallMaterial, { shadow: false, parent: wallGroup });
       });
 
@@ -351,7 +356,7 @@
       const heroBody = make.group({ parent: heroGroup });
       make.prism(HERO_SHAPE.roundSides, HERO_SHAPE.ringRadius, HERO_SHAPE.thickness, make.unlit(ship.color, { bright: BRIGHT.heroRing }), { parent: heroBody, shadow: false });
       make.prism(HERO_SHAPE.roundSides, HERO_SHAPE.coreRadius, HERO_SHAPE.thickness, make.unlit(COLORS.heroCore), { parent: heroBody, shadow: false, at: [0, HERO_SHAPE.thickness / 2, 0] });
-      make.prism(3, HERO_SHAPE.noseRadius, HERO_SHAPE.thickness, make.unlit(COLORS.white, { bright: BRIGHT.heroNose }), { parent: heroBody, shadow: false, at: [0, HERO_SHAPE.thickness, HERO_SHAPE.noseOffset] });
+      make.prism(SIDES.nose, HERO_SHAPE.noseRadius, HERO_SHAPE.thickness, make.unlit(COLORS.white, { bright: BRIGHT.heroNose }), { parent: heroBody, shadow: false, at: [0, HERO_SHAPE.thickness, HERO_SHAPE.noseOffset] });
       const heroGlow = make.glow(ship.color, HERO_SHAPE.glowSize, { parent: heroGroup, opacity: HERO_SHAPE.glowOpacity, depthTest: false });
       // A unit hairline ring scaled to the magnet radius each frame, so the pickup range is always visible.
       const magnetRing = make.mesh(new THREE.RingGeometry(1 - HERO_SHAPE.magnetRingWidth, 1, 64).rotateX(-Math.PI / 2), make.unlit(COLORS.gem, { additive: true, opacity: HERO_SHAPE.magnetOpacity }), { parent: heroGroup, shadow: false });
@@ -376,8 +381,8 @@
         }),
         {}
       );
-      const gemBatch = make.batch(prismGeometry(4), CAPACITY.gems, { y: HEIGHT.gems });
-      const mineBatch = make.batch(prismGeometry(3), CAPACITY.mines, { y: HEIGHT.mines });
+      const gemBatch = make.batch(prismGeometry(SIDES.gem), CAPACITY.gems, { y: HEIGHT.gems });
+      const mineBatch = make.batch(prismGeometry(SIDES.mine), CAPACITY.mines, { y: HEIGHT.mines });
       const shotBatch = make.batch(boxGeometry, CAPACITY.shots, { y: HEIGHT.shots });
       // Marks: flat rings (elite halos, blast circles) and bars (bulwark plates, charge lines) share two batches.
       const ringBatch = make.batch(new THREE.RingGeometry(0.93, 1, 48).rotateX(-Math.PI / 2), MARK_CAPACITY.rings, { y: HEIGHT.marks, material: make.unlit(COLORS.white, { additive: true, fresh: true }) });
@@ -386,7 +391,7 @@
       const batches = [gemBatch, mineBatch, shotBatch, ringBatch, barBatch, ...Object.values(enemyLooks).flatMap((look) => [look.rim, look.core])];
       /** Linear-space colours for the batches (make.color converts from sRGB once, here). */
       const linear = Object.keys(COLORS).reduce((colors, name) => ({ ...colors, [name]: make.color(COLORS[name]) }), {});
-      const affixColors = D.AFFIXES.reduce((colors, affix) => ({ ...colors, [affix.id]: make.color(affix.color) }), {});
+      const affixColors = DATA.AFFIXES.reduce((colors, affix) => ({ ...colors, [affix.id]: make.color(affix.color) }), {});
 
       // ---- HUD ----
       const hullGauge = ui.pips('Hull', { total: HULL_GAUGE.cells });
@@ -438,7 +443,7 @@
         hullGauge.el.classList.toggle('low', fraction <= HULL_GAUGE.lowFraction);
       };
       const showXp = () => {
-        xpGauge.set(world.xp / D.XP_TO_NEXT_LEVEL(world.level));
+        xpGauge.set(world.xp / DATA.XP_TO_NEXT_LEVEL(world.level));
         xpGauge.label('Level ' + world.level);
       };
       const showSynergies = () => {
@@ -479,8 +484,8 @@
         const summary = sim.summarize(run);
         const tierBefore = profile.stat('tier');
         const result = meta.recordRun(profile, summary);
-        const rewards = result.unlocked.map((id) => D.ACHIEVEMENTS.find((achievement) => achievement.unlocks === id).reward);
-        if (profile.stat('tier') > tierBefore && tier.rank < D.TIERS.length) rewards.push(`${D.TIERS[tier.rank].name} is open`);
+        const rewards = result.unlocked.map((id) => DATA.ACHIEVEMENTS.find((achievement) => achievement.unlocks === id).reward);
+        if (profile.stat('tier') > tierBefore && tier.rank < DATA.TIERS.length) rewards.push(`${DATA.TIERS[tier.rank].name} is open`);
         if (result.levelsGained) rewards.push(`Account level ${profile.level}`);
         ctx.after(feedback.bannerDelay, () => {
           ui.banner({
@@ -517,7 +522,7 @@
 
       /** How each simulation event looks and sounds (see the `fire(cues, ...)` calls in games/arena-sim.js). */
       const cues = {
-        enemyHit: () => playSound(SOUNDS.enemyHit, rand(0.9, 1.4)),
+        enemyHit: () => playSound(SOUNDS.enemyHit, rand(...PITCH_RANGE.hit)),
         enemyKilled(enemy, killCombo) {
           const type = enemy.type;
           const isBig = type.isHeavy || enemy.isElite;
@@ -528,11 +533,11 @@
             shockwave(enemy.x, enemy.z, type.color, enemy.size * feedback.ringScale, feedback);
             fx.hitstop(feedback.hitstopMs);
             fx.shake(feedback.shake);
-            sfx.play('boom', { pitch: rand(0.9, 1.1), vol: feedback.boomVolume });
+            sfx.play('boom', { pitch: rand(...PITCH_RANGE.boom), vol: feedback.boomVolume });
           }
           if (enemy.isElite) fx.floater('+1 reroll', groundPoint(enemy.x, enemy.z, HEIGHT.flash), { size: FEEDBACK.nova.labelSize });
-          playSound(SOUNDS.enemyDown, rand(0.7, 0.9));
-          playSound(SOUNDS.killChime, 0.7 + killCombo * PITCH.killStep); // chained kills climb in pitch
+          playSound(SOUNDS.enemyDown, rand(...PITCH_RANGE.down));
+          playSound(SOUNDS.killChime, PITCH.killBase + killCombo * PITCH.killStep); // chained kills climb in pitch
           bumpGrid(isBig ? GRID.kickPerHeavyKill : GRID.kickPerKill);
           killsStat.set(world.kills);
           if (world.kills % FEEDBACK.killPulseEvery === 0) killsStat.pulse();
@@ -570,14 +575,14 @@
         volleyFired(heading) {
           const { hero, build, shotLook } = world;
           const muzzle = FEEDBACK.muzzle;
-          playSound(SOUNDS.shoot, rand(0.9, 1.15) * (shotLook.isLance ? PITCH.lance : 1));
+          playSound(SOUNDS.shoot, rand(...PITCH_RANGE.shoot) * (shotLook.isLance ? PITCH.lance : 1));
           fx.burst(groundPoint(hero.x + Math.sin(heading) * LOOK.muzzleFlashDistance, hero.z + Math.cos(heading) * LOOK.muzzleFlashDistance), { flat: true, count: muzzle.sparks + build.multishot, color: shotLook.isLance ? COLORS.lance : COLORS.shot, speed: muzzle.speed, life: muzzle.life, size: muzzle.size });
         },
         pulsed: (radius) => shockwave(world.hero.x, world.hero.z, FEEDBACK.pulse.color, radius, FEEDBACK.pulse, BRIGHT.nova),
         mineBurst(mine, radius) {
           shockwave(mine.x, mine.z, COLORS.mine, radius, FEEDBACK.mine, BRIGHT.nova);
           sparks(mine.x, mine.z, [COLORS.mine, COLORS.white], FEEDBACK.mine);
-          playSound(SOUNDS.enemyDown, rand(0.5, 0.6));
+          playSound(SOUNDS.enemyDown, rand(...PITCH_RANGE.mine));
         },
         dashed() {
           const { hero } = world;
@@ -587,11 +592,11 @@
         },
         dashNova: (radius) => shockwave(world.hero.x, world.hero.z, FEEDBACK.dashNova.color, radius, FEEDBACK.dashNova, BRIGHT.nova),
         grazed(enemy) {
-          playSound(SOUNDS.graze, PITCH.grazeBase);
+          playSound(SOUNDS.graze, PITCH.graze);
           sparks(enemy.x, enemy.z, [COLORS.white], FEEDBACK.graze);
           fx.floater('graze', groundPoint(enemy.x, enemy.z, HEIGHT.flash), { size: FEEDBACK.graze.labelSize });
         },
-        gemCollected: (gem, gemStreak) => playSound(SOUNDS.gem, 0.9 + gemStreak * PITCH.gemStep),
+        gemCollected: (gem, gemStreak) => playSound(SOUNDS.gem, PITCH.gemBase + gemStreak * PITCH.gemStep),
         xpChanged: showXp,
         hpChanged: showHp,
         heroHurt() {
@@ -606,7 +611,7 @@
           // The wall burns every frame; flash and hiss at a steady, readable beat instead.
           if (!isDue('burn', FEEDBACK.burn.gap)) return;
           fx.flash(FEEDBACK.burn.flashColor, FEEDBACK.burn.flashMs, FEEDBACK.burn.flashStrength);
-          playSound(SOUNDS.burn, 0.6);
+          playSound(SOUNDS.burn, PITCH.burn);
         },
         heroDied: showDeath,
         runCleared: showClear,
@@ -707,7 +712,7 @@
         const isMoving = stick.x !== 0 || stick.y !== 0;
         if (isLive && (isMoving || hero.dashFor > 0) && frame % LOOK.heroTrailFrames === 0) trailSpark(hero.x - hero.headingX * LOOK.heroTrailOffset, hero.z - hero.headingZ * LOOK.heroTrailOffset, ship.color, FEEDBACK.heroTrail);
         times(build.blades - bladeMeshes.length, () => {
-          const blade = make.prism(4, 1, HERO_SHAPE.thickness, bladeMaterial, { parent: bladeGroup, shadow: false });
+          const blade = make.prism(SIDES.blade, 1, HERO_SHAPE.thickness, bladeMaterial, { parent: bladeGroup, shadow: false });
           blade.scale.set(LOOK.bladeWidth, 1, LOOK.bladeLength);
           bladeMeshes.push(blade);
         });
@@ -818,7 +823,7 @@
     color: '#ff5d73',
     order: 1,
     theme,
-    headless: { data: D, sim, meta, bots, progression: bots.progression },
+    headless: { data: DATA, sim, meta, bots, progression: bots.progression },
     create,
   });
 })();

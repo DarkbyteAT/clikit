@@ -165,7 +165,10 @@ const smokeRows = (ids, seconds) => {
   const expectedCount = ids.length ? targets.length : listScripts('games').length + 1;
   const { status, output } = runTool('smoke.js', [targets.join(','), '--secs', String(seconds)], expectedCount * SMOKE_TIMEOUT_MS_PER_TARGET);
   const results = parseSmokeOutput(output);
-  const names = ids.length ? targets : Object.keys(results);
+  // With `all`, the games to expect are the ones the menu said it registered, so a run that died half-way
+  // shows the games it never reached as failures instead of leaving them out.
+  const registered = ((results.menu && /games registered = \[(.*)\]/.exec(results.menu.summary || '')) || [null, ''])[1].split(',').map((id) => id.trim()).filter(Boolean);
+  const names = ids.length ? targets : results.menu ? ['menu', ...registered] : [];
   if (!names.length) return [{ name: 'smoke', status: 'FAIL', detail: `no result (exit ${status}): ${lastLine(output)}` }];
   const rows = names.map((id) => {
     const result = results[id];

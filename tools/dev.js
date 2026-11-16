@@ -137,7 +137,7 @@ const lintTargets = (paths) =>
   (paths.length ? paths : ['kit', 'games']).flatMap((target) => {
     const relative = path.relative(ROOT, path.resolve(target)).replace(/\\/g, '/');
     if (!fs.existsSync(path.join(ROOT, relative))) throw new Error(`nothing to lint at ${target}.`);
-    return fs.statSync(path.join(ROOT, relative)).isDirectory() ? project.listScripts(relative) : [relative];
+    return fs.statSync(path.join(ROOT, relative)).isDirectory() ? project.listScriptsDeep(relative) : [relative];
   });
 
 function commandLint({ positionals, flags }) {
@@ -160,8 +160,8 @@ function commandDocs() {
   const { describeModule, renderApi } = require('./dev/docs');
   const loadOrder = project.scriptSources(project.readProjectFile('index.html')).filter((source) => source.startsWith('kit/'));
   // Modules appear in page load order (foundations first); kit files the page does not load come last.
-  const files = [...loadOrder.filter((file) => fs.existsSync(path.join(ROOT, file))), ...project.listScripts('kit').filter((file) => !loadOrder.includes(file))];
-  const modules = files.map((file) => describeModule(path.basename(file), project.readProjectFile(file)));
+  const files = [...loadOrder.filter((file) => fs.existsSync(path.join(ROOT, file))), ...project.listScriptsDeep('kit').filter((file) => !loadOrder.includes(file))];
+  const modules = files.map((file) => describeModule(file.replace(/^kit\//, ''), project.readProjectFile(file)));
   project.writeProjectFile('kit/API.md', renderApi(modules));
   const entries = modules.reduce((sum, module) => sum + module.entries.length, 0);
   const undocumented = modules.reduce((sum, module) => sum + module.entries.filter((entry) => entry.kind === 'function' && !entry.jsdoc).length, 0);

@@ -398,6 +398,7 @@
    * @property {CANNON.Body} body
    * @property {number} side          splitters: the side (+1 right, -1 left) the next marble is sent to.
    * @property {number} count         counters: marbles seen so far.
+   * @property {number} lastCounted   counters: id of the marble counted most recently.
    * @property {number} pulsedUntil   gates: simulation time until which the last pulse holds it switched.
    * @property {boolean} isOpen       gates: whether marbles pass right now.
    * @property {LivePart[]} targets   emitters: the parts its pulse reaches.
@@ -446,15 +447,19 @@
       marble.body.velocity.set(part.side * FORCES.splitterPush * scale, Math.max(marble.body.velocity.y, FORCES.splitterHop * scale), 0);
       part.side = -part.side;
     },
+    // A marble is counted once, however often it bounces on the peg: the count is of marbles, not of knocks.
     counter: (marble, part) => {
-      part.count += 1;
+      const isNewMarble = part.lastCounted !== marble.id;
+      part.lastCounted = marble.id;
+      if (isNewMarble) part.count += 1;
+      return { isCounted: isNewMarble };
     },
   };
 
-  /** Does touching this emitter send a pulse right now? Bells always; counters on every n-th marble. */
+  /** Does this touch send a pulse? Bells always; counters when the marble just counted was the n-th. */
   const EMITS_NOW = {
     bell: () => true,
-    counter: (part) => part.count % poseOf(part.piece).every === 0,
+    counter: (part, touch) => touch.isCounted && part.count % poseOf(part.piece).every === 0,
   };
 
   /**
@@ -527,7 +532,7 @@
       const centre = cellCentre(piece);
       const body = asPart(Kit.physics.compound(phys, null, toColliders(row), { at: [centre.x, centre.y, 0], angle: pose.angle * DEGREES, spin: pose.spin || 0 }));
       if (row.isSensor) Kit.physics.sensor(body);
-      const part = { piece, row, body, side: 1, count: 0, pulsedUntil: -Infinity, isOpen: false, targets: [] };
+      const part = { piece, row, body, side: 1, count: 0, lastCounted: 0, pulsedUntil: -Infinity, isOpen: false, targets: [] };
       // Contacts are only queued here: changing velocities or teleporting mid-step would fight the solver.
       phys.onHit(body, (impactSpeed, otherBody) => pendingTouches.push({ part, otherBody }));
       partsById.set(piece.id, part);
@@ -577,7 +582,7 @@
       const outcome = behave ? behave(marble, part, [...partsById.values()]) : undefined;
       if (outcome === false) return [];
       marble.kinds.add(part.row.id);
-      const emitsNow = part.row.emits && EMITS_NOW[part.row.id](part);
+      const emitsNow = part.row.emits && EMITS_NOW[part.row.id](part, outcome || {});
       return [{ type: 'touch', marble, part, ...outcome }, ...(emitsNow ? sendPulse(part) : [])];
     };
 

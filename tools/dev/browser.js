@@ -174,7 +174,11 @@ async function openArcade({ landscape = false, touch = false } = {}) {
     const ids = await gameIds();
     if (!ids.includes(id)) throw new Error(`game "${id}" is not registered (registered: ${ids.join(', ') || 'none'}). Check its script tag with \`node tools/dev.js tags\`.`);
     if (skin) await page.evaluate(([gameId, name]) => (Kit.games.find((game) => game.id === gameId).theme = { skin: name }), [id, skin]);
-    await page.evaluate((gameId) => document.getElementById('card-' + gameId).click(), id);
+    // Through the DOM or Kit.play, never a Playwright click: layout must not be able to block a test.
+    await page.evaluate((gameId) => {
+      const card = document.getElementById('card-' + gameId);
+      return card ? card.click() : Kit.play(gameId);
+    }, id);
     await page.waitForTimeout(LAUNCH_MS);
     const crash = await page.evaluate(() => Kit.lastCrash || null);
     if (crash) throw new Error(`game "${id}" crashed while starting: ${crash}`);

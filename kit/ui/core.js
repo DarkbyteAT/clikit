@@ -145,5 +145,6 @@
     .ui-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `);
 
-  Object.assign(Kit.ui, { html, h, signal, computed, effect, batch, useSignal, useComputed, useRef, useEffect, isSignal, read, bind, classes, uid, css, mount, UI_TOKEN_DEFAULTS });
+  // Preact's own `h` is deliberately not exported: `Kit.ui.h(tag, className, text)` is the legacy element builder (kit/ui.js).
+  Object.assign(Kit.ui, { html, signal, computed, effect, batch, useSignal, useComputed, useRef, useEffect, isSignal, read, bind, classes, uid, css, mount, UI_TOKEN_DEFAULTS });
 })();

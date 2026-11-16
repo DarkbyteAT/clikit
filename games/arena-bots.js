@@ -10,9 +10,9 @@
  * reads tells and dashes. The gap between them is how much the game rewards skill.
  */
 (() => {
-  const D = window.Arena.data;
+  const DATA = window.Arena.data;
   const { sim, meta } = window.Arena;
-  const { clamp } = Kit.math;
+  const { clamp, rand } = Kit.math;
 
   /** How the evading bot weighs what it sees. Distances in world units. */
   const EVADE = {
@@ -31,7 +31,11 @@
     wallWeight: 2.5,
     dashWhenWithin: 0.5, // dash when a body is this close to touching
     dashBlastFuse: 0.3, // dash out of a blast about to burst
+    leastPush: 1e-6, // a summed push smaller than this has no direction: stand still
   };
+
+  /** The limits of the `average` pilot: a person's reaction time, a thumb's imprecision, a dash found half the time. */
+  const HUMAN = { reactionSeconds: 0.3, wobble: 0.6, dashChance: 0.5 };
 
   /** Circle-strafing rate of the kiting bot, radians per second, and when it starts moving. */
   const KITE = { turnRate: 0.85, startAt: 1.2 };
@@ -65,7 +69,7 @@
       const weight = 1 / (gap * gap + EVADE.softening);
       pushX += (awayX / distance) * weight;
       pushZ += (awayZ / distance) * weight;
-      if (gap < EVADE.dashWhenWithin + D.ENEMY.touchReachPadding) shouldDash = true;
+      if (gap < EVADE.dashWhenWithin + DATA.ENEMY.touchReachPadding) shouldDash = true;
       if (enemy.mode !== 'tell' && enemy.mode !== 'dash') return;
       // On a charge line: step sideways off it, to whichever side the hero already is.
       const along = awayX * enemy.dirX + awayZ * enemy.dirZ;
@@ -114,7 +118,31 @@
       z -= (hero.z / fromCentre) * overWall * EVADE.wallWeight;
     }
     const length = Math.hypot(x, z);
-    return { x: length > 1e-6 ? x / length : 0, y: length > 1e-6 ? z / length : 0, dash: shouldDash && hero.dashCooldown <= 0 };
+    const hasDirection = length > EVADE.leastPush;
+    return { x: hasDirection ? x / length : 0, y: hasDirection ? z / length : 0, dash: shouldDash && hero.dashCooldown <= 0 };
+  };
+
+  /**
+   * Gives a mover human limits: it only re-reads the screen every `reactionSeconds`, its heading is off by up to
+   * `wobble` radians, and it finds the dash key only `dashChance` of the times it wants it.
+   * @param {Mover} mover
+   * @param {{ reactionSeconds: number, wobble: number, dashChance: number }} limits
+   * @returns {Mover}
+   */
+  const withHumanLimits = (mover, limits) => {
+    /** Each run's last decision and when it was made; a WeakMap so finished runs are forgotten. */
+    const decisions = new WeakMap();
+    return (run) => {
+      const last = decisions.get(run);
+      // Between decisions the stick is held where it was, and a dash is never repeated.
+      if (last && run.world.seconds - last.at < limits.reactionSeconds) return { x: last.x, y: last.y, dash: false };
+      const ideal = mover(run);
+      const heading = Math.atan2(ideal.y, ideal.x) + rand(-limits.wobble, limits.wobble);
+      const isMoving = ideal.x !== 0 || ideal.y !== 0;
+      const decision = { at: run.world.seconds, x: isMoving ? Math.cos(heading) : 0, y: isMoving ? Math.sin(heading) : 0 };
+      decisions.set(run, decision);
+      return { x: decision.x, y: decision.y, dash: ideal.dash && rand() < limits.dashChance };
+    };
   };
 
   /** @type {Object<string, Mover>} Movement policies, weakest first. */
@@ -128,6 +156,8 @@
     },
     /** Reads the swarm, steps off tells and out of blasts, dashes when cornered: a practised player. */
     evade,
+    /** The evading pilot with human limits: it re-decides a few times a second, steers imprecisely and misses half its dashes. */
+    average: withHumanLimits(evade, HUMAN),
     /** The evading pilot without the dash, to measure what the dash alone is worth. */
     evadeNoDash: (run) => ({ ...evade(run), dash: false }),
   };
@@ -200,13 +230,13 @@
   };
 
   /** Everything a profile can unlock: gated rows of ships, arenas and upgrades, and the tiers above the first. */
-  const allUnlockIds = () => [...D.SHIPS, ...D.ARENAS, ...D.UPGRADES].filter((row) => row.unlock).map((row) => row.unlock);
-  const UNLOCKABLE_COUNT = new Set(allUnlockIds()).size + D.TIERS.length - 1;
+  const allUnlockIds = () => [...DATA.SHIPS, ...DATA.ARENAS, ...DATA.UPGRADES].filter((row) => row.unlock).map((row) => row.unlock);
+  const UNLOCKABLE_COUNT = new Set(allUnlockIds()).size + DATA.TIERS.length - 1;
 
   /**
    * The long arc for tools/sim.js (`make sim GAME=arena`): the only action is "fly another run", and what it
    * unlocks is the curve. The simulated player flies the hardest tier it has opened, a random ship and arena it
-   * owns, as the evading pilot with a random pick style.
+   * owns, as the `average` pilot (the evading one with human limits) with a random pick style.
    */
   const progression = {
     createState: () => ({ profile: meta.createProfile() }),
@@ -218,19 +248,19 @@
       try {
         const { profile } = state;
         const open = (table, isOpen) => table.filter((row) => isOpen(profile, row));
-        const tiers = open(D.TIERS, meta.isTierOpen);
-        const loadout = { shipId: sim.pickRandom(open(D.SHIPS, meta.isUnlocked)).id, arenaId: sim.pickRandom(open(D.ARENAS, meta.isUnlocked)).id, tierId: tiers[tiers.length - 1].id };
+        const tiers = open(DATA.TIERS, meta.isTierOpen);
+        const loadout = { shipId: sim.pickRandom(open(DATA.SHIPS, meta.isUnlocked)).id, arenaId: sim.pickRandom(open(DATA.ARENAS, meta.isUnlocked)).id, tierId: tiers[tiers.length - 1].id };
         const tierBefore = profile.stat('tier');
-        const summary = playRun(meta.createRunFor(profile, loadout), { picker: PICKERS[sim.pickRandom(Object.keys(PICKERS))] });
+        const summary = playRun(meta.createRunFor(profile, loadout), { mover: MOVERS.average, picker: PICKERS[sim.pickRandom(Object.keys(PICKERS))] });
         const { unlocked } = meta.recordRun(profile, summary);
-        const tierUnlocks = profile.stat('tier') > tierBefore && profile.stat('tier') < D.TIERS.length ? ['tier' + (profile.stat('tier') + 1)] : [];
+        const tierUnlocks = profile.stat('tier') > tierBefore && profile.stat('tier') < DATA.TIERS.length ? ['tier' + (profile.stat('tier') + 1)] : [];
         return { seconds: Math.max(1, summary.seconds), unlocked: [...unlocked, ...tierUnlocks] };
       } finally {
         Math.random = realRandom;
       }
     },
     summary({ profile }) {
-      const owned = profile.unlocked().length + clamp(profile.stat('tier'), 0, D.TIERS.length - 1);
+      const owned = profile.unlocked().length + clamp(profile.stat('tier'), 0, DATA.TIERS.length - 1);
       return { currency: profile.level, owned, remaining: UNLOCKABLE_COUNT - owned };
     },
   };

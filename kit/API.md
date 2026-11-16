@@ -35,6 +35,18 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [make.js](#makejs) (1) - Kit make: scene-building helpers.
 - [theme.js](#themejs) (6) - Kit theme: the customisation layer that lets each game's HUD look native to that game.
 - [ui.js](#uijs) (2) - Kit ui: the HUD, built from a few primitives.
+- [ui/logic.js](#uilogicjs) (9) - Kit ui logic: the decisions the components make, as pure functions.
+- [ui/core.js](#uicorejs) (0) - Kit ui core: the foundation every component in kit/ui/ stands on.
+- [ui/scroll.js](#uiscrolljs) (0) - Kit ui scroll: the scrollable pane.
+- [ui/button.js](#uibuttonjs) (0) - Kit ui button: the one pressable control.
+- [ui/layout.js](#uilayoutjs) (0) - Kit ui layout: arranging things, and saying there is nothing to arrange.
+- [ui/meter.js](#uimeterjs) (0) - Kit ui meter: numbers a player reads at a glance.
+- [ui/tabs.js](#uitabsjs) (0) - Kit ui tabs: one of several views at a time.
+- [ui/collection.js](#uicollectionjs) (0) - Kit ui collection: things in a row, a column or a grid, and the surface each one sits on.
+- [ui/field.js](#uifieldjs) (0) - Kit ui field: the controls a person sets a value with.
+- [ui/dialog.js](#uidialogjs) (0) - Kit ui dialog: something that takes over until it is dealt with.
+- [ui/notice.js](#uinoticejs) (0) - Kit ui notice: telling the player something without stopping them.
+- [ui/popover.js](#uipopoverjs) (0) - Kit ui popover: a little more, on request, next to the thing it is about.
 - [views.js](#viewsjs) (7) - Kit views: build-crafting screens generated from kit models.
 - [post.js](#postjs) (1) - Kit post: the post-processing chain.
 - [ballistics.js](#ballisticsjs) (5) - Kit ballistics: the maths of thrown things.
@@ -44,7 +56,9 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [touch.js](#touchjs) (6) - Kit touch: the pure models behind finger-skill moments.
 - [pixel.js](#pixeljs) (9) - Kit pixel: pixel-paper sprites.
 - [dev.js](#devjs) (5) - Kit dev: what a developer sees that a player never does.
+- [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
+- [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
 
 ## core.js
 
@@ -1766,6 +1780,8 @@ The anchor closest to a point, if any is within reach.
 
 **Returns** *Anchor\|null*
 
+**Complexity** O(anchors) time, O(1) space
+
 ### `Kit.route.smooth(points, passes = 1)`
 
 Round the corners of a polyline without moving its ends.
@@ -1796,6 +1812,8 @@ Every anchor a polyline passes within `radius` of, ordered along the line.
 - `radius` *number* - world units
 
 **Returns** *Stop[]*
+
+**Complexity** O(anchors x points) time, O(anchors) space
 
 ### `Kit.route.capture(stroke, options)`
 
@@ -1833,9 +1851,16 @@ The two edges of a ribbon of the given width centred on a polyline, for building
 
 **Returns** *{ left: Point, right: Point }[]* one pair per input point, left / right of the direction of travel
 
+**Complexity** O(points) time and space
+
 ### `Kit.follow.start(along = 0, direction = 1)`
 
-_Undocumented: add a JSDoc block in the source._
+A follower at the start of its track (or anywhere on it).
+
+- `[along=0]` *number* - distance from the start, world units
+- `[direction=1]` *1\|-1* - 1 = toward the end
+
+**Returns** *Follower*
 
 ### `Kit.follow.advance(follower, distance, track)`
 
@@ -1950,6 +1975,8 @@ Tick the timer carried by each item and separate the ones that ran out.
 - `[key='timer']` *string*
 
 **Returns** *{ running: Item[], expired: Item[] }* copies with ticked timers, in their original order
+
+**Complexity** O(items) time and space
 
 ```js
 const { running, expired } = Kit.timer.tickAll(orders, dt);
@@ -4149,6 +4176,10 @@ Google Fonts is the only font host the published page's security policy allows.
 >        (choose, banner, panel) and the adapters that draw a Kit model (shop and offer for
 >        Kit.upgrades, checklist for Kit.goals). Everything it adds is removed by `dispose()`,
 >        which the shell calls when the game exits or restarts.
+>        It is also the compatibility layer over the component library in kit/ui/: every call above keeps its
+>        name, its return value and its markup (game themes style `.stat`, `.action`, `#modal .modal-card`,
+>        `.sheet-body` ...), while the modal host is now a native <dialog>, the sheet body is the kit's scroll
+>        pane, and `mount` / `dialog` / `html` open the library to a game. New views should be components.
 > Does not own: how the HUD looks (the base stylesheet in index.html and the game's theme, see
 >        theme.js; a theme may also rebuild a component through `theme.components`), the models
 >        themselves (model.js) or canvas input (input.js).
@@ -4343,9 +4374,35 @@ Makes an element.
 ui.h('div', 'card-title', 'Backpack')
 ```
 
+#### `Kit.ui().mount(view, slot = 'layer')`
+
+Mounts a component view (kit/ui/) into the HUD; it is removed with the rest of the HUD when the game ends.
+
+- `view` *\** - a template built with `ui.html` from Kit.ui components
+- `[slot='layer']` *'layer'\|'stats'\|'actions'* - the HUD region: the middle layer, the top stats row or the bottom bar
+
+**Returns** *{el: HTMLElement, dispose: function(): void}*
+
+```js
+const { html, signal, Meter } = Kit.ui; const heat = signal(0);
+ctx.ui.mount(html`<${Meter} label="Heat" value=${heat} />`);   // then just: heat.value = 0.7
+```
+
+#### `Kit.ui().dialog(spec)`
+
+A component dialog or sheet (Kit.ui.openDialog) that pauses the game while it is open.
+
+- `spec` *Object* - see Kit.ui.openDialog: `{ title, body, actions, variant: 'dialog' | 'sheet', dismissable }`
+
+**Returns** *Promise\<\*\>* the value passed to `close(value)`; undefined when dismissed
+
+```js
+const pick = await ctx.ui.dialog({ title: 'Bait', variant: 'sheet', body: (close) => html`<${List} label="Bait" items=${baits} onSelect=${close} />` });
+```
+
 #### `Kit.ui().dispose()`
 
-Removes everything this HUD added and closes any open modal.
+Removes everything this HUD added and closes any open modal, dialog or notice.
 
 ### `Kit.ui.h`
 
@@ -4363,6 +4420,277 @@ The element builder is also available without a HUD instance (the shell builds t
   - `[desc]` *string*
   - `[tag]` *string* - small badge ("New", "Lv 3")
   - `[color]` *string* - CSS colour of the option's accent
+
+## ui/logic.js
+
+> Kit ui logic: the decisions the components make, as pure functions.
+>
+> Owns:  `Kit.uiLogic`: the notice queue (what is showing, what waits), roving focus (which item an arrow key
+>        lands on), selection (single and multiple), text search over rows, fraction clamping and where a popover goes.
+> Does not own: any element or event (the component files beside this one apply these decisions to the DOM).
+>
+> Pure: runs in node and is unit-tested by tools/test-kit.js. It loads before kit/ui.js and needs nothing.
+
+### `Kit.uiLogic.createQueue(limit = 1)`
+
+An empty notice queue.
+
+- `[limit=1]` *number* - how many notices may be on screen together
+
+**Returns** *NoticeQueue*
+
+### `Kit.uiLogic.enqueue(queue, notice)`
+
+Adds a notice: it shows at once if a slot is free, otherwise it waits its turn.
+
+- `queue` *NoticeQueue*
+- `notice` *Object* - anything with a unique `id`
+
+**Returns** *NoticeQueue* a new queue; the input is not changed
+
+**Complexity** O(showing + waiting) time and space (the lists are copied)
+
+### `Kit.uiLogic.dismiss(queue, id)`
+
+Removes a notice by id (shown or still waiting) and promotes the longest-waiting notice into any freed slot.
+
+- `queue` *NoticeQueue*
+- `id` *string\|number*
+
+**Returns** *NoticeQueue* a new queue
+
+**Complexity** O(showing + waiting) time and space
+
+### `Kit.uiLogic.rovingIndex(key, index, count, isDisabled = () => false)`
+
+Where focus goes when a key is pressed in a tab list, list or grid: arrows step and wrap around, Home and
+End jump, and disabled items are skipped.
+
+- `key` *string* - a KeyboardEvent.key
+- `index` *number* - the focused item
+- `count` *number* - how many items there are
+- `[isDisabled]` *function(number): boolean* - items focus must skip
+
+**Returns** *number* the new index, or -1 when the key is not a focus key (or every other item is disabled)
+
+**Complexity** O(count) time in the worst case (a run of disabled items), O(1) space
+
+```js
+rovingIndex('ArrowRight', 2, 3) // 0: wraps to the first tab
+```
+
+### `Kit.uiLogic.toggleSelection(selected, id, multiple = false)`
+
+The selection after an item is picked. Single selection replaces; multiple selection toggles.
+
+- `selected` *\*\|Array* - the current selection: one id (or null), or an array of ids when `multiple`
+- `id` *\** - the picked item
+- `[multiple=false]` *boolean*
+
+**Returns** *\*\|Array* the new selection, in the same shape
+
+```js
+toggleSelection(['a'], 'b', true) // ['a', 'b'];  toggleSelection('a', 'b') // 'b'
+```
+
+### `Kit.uiLogic.isSelected(selected, id)`
+
+Is this id part of the selection (either shape)?
+
+### `Kit.uiLogic.searchRows(rows, query, fields)`
+
+Rows whose text contains every word of a query, ignoring case. An empty query keeps every row.
+
+- `rows` *Object[]*
+- `query` *string* - what the person typed
+- `fields` *string[]* - the row properties to search
+
+**Returns** *Object[]* matching rows, in their original order
+
+**Complexity** O(rows x words x text length) time, O(rows) space
+
+```js
+searchRows(games, 'neon run', ['name', 'tagline'])
+```
+
+### `Kit.uiLogic.clampFraction(value)`
+
+A meter's value as a fraction 0..1; anything that is not a finite number counts as empty.
+
+### `Kit.uiLogic.placePanel(anchor, panel, viewport)`
+
+Where a panel goes: under its anchor (above when there is no room below), kept on screen sideways.
+Pure geometry: boxes in, a position out.
+
+- `anchor` *{left: number, top: number, bottom: number, width: number}* - the button's box
+- `panel` *{width: number, height: number}* - the panel's size
+- `viewport` *{width: number, height: number}*
+
+**Returns** *{left: number, top: number}* viewport coordinates of the panel's top-left corner
+
+### Types
+
+- **NoticeQueue**
+  - `showing` *Object[]* - notices on screen, oldest first (at most `limit`)
+  - `waiting` *Object[]* - notices held back until a slot frees, in arrival order
+  - `limit` *number* - how many may show at once
+
+## ui/core.js
+
+> Kit ui core: the foundation every component in kit/ui/ stands on.
+>
+> Owns:  the template tag (`Kit.ui.html`, htm bound to Preact), reactive state (`signal`, `computed`, `effect`,
+>        `batch`, straight from @preact/signals; `useSignal`, `useComputed`, `useRef`, `useEffect` for component
+>        authors), `bind` (a Kit model in, a signal out), `mount` (a view into the
+>        page, with a dispose handle), the one stylesheet the components share (`css`), and small helpers
+>        (`read`, `classes`, `uid`).
+> Does not own: any component (one file per concern beside this one), the theme tokens (kit/theme.js) or the
+>        legacy HUD calls (kit/ui.js, which now leans on these pieces).
+>
+> Why Preact + htm + signals: see "UI components" in DECISIONS.md. In short: templates with no build step, the
+> same component functions work under JSX later, and a signal read in a template updates only the text node or
+> attribute that reads it, so a HUD bound to game state costs O(values that changed) per frame, not a re-render.
+>
+> A component is a plain function from props to a template. Any prop may be a plain value or a signal:
+>
+>   const { html, signal, mount, Meter } = Kit.ui;
+>   const heat = signal(0.2);
+>   mount(html`<${Meter} label="Heat" value=${heat} />`, ctx.ui.el('div'));
+>   heat.value = 0.8;        // the bar moves; nothing else is touched
+>
+> Needs the DOM; exercised by tools/test-ui.js (in a browser) and the component gallery (Kit.play('gallery')).
+
+## ui/scroll.js
+
+> Kit ui scroll: the scrollable pane.
+>
+> Owns:  `Kit.ui.ScrollPane` (the component) and `Kit.ui.scrollable` (the same behaviour for an element you
+>        already have): native scrolling with momentum, overscroll kept inside the pane, optional scroll snap,
+>        fade edges that show there is more, keyboard scrolling, and safe-area padding at the screen's edge.
+> Does not own: what is inside the pane, or its height (give it one: `fill` inside a flex column, or a max-height).
+>
+> Why native: the browser's scroller is the only one that gets momentum, rubber-banding, accessibility and
+> 120 Hz for free. Nothing here listens to touch events; the one listener is a passive `scroll` that keeps the
+> fade edges honest. tools/touch-scroll.js proves a pane moves under a real finger drag.
+
+### Types
+
+- **ScrollOptions**
+  - `[axis='y']` *'y'\|'x'* - the direction that scrolls
+  - `[snap=false]` *false\|'start'\|'center'* - snap children to the pane's start or centre when a scroll ends
+  - `[fade=true]` *boolean* - fade the edge(s) beyond which more content lies
+  - `[safe=false]` *boolean* - pad the far end by the phone's safe-area inset (for a pane that reaches the screen edge)
+  - `[label]` *string* - accessible name; a pane that has one is announced as a region
+
+## ui/button.js
+
+> Kit ui button: the one pressable control.
+>
+> Owns:  `Kit.ui.Button`: a native <button> with variants (default, primary, quiet, danger) and the states a
+>        button can be in: pressed (a toggle), disabled, busy.
+> Does not own: what a press does. Menus of buttons are a `Cluster` (layout.js); a row of exclusive choices is `Tabs`.
+
+## ui/layout.js
+
+> Kit ui layout: arranging things, and saying there is nothing to arrange.
+>
+> Owns:  `Kit.ui.Stack` (a column that can become a row when its own container is wide enough; a container
+>        query, so it responds to the space it is given, not to the screen), `Kit.ui.Cluster` (a row that wraps),
+>        and `Kit.ui.Empty` (the empty state of a list, search or inventory).
+> Does not own: scrolling (scroll.js) or surfaces (collection.js).
+
+## ui/meter.js
+
+> Kit ui meter: numbers a player reads at a glance.
+>
+> Owns:  `Kit.ui.Meter` (a level: health, heat, fuel), `Kit.ui.Progress` (work toward an end, or "working" when
+>        the end is unknown), `Kit.ui.Stat` (a labelled value) and `Kit.ui.Pips` (a count drawn as tokens).
+> Does not own: the legacy HUD's `ui.stat` / `ui.progress` / `ui.pips` (kit/ui.js keeps those calls and their
+>        markup, which game themes style); these are the same ideas as components for new views.
+>
+> Each takes a plain value or a signal. With a signal only the text node or the one style property that shows
+> the value is written when it changes: O(1) per changed value, no re-render.
+
+## ui/tabs.js
+
+> Kit ui tabs: one of several views at a time.
+>
+> Owns:  `Kit.ui.Tabs`: a tab list (arrow keys, Home and End move between tabs; only the selected tab is in the
+>        Tab order) and the panel of the selected tab.
+> Does not own: what the panels hold. A panel that should scroll wraps its content in a ScrollPane.
+
+### Types
+
+- **TabSpec**
+  - `id` *string*
+  - `label` *string*
+  - `content` *\*\|function(): \** - the panel: a template, or a function returning one (built only while selected)
+  - `[disabled]` *boolean*
+
+## ui/collection.js
+
+> Kit ui collection: things in a row, a column or a grid, and the surface each one sits on.
+>
+> Owns:  `Kit.ui.Card` (a surface with a title, text, a mark and a tag; a real <button> when it can be pressed),
+>        `Kit.ui.List` and `Kit.ui.Grid` (items with single or multiple selection, a listbox to assistive
+>        technology: arrows move, Home and End jump, Enter or Space selects).
+> Does not own: scrolling (wrap a long list in a ScrollPane) or where the items come from.
+
+### Types
+
+- **CollectionProps**
+  - `items` *Object[]* - rows; each needs a unique `id` (or pass `idOf`)
+  - `[render]` *function(Object, boolean): \** - draws one item given (item, isSelected); default: its `label` or `name`
+  - `[selected]` *\*\|Array\|Object* - the selection: an id (single) or array of ids (multiple), plain or a signal you own
+  - `[multiple=false]` *boolean* - toggle items in and out of the selection instead of replacing it
+  - `[onSelect]` *function(\*\|Array, Object): void* - called with (new selection, the item that was picked)
+  - `[idOf]` *function(Object): \** - how to read an item's id (default: `item.id`)
+  - `[isDisabled]` *function(Object): boolean* - items that cannot be picked
+  - `label` *string* - accessible name of the collection
+
+## ui/field.js
+
+> Kit ui field: the controls a person sets a value with.
+>
+> Owns:  `Kit.ui.TextField` (a labelled text or search input), `Kit.ui.Toggle` (an on / off switch) and
+>        `Kit.ui.Slider` (a number in a range). All three are native inputs, so the keyboard, the on-screen
+>        keyboard, autofill and assistive technology already know them.
+> Does not own: validation rules (pass `error` to show the message your rule produced).
+>
+> `value` / `checked` may be a signal you own: the control writes to it as the person changes it, and shows it
+> when you change it. Key presses inside a control never reach the game underneath.
+
+## ui/dialog.js
+
+> Kit ui dialog: something that takes over until it is dealt with.
+>
+> Owns:  `Kit.ui.Dialog` (a centred card) and `Kit.ui.Sheet` (the same thing rising from the bottom edge, for
+>        long content on a phone), both on the native <dialog>: the browser traps focus inside, makes the rest
+>        of the page inert, closes on Escape and gives focus back to whatever had it. `Kit.ui.openDialog` shows
+>        one without writing a component and returns a promise of its result.
+> Does not own: pausing the game (ctx.ui.dialog does that for a running game) or the legacy modal (`ui.choose`,
+>        `ui.banner`, `ui.panel` in kit/ui.js, which share the native element but keep their own markup).
+>
+> The body is a ScrollPane, so content taller than the screen scrolls inside the dialog and never behind it.
+
+## ui/notice.js
+
+> Kit ui notice: telling the player something without stopping them.
+>
+> Owns:  the toast queue (`Kit.ui.notify`: short messages that stack, a few at a time, and leave by themselves)
+>        and the banner queue (`Kit.ui.announce`: one message at a time across the top that stays until it is
+>        dismissed or acted on, the next one following it). Both are live regions, so screen readers speak them.
+> Does not own: the legacy centred callout `ui.toast` (kit/ui.js, an animation themed per game) or modal
+>        results (`ui.banner`). The queue's rules are pure (kit/ui/logic.js) and unit-tested.
+
+## ui/popover.js
+
+> Kit ui popover: a little more, on request, next to the thing it is about.
+>
+> Owns:  `Kit.ui.Popover` (a button that opens a floating panel: tap or Enter opens it, a tap elsewhere or
+>        Escape closes it; the native popover API, so it sits above everything, dialogs included) and
+>        `Kit.ui.Tooltip` (a short description shown on hover, on keyboard focus and on a touch press).
+> Does not own: menus of commands (use a Sheet with a List on a phone) or modal questions (dialog.js).
 
 ## views.js
 
@@ -4644,6 +4972,8 @@ Predicts a flight path by stepping the launch state until `stopWhen` says the po
 
 **Returns** *{ points: Vector[], end: Vector, isBlocked: boolean }* `points` are the free-flight positions after each step, `end` is the blocked point (or the last free one when nothing was hit), `isBlocked` says which.
 
+**Complexity** O(maxSteps) calls of `stopWhen` and O(maxSteps) points of memory; with an obstacle list the caller's `stopWhen` makes it O(maxSteps x obstacles).
+
 ```js
 const flight = Kit.ballistics.trace({ origin, velocity, stopWhen: (point) => point.y < ballRadius });
 flight.points.filter((_, index) => index % 3 === 0).forEach(placeDot);
@@ -4659,6 +4989,8 @@ box corners outward slightly, which is the right bias for a preview: it never dr
 - `box` *Box*
 
 **Returns** *boolean*
+
+**Complexity** O(1): three axis comparisons.
 
 ### `Kit.ballistics.blastKick(centre, point, { radius, kick, lift = 0 })`
 
@@ -4734,11 +5066,16 @@ _Undocumented: add a JSDoc block in the source._
 
 Step a slot to the next id in `ids` that fits the budget, wrapping round: the one-tap way to edit a loadout.
 
+- `slot` *number* - Slot index, from 0.
+- `ids` *string[]* - The ids on offer, in the order to step through.
+
 **Returns** *string\|null* the slot's pick afterwards (unchanged when nothing else fits).
 
 #### `Kit.loadout().on(listener)`
 
 Subscribe to changes.
+
+- `listener` *(change: { slot: number, id: string\|null }) =\> void*
 
 **Returns** *() =\> void* unsubscribe.
 
@@ -5369,6 +5706,18 @@ Opens the overlay when it is closed and closes it when it is open.
   - `triangles` *number* - most triangles in one frame
   - `meshes` *number* - visible meshes, points, lines and sprites in the scene at the end
 
+## ui/gallery.js
+
+> Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
+>
+> Owns:  the `gallery` screen (`Kit.play('gallery')`, or "Components" in the menu footer): a skin switcher and
+>        one section per component file, with live values so bindings can be watched and a readout that shows a
+>        pane really moved under a finger (useful on a real phone, where the automated touch test cannot go).
+> Does not own: the components (the files beside this one). A new component is added here in the same change.
+>
+> It is registered as a hidden game, so the shell gives it a HUD, a back button and clean-up, and
+> `bun tools/smoke.js gallery` plays it like any other.
+
 ## shell.js
 
 > Kit shell: the renderer, the frame loop, the game lifecycle and the menu. Loaded last, after
@@ -5408,3 +5757,17 @@ Test hook: tools/smoke.js switches bloom off while playing and on for screenshot
   - `h` *number* - height, CSS pixels
   - `aspect` *number* - w / h
   - `portrait` *boolean* - is it at least as tall as it is wide?
+
+## ui/menu.js
+
+> Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
+>
+> Owns:  what is inside `#menu-body`: a search field, the scroll pane of game cards (`#menu-list`, the element
+>        tools/touch-scroll.js drags), the empty state of a search with no match, and the footer's "Components"
+>        link to the gallery.
+> Does not own: the menu's frame, title and footer (index.html), launching games (kit/shell.js, through
+>        `Kit.play`) or the mute button (kit/shell.js).
+>
+> Loaded after kit/shell.js. The shell has already filled `#cards` with plain buttons; this file replaces them,
+> keeping each card's id (`card-<game id>`), which the smoke and play tools press. If the component library did
+> not load, this file does nothing and the shell's cards stay, inside a plain native scroller.

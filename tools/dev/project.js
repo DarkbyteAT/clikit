@@ -81,8 +81,17 @@ const listScripts = (folder) =>
     .sort()
     .map((name) => `${folder}/${name}`);
 
-/** Every kit and game file on disk. */
-const listPageFiles = () => [...listScripts('kit'), ...listScripts('games')];
+/** Every .js file inside a project folder and its subfolders (kit/ui/ holds the component library). */
+const listScriptsDeep = (folder) => [
+  ...listScripts(folder),
+  ...fs
+    .readdirSync(path.join(ROOT, folder), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => listScriptsDeep(`${folder}/${entry.name}`)),
+];
+
+/** Every kit and game file on disk, subfolders included. */
+const listPageFiles = () => [...listScriptsDeep('kit'), ...listScriptsDeep('games')];
 
 /** Reads a project file as text. */
 const readProjectFile = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
@@ -93,4 +102,4 @@ const writeProjectFile = (relativePath, text) => {
   fs.writeFileSync(path.join(ROOT, relativePath), text);
 };
 
-module.exports = { ROOT, SHELL_SRC, tagFor, scriptSources, insertScriptTag, removeScriptTag, compareTags, belongsToGame, listScripts, listPageFiles, readProjectFile, writeProjectFile };
+module.exports = { ROOT, SHELL_SRC, tagFor, scriptSources, insertScriptTag, removeScriptTag, compareTags, belongsToGame, listScripts, listScriptsDeep, listPageFiles, readProjectFile, writeProjectFile };

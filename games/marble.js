@@ -701,7 +701,8 @@
         if (!board) goals.track('portal');
       },
       splitter: () => sfx.play('click', { pitch: 1.1 }),
-      counter: ({ part }) => {
+      counter: ({ part, isCounted }) => {
+        if (!isCounted) return;
         const every = poseOf(part.piece).every;
         // Counts run 1..every and then start again; the pips show how close the next pulse is.
         const shown = ((part.count - 1) % every) + 1;

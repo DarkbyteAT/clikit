@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["kit/*.js", "games/*.js", "tools/dev/types/globals.d.ts"]
+  "include": ["kit/**/*.js", "games/**/*.js", "tools/dev/types/globals.d.ts"]
 }

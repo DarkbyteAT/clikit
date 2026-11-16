@@ -11,7 +11,7 @@
  */
 (() => {
   if (!Kit.ui.html) return;
-  const { html, read, isSignal, classes, css, uid, useRef } = Kit.ui;
+  const { html, read, isSignal, classes, css, uid, useRef, useSignal } = Kit.ui;
 
   /** Writes a control's new value into the caller's signal (when there is one) and tells the caller. */
   const report = (target, value, onChange) => {
@@ -97,7 +97,10 @@
    */
   const Slider = ({ label, value, min = 0, max = 1, step = 0.01, onInput, format, disabled, id, class: className }) => {
     const fieldId = useRef(id || uid('slider')).current;
-    const current = Number(read(value));
+    // A plain `value` is only the starting point: the slider then keeps its own state, so its readout follows the thumb.
+    const own = useSignal(isSignal(value) ? undefined : value);
+    const state = isSignal(value) ? value : own;
+    const current = Number(read(state));
     const fraction = (current - min) / (max - min || 1);
     const shown = format ? format(current) : `${Math.round(fraction * 100)}%`;
     return html`<div class=${classes('ui-field ui-slider', className)}>
@@ -111,7 +114,7 @@
         value=${current}
         disabled=${Boolean(read(disabled))}
         style=${`--ui-value: ${fraction}`}
-        onInput=${(event) => report(value, Number(event.target.value), onInput)}
+        onInput=${(event) => report(state, Number(event.target.value), onInput)}
         onKeyDown=${keepFromGame}
       />
     </div>`;

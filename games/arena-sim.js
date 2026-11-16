@@ -14,8 +14,8 @@
  */
 (() => {
   const { rand, damp, clamp, shuffle, pick, TAU } = Kit.math;
-  const D = window.Arena.data;
-  const { CAPACITY, HERO, DASH, GRAZE, FOCUS, SHOT, BLADE, PULSE, MINE, GEM, CHAIN, ENEMIES, AFFIXES, ELITE, BOSS, PACE, ENEMY, LEVEL_UP } = D;
+  const DATA = window.Arena.data;
+  const { CAPACITY, HERO, DASH, GRAZE, FOCUS, SHOT, BLADE, PULSE, MINE, GEM, CHAIN, ENEMIES, AFFIXES, ELITE, BOSS, PACE, ENEMY, LEVEL_UP } = DATA;
   const SPAWN_TABLE = Kit.spawnTable(ENEMIES);
 
   // =====================================================================================================================
@@ -65,7 +65,7 @@
     const isLance = build.pierce > 0;
     return {
       // Area, not width, tracks damage: doubling damage should not double the apparent size.
-      width: SHOT.width * Math.sqrt(build.damage / D.HERO_BASE.damage) * build.shotWidth,
+      width: SHOT.width * Math.sqrt(build.damage / DATA.HERO_BASE.damage) * build.shotWidth,
       length: isLance ? Math.min(SHOT.mostLanceLength, SHOT.lanceLength + build.pierce * SHOT.lanceLengthPerPierce) : SHOT.length,
       speed: isLance ? SHOT.lanceSpeed : SHOT.speed,
       isLance,
@@ -83,8 +83,8 @@
     let reached = level;
     let banked = xp + gained;
     // One big gem can cross several levels at once; each crossing pays that level's own price.
-    while (banked >= D.XP_TO_NEXT_LEVEL(reached)) {
-      banked -= D.XP_TO_NEXT_LEVEL(reached);
+    while (banked >= DATA.XP_TO_NEXT_LEVEL(reached)) {
+      banked -= DATA.XP_TO_NEXT_LEVEL(reached);
       reached++;
     }
     return { level: reached, xp: banked, levelsGained: reached - level };
@@ -210,6 +210,7 @@
    * @property {Object[]} blasts       delayed area hits: { x, z, radius, fuse, total, damage }
    * @property {Object[]} mines        { x, z, age }
    * @property {Object} hash           Kit.spatialHash over the live enemies, rebuilt every frame
+   * @property {number} largestEnemyRadius the largest live body this frame; spatial queries are padded by it
    */
 
   /**
@@ -231,7 +232,7 @@
    */
 
   /** @returns {Object} a HeroBuild: a plain snapshot of the stats, so the hot loops read properties, not a Map. */
-  const readBuild = (stats) => Object.keys(D.HERO_BASE).reduce((build, name) => ({ ...build, [name]: stats.get(name) }), {});
+  const readBuild = (stats) => Object.keys(DATA.HERO_BASE).reduce((build, name) => ({ ...build, [name]: stats.get(name) }), {});
 
   /**
    * Re-reads the build after the stats changed and keeps hit points inside the new maximum.
@@ -256,16 +257,16 @@
    * @throws {Error} on an unknown ship, arena or tier id (Kit.table names the id)
    * @example const run = Arena.sim.createRun({ shipId: 'anvil', unlocked: profile.unlocked() });
    */
-  const createRun = ({ shipId = D.DEFAULT_LOADOUT.shipId, arenaId = D.DEFAULT_LOADOUT.arenaId, tierId = D.DEFAULT_LOADOUT.tierId, unlocked = [], rerolls = 0 } = {}) => {
-    const ship = D.SHIPS.byId(shipId);
-    const arena = D.ARENAS.byId(arenaId);
-    const tier = D.TIERS.byId(tierId);
-    const stats = Kit.stats({ ...D.HERO_BASE, ...ship.base }, { limits: D.HERO_LIMITS });
+  const createRun = ({ shipId = DATA.DEFAULT_LOADOUT.shipId, arenaId = DATA.DEFAULT_LOADOUT.arenaId, tierId = DATA.DEFAULT_LOADOUT.tierId, unlocked = [], rerolls = 0 } = {}) => {
+    const ship = DATA.SHIPS.byId(shipId);
+    const arena = DATA.ARENAS.byId(arenaId);
+    const tier = DATA.TIERS.byId(tierId);
+    const stats = Kit.stats({ ...DATA.HERO_BASE, ...ship.base }, { limits: DATA.HERO_LIMITS });
     const isOpen = (row) => !row.unlock || unlocked.includes(row.unlock);
     // An evolution is only in the pool when both of its parents are: Kit.upgrades refuses rules about rows it does not hold.
-    const pool = D.UPGRADES.filter((row) => isOpen(row) && [].concat(row.requiresMax || []).every((parentId) => isOpen(D.UPGRADES.find((parent) => parent.id === parentId))));
+    const pool = DATA.UPGRADES.filter((row) => isOpen(row) && [].concat(row.requiresMax || []).every((parentId) => isOpen(DATA.UPGRADES.find((parent) => parent.id === parentId))));
     const upgrades = Kit.upgrades(pool, { stats, slots: ship.slots });
-    const synergies = Kit.synergy(D.SYNERGIES, { stats });
+    const synergies = Kit.synergy(DATA.SYNERGIES, { stats });
     const build = readBuild(stats);
     const world = {
       seconds: 0, frame: 0, wave: 1,
@@ -280,7 +281,7 @@
       killCombo: 0, killComboTimer: 0, gemStreak: 0, sinceHurt: 99, nextSerial: 0,
       view: { x: 0, z: 0, halfWidth: 7.5, halfHeight: 15 },
       enemies: [], shots: [], gems: [], blasts: [], mines: [],
-      hash: Kit.spatialHash(D.HASH_CELL_SIZE),
+      hash: Kit.spatialHash(DATA.HASH_CELL_SIZE), largestEnemyRadius: 0,
     };
     const run = { world, ship, arena, tier, stats, upgrades, synergies };
     ship.startUpgrades.forEach((id) => upgrades.grant(id));
@@ -512,7 +513,7 @@
    * @complexity O(enemies in the cells the circle touches) through the spatial hash, not O(all enemies)
    */
   const blastEnemies = (run, x, z, radius, force, damage, cues) => {
-    run.world.hash.query(x, z, radius + D.LARGEST_ENEMY_RADIUS, (enemy) => {
+    run.world.hash.query(x, z, radius + run.world.largestEnemyRadius, (enemy) => {
       if (enemy.isDead) return;
       const awayX = enemy.x - x;
       const awayZ = enemy.z - z;
@@ -597,7 +598,7 @@
     hero.z += hero.dashZ * DASH.speed * dt;
     hero.dashFor -= dt;
     if (build.dashDamage) {
-      world.hash.query(hero.x, hero.z, DASH.ramReach + D.LARGEST_ENEMY_RADIUS, (enemy) => {
+      world.hash.query(hero.x, hero.z, DASH.ramReach + world.largestEnemyRadius, (enemy) => {
         // lastRamDash makes one dash hit each enemy once, however many frames they overlap.
         if (enemy.lastRamDash === hero.dashId || Math.hypot(enemy.x - hero.x, enemy.z - hero.z) > DASH.ramReach + enemy.size) return;
         enemy.lastRamDash = hero.dashId;
@@ -730,7 +731,7 @@
     bladeOffsets(world.bladeAngle, build.blades, build.bladeRadius).forEach((blade) => {
       const bladeX = hero.x + blade.x;
       const bladeZ = hero.z + blade.z;
-      world.hash.query(bladeX, bladeZ, BLADE.hitPadding + D.LARGEST_ENEMY_RADIUS, (enemy) => {
+      world.hash.query(bladeX, bladeZ, BLADE.hitPadding + world.largestEnemyRadius, (enemy) => {
         const offsetX = enemy.x - bladeX;
         const offsetZ = enemy.z - bladeZ;
         const reach = enemy.size + BLADE.hitPadding;
@@ -767,7 +768,7 @@
       mine.age += dt;
       if (mine.age > MINE.lifetime) mine.isSpent = true;
       if (mine.isSpent || mine.age < MINE.armSeconds) return;
-      world.hash.query(mine.x, mine.z, MINE.triggerPadding + D.LARGEST_ENEMY_RADIUS, (enemy) => {
+      world.hash.query(mine.x, mine.z, MINE.triggerPadding + world.largestEnemyRadius, (enemy) => {
         if (mine.isSpent || enemy.isDead || Math.hypot(enemy.x - mine.x, enemy.z - mine.z) > enemy.size + MINE.triggerPadding) return;
         mine.isSpent = true;
         blastEnemies(run, mine.x, mine.z, build.mineRadius, MINE.force, build.damage * MINE.damageScale, cues);
@@ -818,7 +819,7 @@
       if (shot.life <= 0) shot.isSpent = true;
       sweep.shot = shot;
       // One query centred on the middle of this frame's travel covers the whole swept segment.
-      world.hash.query(shot.x + shot.directionX * travel * 0.5, shot.z + shot.directionZ * travel * 0.5, travel * 0.5 + D.LARGEST_ENEMY_RADIUS + SHOT.hitPadding * world.build.shotWidth, visitShotCandidate);
+      world.hash.query(shot.x + shot.directionX * travel * 0.5, shot.z + shot.directionZ * travel * 0.5, travel * 0.5 + world.largestEnemyRadius + SHOT.hitPadding * world.build.shotWidth, visitShotCandidate);
       shot.x += shot.directionX * travel;
       shot.z += shot.directionZ * travel;
     }
@@ -1004,7 +1005,7 @@
       else enemy.angle = type.spin ? enemy.angle + type.spin * dt : Math.atan2(forwardX, forwardZ);
       // Push overlapping neighbours apart so the swarm reads as bodies, not a blob.
       crowding.enemy = enemy;
-      world.hash.query(enemy.x, enemy.z, enemy.size + D.LARGEST_ENEMY_RADIUS, visitNeighbour);
+      world.hash.query(enemy.x, enemy.z, enemy.size + world.largestEnemyRadius, visitNeighbour);
       if (world.outcome) continue;
       const touchReach = enemy.size * ENEMY.touchReachScale + ENEMY.touchReachPadding;
       if (enemy.age > ENEMY.touchGraceSeconds && distance < touchReach) hurtHero(run, enemy.touch, cues);
@@ -1063,7 +1064,13 @@
    */
   const rebuildHash = (world) => {
     world.hash.clear();
-    for (const enemy of world.enemies) world.hash.insert(enemy, enemy.x, enemy.z);
+    // Queries are padded by the largest body alive, not the largest possible one: with no warden on the floor a
+    // query touches about half as many cells.
+    world.largestEnemyRadius = 0;
+    for (const enemy of world.enemies) {
+      world.hash.insert(enemy, enemy.x, enemy.z);
+      if (enemy.size > world.largestEnemyRadius) world.largestEnemyRadius = enemy.size;
+    }
   };
 
   /**
@@ -1190,14 +1197,14 @@
    * @param {Object} [hooks] Kit.profile hooks: onAchievement, onUnlock, onLevel
    * @returns {Object} a Kit.profile
    */
-  const createProfile = (save, hooks = {}) => Kit.profile({ save, achievements: D.ACHIEVEMENTS, levelCurve: D.ACCOUNT.levelCurve, ...hooks });
+  const createProfile = (save, hooks = {}) => Kit.profile({ save, achievements: DATA.ACHIEVEMENTS, levelCurve: DATA.ACCOUNT.levelCurve, ...hooks });
 
   /** Is a ship, arena or upgrade row available to this profile? */
   const isUnlocked = (profile, row) => !row.unlock || profile.isUnlocked(row.unlock);
   /** Is a tier open? Tier N opens when tier N - 1 has been cleared. */
   const isTierOpen = (profile, tier) => tier.rank <= profile.stat('tier') + 1;
   /** Rerolls a run starts with: one per account level above the first, up to the cap. */
-  const startingRerolls = (profile) => clamp(profile.level - 1, 0, D.ACCOUNT.mostStartingRerolls);
+  const startingRerolls = (profile) => clamp(profile.level - 1, 0, DATA.ACCOUNT.mostStartingRerolls);
 
   /**
    * The loadout a profile may actually fly: any part that is locked (or unknown, from an old save) falls back to the default.
@@ -1208,9 +1215,9 @@
   const validLoadout = (profile, wanted = {}) => {
     const choose = (table, id, isOpen, fallback) => (table.some((row) => row.id === id && isOpen(profile, row)) ? id : fallback);
     return {
-      shipId: choose(D.SHIPS, wanted.shipId, isUnlocked, D.DEFAULT_LOADOUT.shipId),
-      arenaId: choose(D.ARENAS, wanted.arenaId, isUnlocked, D.DEFAULT_LOADOUT.arenaId),
-      tierId: choose(D.TIERS, wanted.tierId, isTierOpen, D.DEFAULT_LOADOUT.tierId),
+      shipId: choose(DATA.SHIPS, wanted.shipId, isUnlocked, DATA.DEFAULT_LOADOUT.shipId),
+      arenaId: choose(DATA.ARENAS, wanted.arenaId, isUnlocked, DATA.DEFAULT_LOADOUT.arenaId),
+      tierId: choose(DATA.TIERS, wanted.tierId, isTierOpen, DATA.DEFAULT_LOADOUT.tierId),
     };
   };
 
@@ -1223,7 +1230,7 @@
    */
   const recordRun = (profile, summary) => {
     const before = profile.unlocked();
-    const { ACCOUNT } = D;
+    const { ACCOUNT } = DATA;
     ['kills', 'elites', 'bosses', 'gems', 'grazes', 'evolutions'].forEach((name) => profile.count(name, summary[name]));
     profile.best('bestLevel', summary.level);
     profile.best('bestSeconds', summary.seconds);
