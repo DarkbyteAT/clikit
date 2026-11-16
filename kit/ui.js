@@ -33,7 +33,7 @@
   const h = (tag, className, text) => {
     const element = document.createElement(tag);
     if (className) element.className = className;
-    if (text !== undefined) element.textContent = text;
+    if (text !== undefined) element.textContent = String(text);
     return element;
   };
 
@@ -87,7 +87,7 @@
     const statsRow = document.getElementById('stats');
     const hudLayer = document.getElementById('hud-layer');
     const actionBar = document.getElementById('actions');
-    const modal = document.getElementById('modal');
+    const modal = /** @type {HTMLDialogElement} */ (document.getElementById('modal'));
     /** Every element this HUD added, so dispose() can take them all away. */
     const ownedElements = [];
 
@@ -117,7 +117,7 @@
 
     /** A `<button type="button">` wired to a handler. */
     const button = (className, text, handler) => {
-      const element = h('button', className, text);
+      const element = /** @type {HTMLButtonElement} */ (h('button', className, text));
       element.type = 'button';
       element.addEventListener('click', withClickSound(handler));
       return element;
@@ -302,7 +302,7 @@
      * The host is a native <dialog> shown with showModal(): the browser keeps keyboard focus inside it, makes the
      * rest of the page inert and returns focus when it closes. Focus starts on the card, not on a button, so a
      * key the player was already holding for the game cannot press an option the moment the modal appears.
-     * @param {function(HTMLElement, function(*=): void): void} build
+     * @param {(card: HTMLElement, close: (value?: any) => void) => void} build
      * @param {{escapeCloses?: boolean}} [options] `escapeCloses`: Escape dismisses the modal (resolving undefined);
      *   leave it off when the player must answer
      */
@@ -383,7 +383,7 @@
 
     /**
      * A full-height scrollable sheet for inventories, skill trees and shops.
-     * @param {{title: string, build: function(HTMLElement, function(*=): void): void, closeLabel?: string}} spec
+     * @param {{title: string, build: (body: HTMLElement, close: (value?: any) => void) => void, closeLabel?: string}} spec
      *   `build(body, close)` fills `body` with your own elements; call `close(value)` to dismiss
      * @returns {Promise<*>} the value passed to close (undefined from the Close button)
      * @example ui.panel({ title: 'Backpack', build: (body, close) => inventory.bag.forEach((item) => body.append(ui.h('div', 'item', item.name))) });

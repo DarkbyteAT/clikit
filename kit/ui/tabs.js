@@ -26,6 +26,7 @@
    * @param {function(string): void} [props.onSelect] called with the id when the selection changes
    * @param {string} [props.label] accessible name of the tab list
    * @param {boolean} [props.fill] let the panel take the remaining height of a flex column
+   * @param {string} [props.class] extra CSS classes
    * @example html`<${Tabs} label="Backpack" tabs=${[{ id: 'bag', label: 'Bag', content: bagView }, { id: 'gear', label: 'Gear', content: gearView }]} />`
    */
   const Tabs = ({ tabs, selected, onSelect, label, fill = false, class: className }) => {

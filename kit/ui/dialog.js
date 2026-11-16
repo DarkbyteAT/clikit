@@ -19,11 +19,12 @@
    * @param {Object} props
    * @param {boolean|Object} props.open whether it is showing: a signal you own (it is set false when the dialog closes), or a plain boolean
    * @param {string} props.title
-   * @param {function(*=): void} [props.onClose] called with the value passed to `close(value)`, or undefined when dismissed
+   * @param {(value?: any) => void} [props.onClose] called with the value passed to `close(value)`, or undefined when dismissed
    * @param {boolean} [props.dismissable=true] may Escape, the backdrop and the corner button close it? Pass false when an answer is required
    * @param {'dialog'|'sheet'} [props.variant='dialog']
-   * @param {*|function(function(*=): void): *} [props.children] the body: a template, or a function of `close`
-   * @param {*|function(function(*=): void): *} [props.actions] the button row under the body, same shapes
+   * @param {string} [props.class] extra CSS classes
+   * @param {*|((close: (value?: any) => void) => any)} [props.children] the body: a template, or a function of `close`
+   * @param {*|((close: (value?: any) => void) => any)} [props.actions] the button row under the body, same shapes
    * @example
    * const isOpen = signal(false);
    * html`<${Dialog} open=${isOpen} title="Sell all fish?" actions=${(close) => html`<${Button} variant="primary" onClick=${() => close('sell')}>Sell<//>`}>You keep the rare ones.<//>`
@@ -84,8 +85,8 @@
    * Shows a dialog right now and resolves when it closes. No component needed.
    * @param {Object} spec
    * @param {string} spec.title
-   * @param {*|function(function(*=): void): *} [spec.body] a template or a function of `close`
-   * @param {*|function(function(*=): void): *} [spec.actions]
+   * @param {*|((close: (value?: any) => void) => any)} [spec.body] a template or a function of `close`
+   * @param {*|((close: (value?: any) => void) => any)} [spec.actions]
    * @param {'dialog'|'sheet'} [spec.variant='dialog']
    * @param {boolean} [spec.dismissable=true]
    * @returns {Promise<*>} the value passed to `close(value)`; undefined when dismissed

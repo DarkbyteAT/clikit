@@ -20,6 +20,9 @@
    * @param {function(MouseEvent): void} [props.onClick]
    * @param {?string} [props.sound='click'] Kit.sfx name played on a press; null for silence
    * @param {string} [props.label] accessible name, for a button whose content is not text
+   * @param {string} [props.id]
+   * @param {string} [props.class] extra CSS classes
+   * @param {*} [props.children] the button's content
    * @example
    * html`<${Button} variant="primary" onClick=${save} busy=${isSaving}>Save<//>`
    * html`<${Button} pressed=${isMuted} onClick=${toggleMute}>Mute<//>`
