@@ -11,8 +11,8 @@ const path = require('path');
 const { ROOT } = require('./project');
 const { openArcade } = require('./browser');
 
-/** Pixels per cell across, and the most rows per picture (a picture stays readable when scaled to a screen). */
-const PAGE = { cellWidth: 230, rows: 4, mostPages: 40, settleMs: 350 };
+/** Pixels per cell across (PROOF_CELL in the environment overrides it for bigger cells), and the most rows per picture (a picture stays readable when scaled to a screen). */
+const PAGE = { cellWidth: Number(process.env.PROOF_CELL) || 230, rows: 4, mostPages: 40, settleMs: 350 };
 const OUT = path.join(ROOT, 'shots', 'proof');
 
 /** Stacks PNG buffers of equal width into one file, top to bottom, on a 2D canvas in the page (no image library needed). */
@@ -42,11 +42,12 @@ async function stack(session, strips, file) {
 
 /**
  * Photographs suites.
- * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number}} options
+ * @param {{suites: string[], catalog?: string, preset?: string, species?: string[], out?: string, pages?: number, count?: number}} options `count`: how many
+ *   individuals the rolls and faces suites roll (their default when left out)
  * @returns {Promise<{files: string[], problems: string[]}>}
  * @example await makeProof({ suites: ['turn', 'rolls'], catalog: 'wardrobe', preset: 'pixel' });
  */
-async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages }) {
+async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', species = [], out = OUT, pages: mostPages = PAGE.mostPages, count }) {
   const session = await openArcade({ size: { width: PAGE.cellWidth * 8, height: 1200 } });
   const files = [];
   const problems = [];
@@ -65,9 +66,9 @@ async function makeProof({ suites, catalog = 'wardrobe', preset = 'toon', specie
         strips = [];
       };
       for (let page = 0, pageCount = 1, filed = 0; page < Math.min(pageCount, mostPages); page++) {
-        const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, page: 0, rows: 1 });
+        const probe = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, count, page: 0, rows: 1 });
         const rows = probe.framing === 'head' ? 1 : PAGE.rows;
-        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, page, rows });
+        const first = await session.page.evaluate((shown) => Kit.currentGame.show(shown), { suite, catalog, preset, species, count, page, rows });
         pageCount = first.pages;
         await session.page.setViewportSize({ width: first.columns * PAGE.cellWidth, height: Math.round((first.columns * PAGE.cellWidth) / first.aspect) });
         await session.page.waitForTimeout(PAGE.settleMs);
