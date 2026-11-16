@@ -688,4 +688,50 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     same([...body.debug.project(0.5, 1.7, 0, { centerX: 100, groundY: 300, scale: 100 }, [])], [150, 130]);
     close(body.debug.project(0, 0, 1, { centerX: 100, groundY: 300, scale: 100, turn: Math.PI / 2 }, [])[0], 0, 1e-9, 'a quarter turn shows depth as width');
   });
+  // ---- core additions made for movement (Kit.motion, Kit.gait) ----
+  test('rig.faceWorld: sets a world rotation that survives the forward pass (control: the parent turned, the child still faces the same way)', () => {
+    const parents = [-1, 0, 1];
+    const local = Kit.rig.create(3);
+    const world = Kit.rig.create(3);
+    local.translation.set([0, 1, 0], 3);
+    local.translation.set([0, 1, 0], 6);
+    Kit.rig.turn(local.rotation, local.rotation, 1, 0, 0.7);
+    Kit.rig.worldTransforms(parents, local, world);
+    const tilted = Array.from(world.rotation.subarray(8, 12));
+    assert.ok(Math.abs(tilted[0]) > 0.3, 'control: before, the child inherits the tilt of its parent');
+    Kit.rig.faceWorld(parents, local, world, 2, 0, 0, 0, 1);
+    Kit.rig.worldTransforms(parents, local, world);
+    [0, 0, 0, 1].forEach((value, index) => close(world.rotation[8 + index], value, 1e-6, `component ${index} of the level rotation`));
+  });
+  test('rig.mix: halfway between two poses, the shorter way round (control: amounts 0 and 1 return the inputs)', () => {
+    const from = Kit.rig.create(1);
+    const to = Kit.rig.create(1);
+    const out = Kit.rig.create(1);
+    Kit.rig.turn(to.rotation, to.rotation, 0, 1, 1);
+    to.translation.set([2, 0, 0]);
+    // The same rotation written with the opposite sign must not send the mix the long way round.
+    to.rotation.forEach((value, index) => (to.rotation[index] = -value));
+    Kit.rig.mix(from, to, 0.5, out);
+    close(out.translation[0], 1, 1e-6, 'translation');
+    close(2 * Math.atan2(Math.abs(out.rotation[1]), Math.abs(out.rotation[3])), 0.5, 1e-3, 'half the turn');
+    same(Array.from(Kit.rig.mix(from, to, 0, out).rotation), [0, 0, 0, 1]);
+    close(Math.abs(Kit.rig.mix(from, to, 1, out).rotation[1]), Math.sin(0.5), 1e-6, 'amount 1 is the second pose');
+  });
+  test('body.bendDirection: knees poke forwards and elbows back, from the limits alone (control: a centred ball joint has no side)', () => {
+    const direction = [0, 0, 0];
+    same(Array.from(body.bendDirection(biped, biped.boneIndex('shinLeft'), direction)).map(Math.round), [0, 0, 1]);
+    same(Array.from(body.bendDirection(biped, biped.boneIndex('forearmRight'), direction)).map(Math.round), [0, 0, -1]);
+    same(Array.from(body.bendDirection(quadruped, quadruped.boneIndex('hindLeftLower'), direction)), [0, 0, 0], 'control: the default ball joint is centred');
+    assert.ok(body.bendAgrees(biped, biped.boneIndex('shinLeft'), 0, 0, 1), 'a forward hint suits a knee');
+    assert.ok(!body.bendAgrees(biped, biped.boneIndex('shinLeft'), 0, 0, -1), 'a backward hint does not');
+    assert.ok(body.bendAgrees(quadruped, quadruped.boneIndex('hindLeftLower'), 0, 0, -1), 'control: a joint with no side accepts any hint');
+  });
+  test('body.debug.project: a tilted view draws near ground lower and far ground higher (control: no tilt ignores depth)', () => {
+    const point = [0, 0];
+    const level = { centerX: 0, groundY: 100, scale: 10 };
+    assert.strictEqual(body.debug.project(0, 0, 3, level, point)[1], 100, 'control: level view');
+    const tilted = { ...level, tilt: 0.5 };
+    assert.ok(body.debug.project(0, 0, 3, tilted, point)[1] > 100, 'the camera stands at +Z, so +Z ground is nearer and lower on the canvas');
+    assert.ok(body.debug.project(0, 0, -3, tilted, point)[1] < 100, 'far ground is higher');
+  });
 };
