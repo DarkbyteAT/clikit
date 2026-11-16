@@ -134,6 +134,17 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     throwsWith(() => Kit.region.compile({ union: [] }), /"union" needs a non-empty list/);
   });
 
+  test('dials: the default is exactly reachable and survives encode and decode (control: the neighbouring step is not the default)', () => {
+    const catalog = Kit.body.catalog(Kit.body.samples.CATALOG);
+    const kind = catalog.species('human');
+    const legs = kind.dialIds.indexOf('legLength');
+    const recipe = { species: 'human', seed: 5, overrides: { 'dial:legLength': 1 } };
+    assert.strictEqual(catalog.resolve(recipe).dials[legs], 1, 'resolves to exactly 1');
+    assert.strictEqual(catalog.decode(catalog.encode(recipe)).overrides['dial:legLength'], 1, 'and decodes to exactly 1');
+    const nextStep = kind.dialMin[legs] + ((kind.dialDefaultSteps[legs] + 1) * (kind.dialMax[legs] - kind.dialMin[legs])) / Kit.body.DIAL_STEPS;
+    assert.notStrictEqual(Math.fround(catalog.resolve({ ...recipe, overrides: { 'dial:legLength': nextStep } }).dials[legs]), 1, 'control');
+  });
+
   // ---- a test catalogue: the samples with a lathe head, shape dials, a posture dial and a dial on the hat ----
   const body = Kit.body;
   /** A fresh, writable copy of the sample catalogue, changed by `edit`. */
@@ -165,7 +176,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const plain = bakery.bakeRecipe(base);
     const wide = bakery.bakeRecipe({ ...base, overrides: { ...base.overrides, 'dial:jawWidth': 1.25, 'dial:headDepth': 1.2 } });
     const head = plain.plan.boneIndex('head');
-    close(plain.shapes[head].profile[1][0], 0.09, 2e-4, 'default value (snapped to a step): the profile as drawn');
+    close(plain.shapes[head].profile[1][0], 0.09, 1e-9, 'the default value is exact: the profile as drawn');
     close(wide.shapes[head].profile[1][0], 0.09 * 1.25, 1e-3, 'the jaw point widened');
     close(wide.shapes[head].scale[2], 0.9 * 1.2, 1e-3, 'the head deepened');
     same([...wide.rest.scale], [...plain.rest.scale], 'no bone scale changed');
@@ -191,7 +202,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
     const upright = bakery.bakeRecipe({ species: 'human', seed: 3, overrides: { 'dial:posture': 0 } });
     const slouched = bakery.bakeRecipe({ species: 'human', seed: 3, overrides: { 'dial:posture': 1 } });
     const waist = upright.plan.boneIndex('waist');
-    close(upright.rest.rotation[waist * 4], 0, 1e-3, 'the default posture (snapped to a step) is about the rest rotation');
+    same([...upright.rest.rotation.slice(waist * 4, waist * 4 + 4)], [0, 0, 0, 1], 'the default posture is exactly the rest rotation');
     close(2 * Math.asin(slouched.rest.rotation[waist * 4]), (10 * Math.PI) / 180, 1e-5, 'posture 1 leans each spine bone 10 degrees about x');
     throwsWith(
       () => body.catalog(sampleVariant((spec) => (spec.nodes.human.set.dials = { jawWidth: { max: 1.4 } }), SHAPED)),

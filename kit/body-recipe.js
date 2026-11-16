@@ -93,6 +93,8 @@
    * @property {Object[]} dialRows `DialRow`s, for compiling against an assembled plan
    * @property {number[]} dialMin
    * @property {number[]} dialMax
+   * @property {number[]} dialDefaults
+   * @property {number[]} dialDefaultSteps per dial: the step that decodes to the default exactly
    * @property {string[]} unusedDials dials that touch no bone of the bare plan
    * @property {string[]} colorIds
    * @property {string[]} paletteNames per colour channel: the catalogue palette it draws from
@@ -189,6 +191,20 @@
       return socket ? socket.type : null;
     };
 
+    // ---- dial steps ----
+
+    /**
+     * The value of a dial step. The step nearest the default decodes to the default itself, so "as drawn" (a
+     * multiplier of exactly 1, a tilt of exactly 0) is reachable although 255 even steps rarely land on it.
+     */
+    const dialValueOfStep = (kind, dial, step) =>
+      step === kind.dialDefaultSteps[dial] ? kind.dialDefaults[dial] : kind.dialMin[dial] + (step * (kind.dialMax[dial] - kind.dialMin[dial])) / DIAL_STEPS;
+    /** The nearest step to a value, after clamping the value into the dial's range. */
+    const dialStepOf = (kind, dial, value) => {
+      const span = kind.dialMax[dial] - kind.dialMin[dial];
+      return span > 0 ? Math.round(Kit.math.clamp((value - kind.dialMin[dial]) / span, 0, 1) * DIAL_STEPS) : 0;
+    };
+
     // ---- compiling a species ----
 
     const compileFills = (where, declared) =>
@@ -258,6 +274,9 @@
         dialRows,
         dialMin: dialRows.map((row) => row.min),
         dialMax: dialRows.map((row) => row.max),
+        dialDefaults: dialRows.map((row) => (row.default === undefined ? 1 : row.default)),
+        /** @type {number[]} per dial: the step its default falls on, which decodes to the default exactly */
+        dialDefaultSteps: [],
         // One seeded field per dial and per colour channel: seed in, a number in [0, 1) out.
         dialDraws: dialRows.map((row) => Kit.seeded.field(`${KINDS.dial}${KEY_SEPARATOR}${row.id}`, row.shape === undefined ? DEFAULT_SHAPE : row.shape)),
         unusedDials: dialSet.unused,
@@ -270,6 +289,7 @@
         /** @type {Map<number, string>} field hash -> key, for decoding: dials, colours, declared fills and every bare socket */
         keyByHash: new Map(),
       };
+      kind.dialDefaultSteps = kind.dialDefaults.map((preset, dial) => dialStepOf(kind, dial, preset));
       kind.fillFields = compileFills(where, definition.fills || {});
       kind.fillPaths = kind.fillFields.map((field) => field.path);
       checkFills(where, kind);
@@ -328,13 +348,6 @@
     };
 
     // ---- recipe -> individual ----
-
-    const dialValueOfStep = (kind, dial, step) => kind.dialMin[dial] + (step * (kind.dialMax[dial] - kind.dialMin[dial])) / DIAL_STEPS;
-    /** The nearest step to a value, after clamping the value into the dial's range. */
-    const dialStepOf = (kind, dial, value) => {
-      const span = kind.dialMax[dial] - kind.dialMin[dial];
-      return span > 0 ? Math.round(Kit.math.clamp((value - kind.dialMin[dial]) / span, 0, 1) * DIAL_STEPS) : 0;
-    };
 
     /** Drops fills whose socket no longer exists or no longer fits (after a parent was swapped) and orders the rest. */
     const canonicalFills = (kind, fills) => {
