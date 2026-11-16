@@ -894,6 +894,8 @@
   // ---- the surface: surface nets --------------------------------------------------------------------------------------
 
   /** The eight corners of a cell as node offsets (x, y, z), and its twelve edges as corner pairs. */
+  /** Most sweeps that part chequered faces of the grid; one nearly always does, and a later one mends what it made. */
+  const CHEQUER_PASSES = 6;
   const CORNERS = [
     [0, 0, 0],
     [1, 0, 0],
@@ -996,6 +998,37 @@
       for (let item = 0; item < band.length; item++) if (Math.abs(values[band[item]] - offset) <= reach) cells.push(band[item]);
     }
 
+    // Two sheets of the surface through one face of a cell (its corners inside and outside in a chequer: a gap
+    // or a web thinner than a cell) would meet in one edge shared by four triangles. The corner nearest the
+    // surface changes side, which parts the sheets or joins them, whichever moves the surface least.
+    const faceSteps = [1, stepY, stepY, stepZ, stepZ, 1];
+    for (let pass = 0, changed = 1; pass < CHEQUER_PASSES && changed > 0; pass++) {
+      changed = 0;
+      for (let item = 0; item < cells.count; item++) {
+        const base = cells.items[item];
+        for (let face = 0; face < faceSteps.length; face += 2) {
+          const far = base + faceSteps[face] + faceSteps[face + 1];
+          if (far >= count || inside[base] !== inside[far]) continue;
+          const sideA = base + faceSteps[face];
+          const sideB = base + faceSteps[face + 1];
+          if (inside[sideA] !== inside[sideB] || inside[sideA] === inside[base]) continue;
+          let turned = base;
+          if (Math.abs(values[far] - offset) < Math.abs(values[turned] - offset)) turned = far;
+          if (Math.abs(values[sideA] - offset) < Math.abs(values[turned] - offset)) turned = sideA;
+          if (Math.abs(values[sideB] - offset) < Math.abs(values[turned] - offset)) turned = sideB;
+          inside[turned] = 1 - inside[turned];
+          changed += 1;
+          if (!cut) continue;
+          for (let index = 0; index < CORNER_COUNT; index++) {
+            const beside = turned - cornerStep[index];
+            if (beside < 0 || isListed[beside]) continue;
+            isListed[beside] = 1;
+            cells.push(beside);
+          }
+        }
+      }
+    }
+
     /** Where along a grid edge (0 at `from`, 1 at `to`) the cut's boundary crosses it, by bisection. */
     const cutCrossing = (startsInside, fromX, fromY, fromZ, toX, toY, toZ) => {
       let low = 0;
@@ -1049,7 +1082,7 @@
         const by = originY + (cellY + cornerPlace[cornerB * VECTOR + 1]) * cell;
         const bz = originZ + (cellZ + cornerPlace[cornerB * VECTOR + 2]) * cell;
         // Both ends inside the pushed-out field and above the shell's floor: only the cut can part them.
-        if (first < 0 && second < 0 && valueA >= floor && valueB >= floor) {
+        if (cut && first < 0 && second < 0 && valueA >= floor && valueB >= floor) {
           const share = cutCrossing(((mask >> cornerA) & 1) === 1, ax, ay, az, bx, by, bz);
           cutX += ax + (bx - ax) * share;
           cutY += ay + (by - ay) * share;

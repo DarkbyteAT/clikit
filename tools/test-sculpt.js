@@ -234,7 +234,7 @@ module.exports = ({ Kit, sandbox, test, assert }) => {
             if (Math.abs(sum - 1) > 1e-4) assert.fail(`${where} ${layer.id}: weights of vertex ${vertex} sum to ${sum}`);
           }
           if (layer.id.startsWith('skin:') || layer.id.startsWith('worn:')) {
-            assert.strictEqual(edgesOf(layer).open, 0, `${where} ${layer.id}: closed`);
+            assert.deepStrictEqual(edgesOf(layer), { open: 0, pinched: 0 }, `${where} ${layer.id}: closed, every edge shared by exactly two triangles`);
             assert.ok(sixVolumes(layer) > 0, `${where} ${layer.id}: wound outward`);
           }
         });
