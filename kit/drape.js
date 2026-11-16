@@ -26,15 +26,15 @@
     /** Cloth stands at least this far off what is under it, so two layers never share a surface. */
     gap: 0.004,
     /** The furthest a vertex is moved out of what is under it: deeper than this it is buried, and left buried. */
-    mostPush: 0.07,
+    mostPush: 0.14,
     /** Times a pushed vertex is measured again and moved the rest of the way (a curved surface is not reached in one step). */
     settleSteps: 10,
     /** The slope under a hanging cloth is a way out when at least this much of it (a cosine) lies across the hang; else the hang's own outward is. */
     leastAcross: 0.3,
     /** A move is handed down an edge that drops at least this share of its length along the hang. */
     leastDrop: 0.4,
-    /** Passes that even the moves out over a cloth's surface. */
-    evenPasses: 0,
+    /** Times a settled cloth's normals are averaged with their neighbours': it is lit as one sheet, not by the small steps between its vertices. */
+    normalPasses: 3,
     /** A move handed down a hanging cloth is gone this many metres further down. */
     fall: 0.5,
     /** The step a slope is measured over. */
@@ -49,8 +49,15 @@
     swingPoints: 240,
     /** A swing answers for the points further from the joint than this share of the furthest. */
     swingFrom: 0.3,
+    /** A thing set on cloth is moved out in steps of this, */
+    seatStep: 0.005,
+    /** by at most this, */
+    mostSeat: 0.3,
+    /** and is clear when no cloth lies within this far in front of it, looked for at steps of `seatProbe`. */
+    seatReach: 0.24,
+    seatProbe: 0.008,
     /** A swung piece may stay buried this deep: `settle` lays that much over the body. */
-    restDepth: 0.04,
+    restDepth: 0.02,
     /** A swing is far enough when what is still buried is within this of the least any swing leaves, mean metres per point. */
     swingSlack: 0.0002,
     /** A piece whose joint is nearer the bone it hangs from than this (to the side) hangs round the body and is not swung. */
@@ -65,6 +72,15 @@
     contact: 0.006,
   });
   const VECTOR = 3;
+  const HALF = 0.5;
+  const TURN = Math.PI * 2;
+  /** The fewest and the most bins round a cloth hung all round (`round`). */
+  const MOST_FEW_TURNS = 8;
+  const MOST_TURNS = 64;
+  const unit = (vector) => {
+    const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
+    return [vector[0] / length, vector[1] / length, vector[2] / length];
+  };
   /** A vertex within this of where it should be rests there (float rounding in a distance). */
   const RESTING = 1e-5;
   const OWNERS = 4;
@@ -150,6 +166,81 @@
       return here;
     };
     return { distance, slope };
+  };
+
+  /**
+   * A cloth hung all round a line (a skirt round the hips) as something a later cloth lies over: everything
+   * nearer the line than the cloth is, where the cloth reaches along it. The cloth itself is hollow, and so is
+   * the shape it was built from; a coat's tails laid over a skirt must clear the space the skirt encloses, not
+   * only its wall.
+   *
+   * The cloth's vertices are binned by how far along the line and which way round it they lie; a bin keeps
+   * the furthest of them from the line, or of its neighbours'. The distance of a point is how far outside that radius it is, read
+   * between the four bins round it (negative inside), or how far beyond the cloth's ends it is, if that is more.
+   * @param {ArrayLike<number>} points x, y, z each: the cloth's vertices as laid
+   * @param {number[]} joint a point of the line
+   * @param {number[]} along the line's unit direction
+   * @param {number} edge metres: the cloth's longest edge (a bin is twice that long, so none is empty inside the cloth)
+   * @returns {UnderSolid}
+   * @complexity O(points) to make; O(1) per distance
+   * @example laid.push(Kit.drape.round(skirt.positions, hips, [0, -1, 0], 0.03));
+   */
+  const round = (points, joint, along, edge) => {
+    // Two directions across the line, to tell the way round it.
+    const seed = Math.abs(along[1]) < HALF ? [0, 1, 0] : [1, 0, 0];
+    const first = unit([along[1] * seed[2] - along[2] * seed[1], along[2] * seed[0] - along[0] * seed[2], along[0] * seed[1] - along[1] * seed[0]]);
+    const second = [along[1] * first[2] - along[2] * first[1], along[2] * first[0] - along[0] * first[2], along[0] * first[1] - along[1] * first[0]];
+    /** How far along the line, how far from it and which way round it (0..1) a point lies. */
+    const placeOf = (x, y, z, out) => {
+      const from = [x - joint[0], y - joint[1], z - joint[2]];
+      const [acrossFirst, acrossSecond] = [from[0] * first[0] + from[1] * first[1] + from[2] * first[2], from[0] * second[0] + from[1] * second[1] + from[2] * second[2]];
+      out[0] = from[0] * along[0] + from[1] * along[1] + from[2] * along[2];
+      out[1] = Math.hypot(acrossFirst, acrossSecond);
+      out[2] = Math.atan2(acrossSecond, acrossFirst) / TURN + HALF;
+      return out;
+    };
+    const place = [0, 0, 0];
+    let [start, end, widest] = [Infinity, -Infinity, 0];
+    for (let at = 0; at < points.length; at += VECTOR) {
+      placeOf(points[at], points[at + 1], points[at + 2], place);
+      [start, end, widest] = [Math.min(start, place[0]), Math.max(end, place[0]), Math.max(widest, place[1])];
+    }
+    const step = edge * 2;
+    const rows = Math.max(1, Math.ceil((end - start) / step));
+    const turns = Math.max(MOST_FEW_TURNS, Math.min(MOST_TURNS, Math.floor((TURN * widest) / step)));
+    const radii = new Float32Array((rows + 1) * turns);
+    for (let at = 0; at < points.length; at += VECTOR) {
+      placeOf(points[at], points[at + 1], points[at + 2], place);
+      const bin = Math.round((place[0] - start) / step) * turns + (Math.round(place[2] * turns) % turns);
+      radii[bin] = Math.max(radii[bin], place[1]);
+    }
+    // Each bin takes the furthest of its neighbours' too: between two bins the cloth may bulge past both of their own.
+    const own = Float32Array.from(radii);
+    for (let row = 0; row <= rows; row++) {
+      for (let turn = 0; turn < turns; turn++) {
+        for (let rowStep = -1; rowStep <= 1; rowStep++) {
+          if (row + rowStep < 0 || row + rowStep > rows) continue;
+          for (let turnStep = -1; turnStep <= 1; turnStep++) radii[row * turns + turn] = Math.max(radii[row * turns + turn], own[(row + rowStep) * turns + ((turn + turnStep + turns) % turns)]);
+        }
+      }
+    }
+    const distance = (x, y, z) => {
+      placeOf(x, y, z, place);
+      const beyond = Math.max(start - place[0], place[0] - end);
+      const row = Math.max(0, Math.min(rows, (place[0] - start) / step));
+      const turn = place[2] * turns;
+      const [rowLow, turnLow] = [Math.min(rows - 1, Math.floor(row)), Math.floor(turn)];
+      const [rowShare, turnShare] = [row - rowLow, turn - turnLow];
+      const at = (rowAt, turnAt) => radii[rowAt * turns + (turnAt % turns)];
+      const radius =
+        (at(rowLow, turnLow) * (1 - turnShare) + at(rowLow, turnLow + 1) * turnShare) * (1 - rowShare) + (at(rowLow + 1, turnLow) * (1 - turnShare) + at(rowLow + 1, turnLow + 1) * turnShare) * rowShare;
+      return Math.max(place[1] - radius, beyond);
+    };
+    // Bounds: the cylinder's box, loosely (a box of its widest radius round every point of its length).
+    const ends = [joint.map((value, axis) => value + along[axis] * start), joint.map((value, axis) => value + along[axis] * end)];
+    const min = ends[0].map((value, axis) => Math.min(value, ends[1][axis]) - widest);
+    const max = ends[0].map((value, axis) => Math.max(value, ends[1][axis]) + widest);
+    return { distance, min, max };
   };
 
   /**
@@ -305,11 +396,12 @@
    * @param {Float32Array} positions
    * @param {ArrayLike<number>} indices
    * @param {Float32Array} [out] receives the normals (default: a new array)
+   * @param {number} [passes] times each normal is then replaced by the mean of its triangles' corners' normals (default 0)
    * @returns {Float32Array} unit normals, 3 per vertex
-   * @complexity O(vertices + triangles)
+   * @complexity O((vertices + triangles) x (1 + passes))
    * @example mesh.normals = Kit.drape.smoothNormals(mesh.positions, mesh.indices);
    */
-  const smoothNormals = (positions, indices, out = new Float32Array(positions.length)) => {
+  const smoothNormals = (positions, indices, out = new Float32Array(positions.length), passes = 0) => {
     out.fill(0);
     for (let corner = 0; corner < indices.length; corner += VECTOR) {
       const [first, second, third] = [indices[corner] * VECTOR, indices[corner + 1] * VECTOR, indices[corner + 2] * VECTOR];
@@ -327,6 +419,22 @@
       out[vertex] /= length;
       out[vertex + 1] /= length;
       out[vertex + 2] /= length;
+    }
+    for (let pass = 0; pass < passes; pass++) {
+      const sums = new Float32Array(out.length);
+      for (let corner = 0; corner < indices.length; corner += VECTOR) {
+        const [first, second, third] = [indices[corner] * VECTOR, indices[corner + 1] * VECTOR, indices[corner + 2] * VECTOR];
+        for (let axis = 0; axis < VECTOR; axis++) {
+          const sum = out[first + axis] + out[second + axis] + out[third + axis];
+          sums[first + axis] += sum;
+          sums[second + axis] += sum;
+          sums[third + axis] += sum;
+        }
+      }
+      for (let vertex = 0; vertex < out.length; vertex += VECTOR) {
+        const length = Math.hypot(sums[vertex], sums[vertex + 1], sums[vertex + 2]);
+        if (length > 0) for (let axis = 0; axis < VECTOR; axis++) out[vertex + axis] = sums[vertex + axis] / length;
+      }
     }
     return out;
   };
@@ -428,24 +536,24 @@
    *    way out is the slope of `below`; for a cloth that hangs (`hang`), only the part of it across the hang,
    *    so a skirt's waist is pushed outwards level and never up the body, and a cloak inside a skirt's cone
    *    comes out through its side, not its bottom. Where the slope has almost nothing across the hang, the
-   *    hang's own `outward` is the way. A thin sheet (`thickness` above 0) has two sides: the side whose
+   *    hang's own `outward` is the way, or with none (a cloth hung all round the body) straight away from the
+   *    line it hangs along. A thin sheet (`thickness` above 0) has two sides: the side whose
    *    normal points out comes to rest `gap + thickness` off what is under it and the lining `gap` off it, so
    *    a panel the body pushes through keeps its thickness where it lies on the body.
-   * 2. The moves are evened out over the mesh (`evenPasses` times each vertex takes the mean of its
-   *    neighbours' moves when that is longer than its own), so a bump under the cloth is a rise, not a dent.
-   * 3. With `hang`, a move is handed on down the cloth: a vertex further along the way the cloth hangs takes
+   * 2. With `hang`, a move is handed on down the cloth: a vertex further along the way the cloth hangs takes
    *    its neighbours' move from above, less `1 / fall` of it per metre, across the hang only. A cloak pushed
    *    out by a seat then falls from the seat instead of folding back under it.
-   * The normals are made again afterwards. Where nothing is in the cloth's way it keeps its authored shape
+   * The normals are made again afterwards, and averaged over neighbours `normalPasses` times: a move differs a
+   * little from vertex to vertex, and a toon ramp would show each step as a patch. Where nothing is in the cloth's way it keeps its authored shape
    * exactly, so how a garment hangs depends only on the garment and the body under it.
    * @param {{positions: Float32Array, normals: Float32Array, indices: ArrayLike<number>}} mesh changed in place
    * @param {Under} below
-   * @param {{gap?: number, thickness?: number, mostPush?: number, settleSteps?: number, evenPasses?: number, hang?: {joint: number[], along: number[], outward?: number[]}, fall?: number}} [options]
+   * @param {{gap?: number, thickness?: number, mostPush?: number, settleSteps?: number, normalPasses?: number, hang?: {joint: number[], along: number[], outward?: number[]}, fall?: number}} [options]
    *   `thickness`: metres between the cloth's two sides (default 0: one side); `hang`: the point the cloth hangs
    *   from, the unit direction it hangs in and, for a cloth that hangs to one side of the body, the unit
    *   direction away from the body across that; the rest as `DRAPE`
    * @returns {number} how many vertices were moved
-   * @complexity O(vertices x settleSteps x solids + (vertices + triangles) x evenPasses + vertices log vertices)
+   * @complexity O(vertices x settleSteps x solids + (vertices + triangles) x normalPasses + vertices log vertices)
    * @example const moved = Kit.drape.settle(cloak, under, { thickness: 0.018, hang: { joint: shoulders, along: [0, -1, 0] } });
    */
   const settle = (mesh, below, options = {}) => {
@@ -474,8 +582,16 @@
           const lengthwise = out[0] * hang.along[0] + out[1] * hang.along[1] + out[2] * hang.along[2];
           const across = [out[0] - hang.along[0] * lengthwise, out[1] - hang.along[1] * lengthwise, out[2] - hang.along[2] * lengthwise];
           const length = Math.hypot(...across);
-          const way = length >= tune.leastAcross ? across.map((value) => value / length) : hang.outward || null;
-          if (!way) break;
+          let way = length >= tune.leastAcross ? across.map((value) => value / length) : hang.outward || null;
+          if (!way) {
+            // A cloth that hangs all round the body (a skirt, a coat's tails) has no one outward: away from the line it hangs along.
+            const from = [x - hang.joint[0], y - hang.joint[1], z - hang.joint[2]];
+            const down = from[0] * hang.along[0] + from[1] * hang.along[1] + from[2] * hang.along[2];
+            const radial = from.map((value, axis) => value - hang.along[axis] * down);
+            const reach = Math.hypot(...radial);
+            if (reach < RESTING) break;
+            way = radial.map((value) => value / reach);
+          }
           [out[0], out[1], out[2]] = way;
         } else if (out[0] === 0 && out[1] === 0 && out[2] === 0) break;
         // Which side of the cloth this vertex is on, decided once, where it was authored.
@@ -501,26 +617,6 @@
     if (!pushed) return 0;
     const { starts, items } = neighboursOf(count, indices);
     const lengthSquaredAt = (values, at) => values[at] * values[at] + values[at + 1] * values[at + 1] + values[at + 2] * values[at + 2];
-    for (let pass = 0; pass < tune.evenPasses; pass++) {
-      const evened = Float32Array.from(moves);
-      for (let vertex = 0; vertex < count; vertex++) {
-        const neighbours = starts[vertex + 1] - starts[vertex];
-        if (!neighbours) continue;
-        let [sumX, sumY, sumZ] = [0, 0, 0];
-        for (let item = starts[vertex]; item < starts[vertex + 1]; item++) {
-          sumX += moves[items[item] * VECTOR];
-          sumY += moves[items[item] * VECTOR + 1];
-          sumZ += moves[items[item] * VECTOR + 2];
-        }
-        const at = vertex * VECTOR;
-        // Never less than its own: the cloth stays out of what pushed it.
-        if ((sumX * sumX + sumY * sumY + sumZ * sumZ) / (neighbours * neighbours) <= lengthSquaredAt(moves, at)) continue;
-        evened[at] = sumX / neighbours;
-        evened[at + 1] = sumY / neighbours;
-        evened[at + 2] = sumZ / neighbours;
-      }
-      moves.set(evened);
-    }
     if (tune.hang) {
       const { joint, along } = tune.hang;
       const fallen = Float32Array.from({ length: count }, (_unused, vertex) => (positions[vertex * VECTOR] - joint[0]) * along[0] + (positions[vertex * VECTOR + 1] - joint[1]) * along[1] + (positions[vertex * VECTOR + 2] - joint[2]) * along[2]);
@@ -560,8 +656,40 @@
       positions[at + 2] += moves[at + 2];
       moved += 1;
     }
-    smoothNormals(positions, indices, normals);
+    smoothNormals(positions, indices, normals, tune.normalPasses);
     return moved;
+  };
+
+  /**
+   * How far out a thing worn over cloth must be moved to sit on it: the least move along `outward` after which
+   * no cloth is in front of any of its points (inside it or behind it is where cloth under a pack belongs). A
+   * pack authored against the back then sits on the cloak laid over that back instead of showing through it.
+   * @param {ArrayLike<number>} points x, y, z of the thing (its corners will do)
+   * @param {number[]} outward unit direction away from the body
+   * @param {Under} cloth the cloth laid so far (`Kit.drape.under` of its solids)
+   * @param {{seatStep?: number, mostSeat?: number, seatReach?: number, seatProbe?: number}} [options] see `DRAPE`
+   * @returns {number} metres, 0 when nothing is in front of it; never more than `mostSeat`
+   * @complexity O(mostSeat / seatStep x points x seatReach / seatProbe x solids) at worst
+   * @example const shift = Kit.drape.seat(packCorners, [0, 0, -1], Kit.drape.under(cloakSolids)); // 0.05: the cloak's back is 5 cm behind the pack's
+   */
+  const seat = (points, outward, cloth, options = {}) => {
+    const tune = { ...DRAPE, ...options };
+    const probes = Math.ceil(tune.seatReach / tune.seatProbe);
+    /** The first point with cloth in front of it once the thing is moved out by `shift`, from `from` on; -1 when none. */
+    const covered = (shift, from) => {
+      for (let turn = 0; turn < points.length; turn += VECTOR) {
+        const at = (from + turn) % points.length;
+        for (let probe = 0; probe <= probes; probe++) {
+          const along = shift + probe * tune.seatProbe;
+          if (cloth.distance(points[at] + outward[0] * along, points[at + 1] + outward[1] * along, points[at + 2] + outward[2] * along) < 0) return at;
+        }
+      }
+      return -1;
+    };
+    let shift = 0;
+    // The point that was covered last is asked first: it is most often the one still covered.
+    for (let last = covered(0, 0); last >= 0 && shift < tune.mostSeat; last = covered(shift, last)) shift = Math.min(tune.mostSeat, shift + tune.seatStep);
+    return shift;
   };
 
   /**
@@ -600,5 +728,5 @@
     return skin;
   };
 
-  Kit.drape = { DRAPE, FAR, under, cloud, swingAxis, hangAngle, turnAbout, shell, settle, smoothNormals, ride };
+  Kit.drape = { DRAPE, FAR, under, cloud, swingAxis, hangAngle, turnAbout, shell, round, settle, seat, smoothNormals, ride };
 })();

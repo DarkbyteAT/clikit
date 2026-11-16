@@ -14,6 +14,10 @@ const VECTOR = 3;
 const OWNERS = 4;
 const MATRIX = 16;
 const TURN = Math.PI * 2;
+/** Rays per ray allowed to see a skirt through the tails of a coat laid round it (a slit between two coarse vertices; without `Kit.drape.round` the skirt shows in broad patches). */
+const MOST_GRAZING_ROUND = 50;
+/** A layer shows through a drape when it is seen first within this many metres in front of it. */
+const SHOWS_WITHIN = 0.08;
 
 /** A flat panel in the plane z = `z`: `width` across x, hanging from y = 0 down to -`length`, `depth` thick, as a built shape (closed box). */
 const panel = (width, length, depth, z) => {
@@ -76,6 +80,34 @@ module.exports = ({ Kit, test, assert }) => {
     assert.ok(laid.distance(0.01, 0, 0) < 0, 'between two neighbouring vertices the balls overlap: no gap in the surface');
     assert.strictEqual(laid.distance(1, 1, 1), drape.FAR);
     assert.ok(laid.min[0] === -0.015 && Math.abs(laid.max[0] - 0.035) < 1e-12);
+  });
+
+  test('drape: a cloth hung all round a line is, for the next cloth, everything it encloses, not only its wall', () => {
+    // A cone's wall as vertices: radius 0.1 at the top growing to 0.2 half a metre down, 48 round and 26 down.
+    const points = [];
+    for (let row = 0; row <= 25; row++) for (let turn = 0; turn < 48; turn++) points.push((0.1 + row * 0.004) * Math.cos((turn / 48) * TURN), 1 - row * 0.02, (0.1 + row * 0.004) * Math.sin((turn / 48) * TURN));
+    const cone = drape.round(points, [0, 1, 0], [0, -1, 0], 0.02);
+    assert.ok(cone.distance(0, 0.75, 0) < -0.1, `the middle of what it encloses is deep inside (${cone.distance(0, 0.75, 0)})`);
+    assert.ok(Math.abs(cone.distance(0.15, 0.75, 0)) < 0.012, `its wall is its surface, to within a bin (${cone.distance(0.15, 0.75, 0)})`);
+    assert.ok(Math.abs(cone.distance(0.25, 0.75, 0) - 0.1) < 0.012, 'outside it the distance is how far out');
+    assert.ok(Math.abs(cone.distance(0, 0.4, 0) - 0.1) < 1e-6 && cone.distance(0, 1.1, 0) > 0.09, 'beyond its ends it is not there');
+    [0, 1, 2].forEach((axis) => assert.ok(cone.min[axis] <= Math.min(...points.filter((_value, at) => at % VECTOR === axis)) && cone.max[axis] >= Math.max(...points.filter((_value, at) => at % VECTOR === axis)), 'its bounds hold it'));
+    // Control: the same vertices as a cloud are a hollow wall; the middle is outside it.
+    assert.strictEqual(drape.cloud(points, 0.015).distance(0, 0.75, 0), drape.FAR, 'control: a cloud of the wall encloses nothing');
+  });
+
+  test('drape: a thing worn over cloth is moved out until no cloth is in front of it, and not at all when none is', () => {
+    // A sheet of cloth 5 cm behind a pack's back face, as a cloud; the pack's corners at z = -0.1.
+    const sheet = [];
+    for (let row = -10; row <= 10; row++) for (let column = -10; column <= 10; column++) sheet.push(column * 0.02, row * 0.02, -0.15);
+    const cloth = drape.under([drape.cloud(sheet, 0.015)]);
+    const corners = [-0.1, -0.1, -0.1, 0.1, -0.1, -0.1, 0.1, 0.1, -0.1, -0.1, 0.1, -0.1];
+    const shift = drape.seat(corners, [0, 0, -1], cloth);
+    assert.ok(shift > 0.05 && shift < 0.075, `out past the sheet and its thickness, and no further than a step more (${shift})`);
+    assert.ok(corners.every((_value, at) => at % VECTOR !== 2 || cloth.distance(corners[at - 2], corners[at - 1], corners[at] - shift) >= 0), 'it is out of the cloth there');
+    assert.strictEqual(drape.seat(corners, [0, 0, 1], cloth), 0, 'no cloth in front of it the other way: it stays');
+    assert.strictEqual(drape.seat([1, 1, -0.1], [0, 0, -1], cloth), 0, 'nor beside the sheet');
+    assert.strictEqual(drape.seat(corners, [0, 0, -1], cloth, { mostSeat: 0.02 }), 0.02, 'never further than allowed');
   });
 
   test('drape: a hanging panel swings out just far enough to rest on the body, and not at all when nothing is in its way', () => {
@@ -304,6 +336,8 @@ module.exports = ({ Kit, test, assert }) => {
             if ((seen.normal[0] * slope[0] + seen.normal[1] * slope[1] + seen.normal[2] * slope[2]) / length < SEEN_SIDE) return;
             result.covering += 1;
             if (layers[first.index].rank >= layers[index].rank || first.distance > seen.distance - 1e-6) return;
+            // What stands well in front of the drape is another part of the figure passing before it (a skirt's side before a cloak's rim), not something coming through it.
+            if (seen.distance - first.distance > SHOWS_WITHIN) return;
             result.shownThrough += 1;
             result.worst = result.worst || `${layers[first.index].layer.id} shows through ${layers[index].layer.id} from ${view * 45} degrees at height ${height.toFixed(2)}, ${side.toFixed(2)} across`;
           });
@@ -322,6 +356,12 @@ module.exports = ({ Kit, test, assert }) => {
       assert.ok(seen.covering > 150, `${species}: the drapes cover a good part of the figure (${seen.covering} rays)`);
       // At the coarsest level a ray may graze the rim where a skirt's waist comes out from under a top: one ray in 200 is allowed that.
       assert.ok(seen.shownThrough * MOST_GRAZING <= seen.covering, `${species}: ${seen.shownThrough} of ${seen.covering} rays: ${seen.worst}`);
+    });
+    // A coat's tails hang all round the hips, as the skirt under them does: they clear what the skirt encloses.
+    ['person', 'stout', 'lanky', 'hornkin'].forEach((species) => {
+      const seen = lookAt(sculptedOf(wearing(species, { top: 'tee', bottom: 'skirt', outerwear: 'longCoat' }), 'low'));
+      assert.ok(seen.covering > 150, `${species}: the tails cover the skirt (${seen.covering} rays)`);
+      assert.ok(seen.shownThrough * MOST_GRAZING_ROUND <= seen.covering, `${species} in a long coat: ${seen.shownThrough} of ${seen.covering} rays: ${seen.worst}`);
     });
     // The control: the same cloak left where it was authored hangs inside a stout body and its top, and they show through it.
     const { hangAngle, settle } = drape;

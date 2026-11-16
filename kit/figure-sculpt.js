@@ -227,7 +227,9 @@
   /**
    * How a worn part's bone is drawn, from its bone row's `wear` (catalogue data; kit/body-wardrobe.js gives every
    * part a default by what it fits):
-   *  - 'solid': sculpted on its own grid and moved by its own bone (a hat, a horn, a bun);
+   *  - 'solid': sculpted on its own grid and moved by its own bone (a hat, a horn, a bun). A row that states a
+   *    `rank` is worn over the drapes of a lower rank: it is set out on them (a pack on a cloak), not left
+   *    where it was authored against the bare back;
    *  - 'drape': cloth. It is made where it hangs at rest, laid over whatever is under it there (the body, the
    *    garments on it and the drapes of a lower `rank`), and moved by the body's bones beneath it and by its own
    *    bone (kit/drape.js). Its row may state `hangs` (the roles of the body bones that may carry it, default
@@ -252,7 +254,8 @@
       const row = byName.get(name);
       return row && row.hangs ? Kit.body.roleMask(row.hangs) : 0;
     });
-    const ranks = plan.boneNames.map((name) => (byName.get(name) && Number.isFinite(byName.get(name).rank) ? byName.get(name).rank : 1));
+    // A drape is laid on at rank 1 unless its row says otherwise; a solid has no rank (0) unless its row gives it one.
+    const ranks = plan.boneNames.map((name, bone) => (byName.get(name) && Number.isFinite(byName.get(name).rank) ? byName.get(name).rank : wears[bone] === 'drape' ? 1 : 0));
     const clings = plan.boneNames.map((name) => (byName.get(name) && Number.isFinite(byName.get(name).clings) ? byName.get(name).clings : SCULPT.clings));
     const covers = plan.boneNames.map((name) => (byName.get(name) && byName.get(name).covers ? Kit.body.roleMask(byName.get(name).covers) : 0));
     return { wears, hangs, ranks, clings, covers };
@@ -491,6 +494,8 @@
   };
 
   const HALF = 0.5;
+  /** Where a column-major 4 x 4 keeps its translation. */
+  const MOVE = 12;
   /** Paint lies on the seen side of a raised garment: on what is within this many cells of its outer surface (its hem's wall, not its underside). */
   const PAINT_DEPTH_CELLS = 1;
   /** Steps of bisection when a pattern's edge is found along a triangle's edge (2^-7 of the edge). */
@@ -1059,8 +1064,9 @@
     /** What the drapes made so far add to the pile: their solids as they hang, and their thickness on the body under them. */
     const laid = { solids: [], lift: 0 };
     const isDrape = (pieces) => wears[pieces[0].bone] === 'drape';
-    // Solids first, then drapes in rising rank (in the layout's order within a rank): each is laid over those before it.
-    const ordered = [...objects].sort(([, first], [, second]) => (isDrape(first) ? ranks[first[0].bone] : -Infinity) - (isDrape(second) ? ranks[second[0].bone] : -Infinity));
+    // In rising rank (in the layout's order within a rank): solids with no rank first, then each drape over those
+    // before it, and a solid with a rank set on the drapes under it.
+    const ordered = [...objects].sort(([, first], [, second]) => ranks[first[0].bone] - ranks[second[0].bone]);
     const made = [];
     for (const [key, pieces] of ordered) {
       const draped = isDrape(pieces);
@@ -1079,6 +1085,9 @@
       let gridSolids = [];
       let keptPieces = [];
       let below = null;
+      /** How far off the bare body this cloth lies where it rests on it: what is worn under it, its gap and its own thickness. */
+      let restsAt = 0;
+      let isSeated = false;
       if (draped) {
         // Where it hangs: the rest pose, each of its bones swung out to rest on what is under it.
         const hung = Float32Array.from(rest);
@@ -1114,17 +1123,38 @@
           if (mesh.indices.length) {
             const before = Float32Array.from(mesh.positions);
             if (bodyPieces.length && Kit.drape.settle(mesh, below, { gap, hang: hangOf.get(lead.bone) })) laid.solids.push(movedCloud(mesh, before, ownCell * NET_EDGE_CELLS));
+            // Hung all round the body (no one side to swing to): what it encloses is under whatever is laid over it.
+            const hang = hangOf.get(lead.bone);
+            if (hang && !hang.outward) laid.solids.push(Kit.drape.round(mesh.positions, hang.joint, hang.along, ownCell * NET_EDGE_CELLS));
             meshes.unshift(mesh);
             owns.unshift(-1);
             keptPieces = [...thick.map(({ piece }) => piece), ...keptPieces];
             laid.solids.push(...gridSolids);
           }
         }
+        restsAt = laid.lift + thickness + gap + Math.max(0, ...beneath.map(({ piece }) => lifts[piece.bone]));
         laid.lift += thickness + gap;
       } else {
+        // Worn over cloth already laid: made at rest, moved out until it sits on that cloth, and carried into the bind pose.
+        isSeated = ranks[lead.bone] > 0 && laid.solids.length > 0;
+        let placed = matrices;
+        if (isSeated) {
+          placed = Float32Array.from(rest);
+          const corners = pieces.flatMap((piece) => Array.from(placedPoints(Kit.figure.buildShape(piece.shape, 'low').positions, rest, piece.bone * MATRIX)));
+          const middle = [0, 1, 2].map((axis) => corners.reduce((sum, value, at) => (at % VECTOR === axis ? sum + value : sum), 0) / (corners.length / VECTOR));
+          const outward = [0, 0, 0];
+          Kit.drape.under(allHosts().map(({ part }) => part)).slope(middle[0], middle[1], middle[2], outward);
+          // Its outer half is what must show: cloth may pass through the half against the body, as a strap would hold it there.
+          const outer = [];
+          for (let at = 0; at < corners.length; at += VECTOR) {
+            if ((corners[at] - middle[0]) * outward[0] + (corners[at + 1] - middle[1]) * outward[1] + (corners[at + 2] - middle[2]) * outward[2] >= 0) outer.push(corners[at], corners[at + 1], corners[at + 2]);
+          }
+          const shift = Math.hypot(...outward) > 0 ? Kit.drape.seat(outer, outward, Kit.drape.under(laid.solids)) : 0;
+          pieces.forEach((piece) => outward.forEach((part, axis) => (placed[piece.bone * MATRIX + MOVE + axis] += part * shift)));
+        }
         const kept = [];
         pieces.forEach((piece) => {
-          const part = fittedSolid(piece, matrices, limbLead, ownCell);
+          const part = fittedSolid(piece, placed, limbLead, ownCell);
           // An object is one thing: its solids blend wherever they meet, and it joins nothing else.
           if (part) kept.push({ piece, part: Object.assign(part, { group: 0, anchor: undefined, join: undefined }) });
         });
@@ -1158,10 +1188,10 @@
         const carriers = hostsFor(hangs[lead.bone]);
         const ownBone = Uint16Array.from(mesh.tagOf, (_bone, vertex) => skin.owners[vertex * OWNERS]);
         skin = Kit.sculpt.weights(mesh.positions, carriers, { spread: SCULPT.drapeSpread, reach: Infinity, sharpness: SCULPT.drapeSharpness });
-        Kit.drape.ride(skin, mesh.positions, ownBone, Kit.drape.under(carriers).distance, { clings: clings[lead.bone] });
+        Kit.drape.ride(skin, mesh.positions, ownBone, Kit.drape.under(carriers).distance, { clings: clings[lead.bone], contact: restsAt + Kit.drape.DRAPE.contact });
       }
       // Made at rest: carried into the pose the skeleton is bound in.
-      if (draped) carry(mesh, skin, rest, matrices);
+      if (draped || isSeated) carry(mesh, skin, rest, matrices);
       const { positions, normals, indices } = mesh;
       made.push({ layer: { id: `worn:${key}`, ramp: lead.ramp, inkGroup: lead.inkGroup, inkClass: lead.ramp, positions, normals, indices, ...skin }, pieces: keptPieces });
       yield undefined;
