@@ -23,6 +23,7 @@
    * @property {ReturnType<typeof Kit.palette.atlas>} atlas the palette table; `atlas.load(palette)` gives a figure its rows
    * @property {Object} shading from Kit.look.shading: `shading.dress(mesh, part)`
    * @property {function(THREE.Object3D): Object} add put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
+   * @property {function(THREE.Object3D): void} remove take a figure's root out of the scene and drop its dither anchor
    * @property {function(string, Object=): Object} use switch to a preset, with optional knob overrides; returns the settings
    * @property {function(string, *): Object} set change one knob; returns the settings
    * @property {function(): Object} settings the settings in force (after any degrade)
@@ -119,6 +120,12 @@
       add(root) {
         scene.add(root);
         return shading.follow(root);
+      },
+      remove(root) {
+        scene.remove(root);
+        // Anchors are snapped every frame; a figure that has left must not be moved or counted any more.
+        const index = shading.anchors.findIndex((anchor) => anchor.root === root);
+        if (index >= 0) shading.anchors.splice(index, 1);
       },
       use(presetId, overrides) {
         chosen = Kit.look.settings(presetId, overrides);

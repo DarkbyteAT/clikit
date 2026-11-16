@@ -497,3 +497,57 @@ machine at load 20 to 40, so only the ratios mean anything.
   were 0.5% wider than tall). Under rotation the dither space barely matters at strength 0.12 (0.2% of texels
   flicker per half degree with none, screen-fixed or figure-fixed dither; surface-fixed dither is worst at
   0.5%); rounding the turn to 24 facings is what removes crawl between facings.
+
+## Kit.figure: one mesh per piece, instancing for crowds (the skinned merge measured and rejected)
+
+- **Options.** (a) One Mesh per piece (a bone's surface), its matrix written from the pose's world transforms
+  each frame. (b) One SkinnedMesh per paint region (pieces with the same ramp and ink group merged, every vertex
+  bound to its bone with weight 1). (c) Instancing across figures that share a bake: one InstancedMesh per piece,
+  an instance matrix per figure.
+- **Measured** (`Kit.currentGame.measure()` on `Kit.play('figures')`: a human with hat and sword, level `medium`,
+  390 x 780, software GL in headless Chrome; draw calls / triangles / ms per frame including posing and a GPU flush):
+
+  | Look | Figures | (a) meshes | (b) skinned regions | (c) instanced |
+  |---|---|---|---|---|
+  | toon (hull) | 1 | 48 / 5k / 9.1 | 20 / 5k / 10.3 | 48 / 5k / 9.3 |
+  | toon (hull) | 20 | 960 / 94k / 92.9 | 400 / 94k / 98.4 | 48 / 94k / 84.5 |
+  | toon (hull) | 200 | 9600 / 940k / 850 | 4000 / 940k / 887 | 48 / 940k / 706 |
+  | pixel (ink, 98 x 195) | 1 | 26 / 2k / 11.2 | 12 / 2k / 7.6 | 26 / 2k / 8.2 |
+  | pixel (ink, 98 x 195) | 20 | 482 / 47k / 24.0 | 202 / 47k / 25.5 | 26 / 47k / 19.7 |
+  | pixel (ink, 98 x 195) | 200 | 4802 / 470k / 136 | 2002 / 470k / 160 | 26 / 470k / 116 |
+
+  Software GL caveat: SwiftShader's time follows triangles, not draw calls, so these rows rank (a) and (b) as
+  equal and (c) only slightly ahead. On a phone GPU the per-call CPU cost of three.js (state changes, uniform
+  uploads) is what 9 600 calls would pay for; that is where (c) wins and (b) would win by 2.4x over (a).
+- **Chosen.** (a) for individuals (`Kit.figure.build`): exact normals under a dial's non-uniform scale (three.js
+  skins normals with the bone matrix, not its inverse transpose), correct bounds and culling for free, and every
+  incremental update is a keyed diff of meshes (a hat adds two meshes; nothing is re-merged). (c) for many of
+  one look (`Kit.figure.crowd`): 48 calls whatever the count. (b) rejected: it halves calls but saved no time
+  here, needs hand-set bounds (its geometry sits in bone space at the origin) and a re-merge of the whole region
+  for any change to one of its pieces.
+- **Revisit if.** A phone profile shows draw calls dominating with 10-50 distinct figures on screen: then merge
+  per region inside `build` (the probe's `buildSkinned` is the starting point) or batch by shape key across figures.
+
+## Kit.figure: shapes in bone space, links for hub bones, ramps and ink groups inherited
+
+- **Shapes live in bone space and the bone's world matrix carries the dial's scale**, so a dial drag rebuilds no
+  geometry and two individuals of one species share every geometry (keys cached by shape parameters, rounded to
+  0.1 mm; measured: five sample figures plus a hat need 53 geometries). Cost: a girth dial squashes a capsule's
+  round ends into ellipses.
+- **A bone without a tail draws a capsule to every continuing child**, not only the first. Found on the first
+  browser run: the carp had a bare stretch between trunk and rear and the human's arms floated beside its chest.
+  Inside a region a link narrows to the child's girth; across regions the first link keeps the bone's width (a
+  chest into its neck) and side links narrow to at least 60% of it (shoulders, hips). Rejected: tapering every
+  link to the child (the chest became a cone to the neck), and filling hubs with a sphere (still left the gaps).
+- **Bones that name no paint take their nearest painted ancestor's ramp** (and paint channel, so a ruby on a sword is
+  shiny metal). Rejected: a fixed "unpainted" ramp (the hound's legs would differ from its body) and changing the
+  body system's `boneRamp` (its -1 is a true statement about the data).
+- **Ink groups**: one per limb (editor group plus end and side), one per part from a hash of its key (64..253), so
+  a hat keeps its group when a sword is picked up; 0 for features flagged `glow`. Verified in the ink look: no
+  line between upper arm and forearm (cloth and skin, one group), a line where an arm crosses the chest.
+- **A figure reserves 8 palette rows** (its ramps padded), so a species change rewrites rows in place instead of
+  leaking a block (the atlas has no free). `loadRows` lets a crowd of one look share one block.
+- **Grounding and framing measure the body's surfaces at rest, props left out**: the foot box reaches 3 to 7 cm
+  below the ankle joint, so `Kit.body.lowestY` (joints and tails) would sink the feet; a sword or a hat neither
+  lifts the body nor rescales the view (tested). The figure turns about the middle of its footprint, not the
+  plan's origin (a hound's hips are 35 cm behind it).

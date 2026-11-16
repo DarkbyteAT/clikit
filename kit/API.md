@@ -77,7 +77,12 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [look-toon.js](#look-toonjs) (0) - Kit look toon: the materials of the stylised look.
 - [look-ink.js](#look-inkjs) (0) - Kit look ink: the indexed pipeline.
 - [look-view.js](#look-viewjs) (0) - Kit look view: the thin composition that draws a scene of dressed meshes in a chosen look.
+- [look-panel.js](#look-paneljs) (8) - Kit look panel: the controls of the stylised look as reusable pieces, so every screen that draws through a `Kit.look.view` offers the same p
 - [look-show.js](#look-showjs) (0) - Kit look show: the showcase screen of the stylised look (`Kit.play('look')`): two stand-in figures built from primitives, each with its own 
+- [figure-shapes.js](#figure-shapesjs) (0) - Kit figure shapes: the surface of one bone, as plain arrays.
+- [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
+- [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
+- [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
 - [ui/gallery.js](#uigalleryjs) (0) - Kit ui gallery: every component of kit/ui/ in every state, on one screen, under any skin.
 - [shell.js](#shelljs) (3) - Kit shell: the renderer, the frame loop, the game lifecycle and the menu.
 - [ui/menu.js](#uimenujs) (0) - Kit ui menu: the main menu's list of games, built from the component library (its first real consumer).
@@ -7439,6 +7444,7 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `atlas` *ReturnType\<typeof Kit.palette.atlas\>* - the palette table; `atlas.load(palette)` gives a figure its rows
   - `shading` *Object* - from Kit.look.shading: `shading.dress(mesh, part)`
   - `add` *function(THREE.Object3D): Object* - put a figure's root in the scene; returns its dither anchor (pass as part.anchor)
+  - `remove` *function(THREE.Object3D): void* - take a figure's root out of the scene and drop its dither anchor
   - `use` *function(string, Object=): Object* - switch to a preset, with optional knob overrides; returns the settings
   - `set` *function(string, \*): Object* - change one knob; returns the settings
   - `settings` *function(): Object* - the settings in force (after any degrade)
@@ -7447,6 +7453,112 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `stats` *function(): Object* - `{ path, scale, targets }` of the last frame
   - `readTexels` *function(): {width: number, height: number, data: Uint8Array}\|null* - the indexed path's resolved texels (bottom row first), or null on the direct path
   - `dispose` *function(): void*
+
+## look-panel.js
+
+> Kit look panel: the controls of the stylised look as reusable pieces, so every screen that draws through a
+> `Kit.look.view` offers the same preset, knob and palette controls in the same panel: the `look` showcase,
+> the `figures` screen and the character creator.
+>
+> Owns:  `Kit.look.panel`: `lookControls(view)` (signals for the preset and every knob, bound to the view),
+>        the components `Choice` (a labelled row of exclusive buttons), `KnobControl` (one knob of
+>        `Kit.look.KNOBS`), `LookControls` (preset, its note and every knob) and `Panel` (the scrollable sheet
+>        at the bottom in portrait and the side in landscape, with hide and show buttons), its stylesheet, and
+>        `freeArea` (the part of the screen the panel leaves for the scene).
+> Does not own: the look (kit/look-*.js), what a screen draws, or its extra rows (palettes, edits), which a
+>        screen passes in as children.
+>
+> Needs the DOM and kit/ui, so it is exercised in the browser (`Kit.play('look')`, `Kit.play('figures')`).
+
+### `Kit.look.panel.PANEL_SHARE`
+
+Share of the screen the panel takes: the bottom in portrait, the right side in landscape.
+
+### `Kit.look.panel.TOP_BAR_PIXELS`
+
+Height of the shell's top bar the scene must stay clear of, CSS pixels.
+
+### `Kit.look.panel.Choice({ label, options, value, onPick, idPrefix })`
+
+A labelled row of exclusive buttons. `idPrefix` makes each button addressable by tools ('<prefix>-<value>').
+
+- `props` *{label: string, options: Array\<{value: \*, label: string}\>, value: Object, onPick: function(\*): void, idPrefix: string}* - `value` is a signal
+
+**Returns** *Object* a vnode
+
+### `Kit.look.panel.KnobControl({ knob, value, onChange })`
+
+One editor control for a knob row of `Kit.look.KNOBS`, bound to that knob's signal.
+
+- `props` *{knob: Object, value: Object, onChange: function(\*): void}*
+
+**Returns** *Object* a vnode
+
+### `Kit.look.panel.LookControls({ controls, readout, children })`
+
+The preset choice, its description (plus an optional readout signal) and every knob.
+
+- `props` *{controls: LookControlState, readout?: Object, children?: \*}* - `children` go between the preset and the knobs (palettes)
+
+**Returns** *Object* a vnode
+
+**Complexity** O(presets + knobs)
+
+### `Kit.look.panel.Panel({ isShown, label, children })`
+
+The panel: a scrollable sheet (bottom in portrait, right in landscape) with a hide button, and a show
+button while it is hidden.
+
+- `props` *{isShown: Object, label: string, children: \*}* - `isShown` is a boolean signal
+
+**Returns** *Object* a vnode
+
+### `Kit.look.panel.lookControls(view, presetId = 'toon')`
+
+Signals for the preset and every knob, bound to a view: any change is applied to the view at once.
+
+- `view` *Object* - from `Kit.look.view`
+- `[presetId='toon']` *string*
+
+**Returns** *LookControlState*
+
+**Complexity** O(knobs) to make, and per preset change or knob read
+
+```js
+const controls = Kit.look.panel.lookControls(view); // later: controls.stop()
+```
+
+#### `Kit.look.panel.lookControls().choosePreset(id)`
+
+_Undocumented: add a JSDoc block in the source._
+
+#### `Kit.look.panel.lookControls().knobValues()`
+
+_Undocumented: add a JSDoc block in the source._
+
+### `Kit.look.panel.freeArea(size, isPanelShown)`
+
+The part of the screen the panel and the top bar leave for the scene, CSS pixels.
+
+- `size` *{w: number, h: number, portrait: boolean}* - the shell's `ctx.size`
+- `isPanelShown` *boolean*
+
+**Returns** *{width: number, height: number, centerX: number, centerY: number}* its size, and its centre measured from the top left of the screen
+
+**Complexity** O(1)
+
+```js
+const free = Kit.look.panel.freeArea(ctx.size, true);
+```
+
+### Types
+
+- **LookControlState**
+  - `preset` *Object* - signal of the preset id
+  - `knobs` *Object\<string, Object\>* - knob id -> signal of its value
+  - `choosePreset` *function(string): void* - switch preset and reset every knob to its value
+  - `knobValues` *function(): Object* - knob id -> current value
+  - `stop` *function(): void* - unbinds the view (call from the screen's dispose)
 
 ## look-show.js
 
@@ -7475,6 +7587,183 @@ Kit.look.settings('pixel', { toneCount: 5 }).isIndexed // true
   - `[shiny]` *boolean*
   - `[emissive]` *boolean*
   - `[tone]` *number* - fixed tone 0..1
+
+## figure-shapes.js
+
+> Kit figure shapes: the surface of one bone, as plain arrays. Each body shape primitive (capsule, sphere, box,
+> lathe, extrude; kit/body-plan.js `SHAPES`) has one builder from the shape's data to positions, normals and
+> triangle indices in the bone's own space, at a chosen level of detail, plus a key that is equal exactly when
+> two shapes would build the same surface (so identical shapes share one geometry).
+>
+> Owns:  `Kit.figure.LEVELS` (segment counts per level of detail), `Kit.figure.ACROSS_AXIS` (the extrude
+>        convention), `describeShapes` (a bone of a plan -> its canonical shape descriptors), `shapeKey`,
+>        `buildShape` and the builders behind it (`BUILDERS`), `triangulate` (ear clipping for extrude
+>        outlines) and `writeBoneMatrix` (a bone's world transform as a column-major 4 x 4 matrix).
+> Does not own: the shape data (kit/body-plan.js and a catalogue's plans and parts), which bones get drawn and
+>        in what colour (kit/figure-layout.js), or anything THREE (kit/figure.js wraps these arrays in
+>        BufferGeometry).
+>
+> Conventions: the bone's own space of kit/body-plan.js (metres, +Y up, +Z forward, +X left). A shape lives
+> in that space, so the bone's three-axis scale (the dials) stretches it with no rebuild. Triangles wind
+> counter-clockwise seen from outside; normals are unit length and point out.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-figure.js.
+
+### Types
+
+- **ShapeDescriptor** - Everything that decides a bone's surface, in canonical form (no defaults left to fill in).
+  - `kind` *('capsule'\|'sphere'\|'box'\|'lathe'\|'extrude')*
+  - `[end]` *number[]* - capsule: [x, y, z] of its far end in bone space (its start is the joint)
+  - `[radius]` *number* - capsule: radius at the joint; sphere: radius
+  - `[endRadius]` *number* - capsule: radius at the far end (a limb tapers into the next segment)
+  - `[size]` *number[]* - box: [x, y, z]
+  - `[profile]` *number[][]* - lathe: [[radius, along], ...]
+  - `[outline]` *number[][]* - extrude: [[across, along], ...]
+  - `[depth]` *number* - extrude: thickness
+  - `[axis]` *number* - lathe and extrude: the long axis, 0 = x, 1 = y, 2 = z
+  - `[across]` *number* - extrude: the axis the outline's first coordinate lies along
+  - `at` *number[]* - [x, y, z] offset in bone space
+- **ShapeArrays** - A surface as plain arrays, ready for a BufferGeometry.
+  - `positions` *Float32Array* - 3 per vertex, bone space, metres
+  - `normals` *Float32Array* - 3 per vertex, unit length, outward
+  - `indices` *Uint16Array\|Uint32Array* - 3 per triangle, counter-clockwise from outside
+- **BoneSurface**
+  - `shape` *ShapeDescriptor*
+  - `child` *number* - -1 for the bone's own (first) surface; else the child bone an extra link reaches
+
+## figure-layout.js
+
+> Kit figure layout: what a renderer draws for one body bake, decided as plain data. A layout lists the
+> pieces (one per bone that has a surface, plus any extension pieces), which ramp of the individual paints each
+> one, which ink group it belongs to, and what has to change when the bake changes. It also measures the body
+> at rest, so a figure can stand on the ground and a camera can be fitted to it.
+>
+> Owns:  `Kit.figure.layout` (bake -> pieces), `resolveRamps` (bones that name no paint), `inkKeyOf` /
+>        `inkGroupOf` / `INK_GROUPS` (which pieces share an outline), `planUpdate` (old layout + new layout ->
+>        what to keep, add, remove and recolour), `measureRest` (lowest point and extent of the body at rest,
+>        props left out) and `fitView` (a camera window that holds a measured body).
+> Does not own: surfaces (kit/figure-shapes.js), THREE objects (kit/figure.js), bakes and what changed in the
+>        individual (kit/body-recipe.js, `editor.changes` in kit/body-edit.js), or colours (kit/palette.js).
+>
+> Two extension points are left open on purpose (see `layout`): surface features (eyes, a mouth) arrive as
+> extra pieces per bone, and surface regions (clothing, hair) as a lookup that splits a piece's triangles by
+> ramp. Neither is implemented here; each says exactly what it expects.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-figure.js.
+
+### Types
+
+- **FigurePiece** - One drawn surface: a mesh in the meshes binding, a run of triangles in a merged one.
+  - `id` *string* - stable across rebuilds: the bone's name; '<bone>><child>' for an extra link of a hub bone (a chest to a shoulder); '<bone>#<n>' for an extension piece
+  - `bone` *number* - bone index in the layout's plan (changes when the outfit changes; `id` does not)
+  - `shape` *Object* - a `ShapeDescriptor` of kit/figure-shapes.js, in the bone's space
+  - `key` *string* - `shapeKey(shape, level)`: equal keys share one geometry
+  - `ramp` *number* - index into the bake's `ramps` (never -1: see `resolveRamps`)
+  - `inkGroup` *number* - 0..255
+  - `isProp` *boolean* - the bone belongs to an attached part (left out of grounding and framing)
+  - `[shiny]` *boolean* - passed to the look (`LookPart.shiny`)
+  - `[emissive]` *boolean* - passed to the look
+  - `[tone]` *number* - passed to the look: a fixed tone 0..1
+- **FeaturePiece** - EXTENSION POINT (surface features: eyes, a mouth, a nose, horns).
+  - `shape` *Object* - a `ShapeDescriptor` in the bone's space (already placed on the surface: its `at`)
+  - `[ramp]` *number* - index into the bake's `ramps`; default the bone's own
+  - `[glow]` *boolean* - true for eyes and glows: ink group 0, never outlined
+  - `[shiny]` *boolean*
+  - `[emissive]` *boolean*
+  - `[tone]` *number*
+- **RegionLookup** - EXTENSION POINT (surface regions: clothing, hair as predicates over bone-local coordinates).
+- **FigureLayout**
+  - `plan` *Object* - the bake's assembled `BodyPlan`
+  - `level` *string* - the level of detail of every key
+  - `boneRamp` *Int16Array* - per bone: the resolved ramp index (see `resolveRamps`)
+  - `boneChannel` *Array\<?string\>* - per bone: the paint channel it is drawn with, inherited like its ramp
+  - `pieces` *FigurePiece[]* - in bone order
+  - `rampCount` *number* - how many ramps the bake has
+- **FigureUpdate**
+  - `keep` *Array\<{from: FigurePiece, to: FigurePiece}\>* - pieces drawn as they are; only their bone index may move
+  - `add` *FigurePiece[]* - pieces to build (a geometry from the cache or new, two new materials)
+  - `remove` *FigurePiece[]* - pieces to take down
+  - `recolor` *boolean* - the palette rows must be rewritten (a colour changed)
+  - `remeasure` *boolean* - the rest pose changed, so grounding and framing must be measured again
+- **RestMeasure**
+  - `lowestY` *number* - the lowest point of any body surface, metres (props left out: a sword held low does not lift the body)
+  - `highestY` *number* - the highest point of any body surface
+  - `centerX` *number* - the middle of the body's footprint across X, so a long body (a hound) can turn about its middle
+  - `centerZ` *number* - the middle of the footprint along Z
+  - `reach` *number* - how far the body's footprint reaches from that middle (half its diagonal), metres: a figure turning about the middle stays inside it
+  - `lowestPropY` *number* - the lowest point of a prop, or Infinity when none is worn
+- **ViewWindow** - An orthographic camera's window onto a figure: the world point at its centre and its half extents.
+  - `centerX` *number* - world units across the camera (0: the figure's vertical axis)
+  - `centerY` *number* - world height of the centre
+  - `halfWidth` *number*
+  - `halfHeight` *number*
+
+## figure.js
+
+> Kit figure: a body bake plus a pose, drawn in 3D through Kit.look. It is the renderer between the body
+> system (data) and the look pipeline (shading): one mesh per piece of kit/figure-layout.js, its geometry from
+> kit/figure-shapes.js shared through a cache, its material from `view.shading.dress`, its colour from the
+> figure's rows of the view's palette atlas, and its matrix written each frame from the pose's world transforms.
+>
+> Owns:  `Kit.figure.geometryCache` (BufferGeometry per shape key, counted and shared), `Kit.figure.build`
+>        (bake -> a figure in a view) and what it returns: `local` (the pose buffer a caller writes), `pose()`
+>        (one forward pass and the matrix writes, no allocation), `setBake` (incremental update from
+>        `editor.changes`), `measured` / `frame` (grounding and camera fitting) and `dispose`.
+> Does not own: what pieces exist (kit/figure-layout.js), surfaces (kit/figure-shapes.js), shading, outlines
+>        and colour (kit/look-*.js, kit/palette.js), kinematics (kit/rig.js, kit/reach.js) or motion over time.
+>
+> Why one mesh per piece (DECISIONS.md, "Kit.figure: one mesh per piece"): measured against one skinned mesh
+> per paint region and against instancing across figures that share a bake; the per-piece mesh is exact
+> (normals under a dial's non-uniform scale, bounds, culling), makes every incremental update a keyed diff,
+> and costs draw calls that matter only past a few dozen figures, where `Kit.figure.crowd` is the answer.
+>
+> Needs THREE, so it is exercised in the browser (`Kit.play('figures')`); its decisions are pure and tested.
+
+### Types
+
+- **GeometryCache**
+  - `acquire` *function(Object): THREE.BufferGeometry* - the geometry of a piece (`{ shape, key }`), built on the first request
+  - `release` *function(string): void* - one user fewer; the geometry is disposed when none is left
+  - `positions` *function(Object): Float32Array* - a piece's bone-space positions (builds and caches them without a geometry)
+  - `stats` *function(): {created: number, alive: number}* - geometries ever created, and alive now
+  - `dispose` *function(): void* - free every geometry
+- **Figure**
+  - `root` *THREE.Group* - a direct child of `view.scene`; move and turn it to place the figure
+  - `bake` *Object* - the bake drawn now
+  - `layout` *Object* - the `FigureLayout` drawn now
+  - `local` *Object* - the pose buffer (a `JointTransforms` of kit/rig.js, in `bake.plan` bone order): write it, then call `pose()`. Reset to the rest pose with `rest()`. Replaced by `setBake` when the plan changes.
+  - `world` *Object* - the world transforms of the last `pose()`, in figure space
+  - `measured` *Object* - the `RestMeasure` of the body (kit/figure-layout.js), in figure space after grounding
+  - `rest` *function(): void* - copies the bake's rest pose into `local`
+  - `pose` *function(): void* - forward kinematics over `local` and a matrix write per mesh; no allocation
+  - `setBake` *function(Object, Object=): Object* - draws another bake with the fewest changes; returns the plan carried out
+  - `frame` *function(number): Object* - a `ViewWindow` (kit/figure-layout.js) for a screen area of this aspect
+  - `counters` *function(): {meshes: number, materialsCreated: number, geometriesCreated: number}*
+  - `dispose` *function(): void*
+- **Crowd**
+  - `root` *THREE.Group* - a direct child of `view.scene`
+  - `count` *number*
+  - `locals` *Object[]* - one pose buffer per member (write it, then `pose`)
+  - `places` *Float32Array* - 4 per member: x, y, z, heading (radians); written by the caller
+  - `pose` *function(): void* - forward kinematics and an instance matrix per member per piece; no allocation
+  - `dispose` *function(): void*
+
+## figure-show.js
+
+> Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a
+> human, a winged variant, a hound, a carp and a sword on its own) drawn in 3D by Kit.figure through Kit.look,
+> slowly turning, with the shared look controls, the human's colour choices, a row of live edits that show
+> incremental updates (a dial, a colour, a hat, a sword), and a debug pose that raises an arm by Kit.reach.
+>
+> Owns:  the screen: the samples as rows (`SAMPLES`), the edits as rows (`EDITS`), the stage layout and the
+>        cost probe a tool can run (`Kit.currentGame.measure()`): draw calls and milliseconds per frame for
+>        1, 20 and 200 figures under three bindings (a mesh per piece, a skinned mesh per paint region, and
+>        instancing across figures that share a bake).
+> Does not own: anything it shows (kit/body-*.js, kit/figure*.js, kit/look-*.js) or the look's controls
+>        (kit/look-panel.js).
+>
+> Registered like a game, so the shell gives it a HUD, a back button and clean-up, and the smoke and play
+> tools reach it like any other. It draws its own frame (see `render` in kit/shell.js).
 
 ## ui/gallery.js
 

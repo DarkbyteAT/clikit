@@ -13,17 +13,14 @@
  */
 (() => {
   if (!Kit.ui.html) return;
-  const { html, signal, computed, effect, css, ScrollPane, Button, Cluster, Toggle, Slider } = Kit.ui;
+  const { html, signal, Cluster, Toggle } = Kit.ui;
   const look = Kit.look;
+  const { Choice, LookControls, Panel, lookControls, freeArea } = Kit.look.panel;
 
   // ---- tunables --------------------------------------------------------------------------------------------------------
 
   /** Flat backdrop behind the figures (sRGB, written to the screen as is). */
   const BACKDROP_COLOR = 0x6a7399;
-  /** Share of the screen the control panel takes: the bottom in portrait, the right side in landscape. */
-  const PANEL_SHARE = 0.46;
-  /** Height of the shell's top bar the figures must stay clear of, CSS pixels. */
-  const TOP_BAR_PIXELS = 52;
   /** The world rectangle that must fit in the free part of the screen, world units. */
   const STAGE = { width: 3.7, height: 2.75, centerY: 1.08 };
   const CAMERA = { pitchDegrees: 10, distance: 8, near: 0.1, far: 30 };
@@ -157,48 +154,11 @@
    * The frustum is off-centre: the world point (0, STAGE.centerY) lands in the middle of the free area.
    */
   const frameStage = (camera, size, isPanelShown) => {
-    const panelWidth = isPanelShown && !size.portrait ? size.w * PANEL_SHARE : 0;
-    const panelHeight = isPanelShown && size.portrait ? size.h * PANEL_SHARE : 0;
-    const free = { width: size.w - panelWidth, height: size.h - panelHeight - TOP_BAR_PIXELS };
-    const worldPerPixel = Math.max(STAGE.width / free.width, STAGE.height / free.height);
-    const centerX = free.width / 2;
-    const centerY = TOP_BAR_PIXELS + free.height / 2;
+    const { width, height, centerX, centerY } = freeArea(size, isPanelShown);
+    const worldPerPixel = Math.max(STAGE.width / width, STAGE.height / height);
     Object.assign(camera, { left: -centerX * worldPerPixel, right: (size.w - centerX) * worldPerPixel, top: centerY * worldPerPixel, bottom: -(size.h - centerY) * worldPerPixel });
     camera.updateProjectionMatrix();
   };
-
-  // ---- controls --------------------------------------------------------------------------------------------------------
-
-  /** A labelled row of exclusive buttons. `idPrefix` makes each button addressable by tools. */
-  const Choice = ({ label, options, value, onPick, idPrefix }) =>
-    html`<div class="look-row">
-      <span class="ui-label">${label}</span>
-      <${Cluster} gap="6px">
-        ${options.map((option) => html`<${Button} key=${option.value} id=${`${idPrefix}-${option.value}`} class="look-chip" pressed=${computed(() => value.value === option.value)} onClick=${() => onPick(option.value)}>${option.label}<//>`)}
-      <//>
-    </div>`;
-
-  /** One editor control for a knob row of Kit.look.KNOBS, bound to that knob's signal. */
-  const KnobControl = ({ knob, value, onChange }) => {
-    if (knob.type === 'choice') return html`<${Choice} label=${knob.label} options=${knob.options} value=${value} onPick=${onChange} idPrefix=${`look-${knob.id}`} />`;
-    if (knob.type === 'toggle') return html`<${Toggle} id=${`look-${knob.id}`} label=${knob.label} checked=${value} onChange=${onChange} />`;
-    return html`<${Slider} id=${`look-${knob.id}`} label=${knob.label} value=${value} min=${knob.min} max=${knob.max} step=${knob.step} format=${(amount) => String(Math.round(amount * 1000) / 1000)} onInput=${onChange} />`;
-  };
-
-  css(`
-    .look-panel { position: fixed; left: 0; right: 0; bottom: 0; height: ${PANEL_SHARE * 100}%; display: flex; flex-direction: column; pointer-events: auto;
-      background: var(--panel); border-top: var(--border) solid var(--line); backdrop-filter: blur(var(--blur)); color: var(--ink); font-family: var(--body); }
-    .look-panel-inner { display: flex; flex-direction: column; gap: 12px; padding: 12px max(14px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 16px) max(14px, env(safe-area-inset-left, 0px)); }
-    .look-row { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-    .look-chip { min-height: 40px; padding: 4px 11px; font-size: 13px; }
-    .look-note { margin: 0; font-size: 12px; color: var(--dim); }
-    .look-hidden { display: none; }
-    .look-show-button { position: fixed; pointer-events: auto; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); }
-    @media (orientation: landscape) {
-      .look-panel { left: auto; top: 0; width: ${PANEL_SHARE * 100}%; height: auto; border-top: 0; border-left: var(--border) solid var(--line); }
-      .look-panel-inner { padding-top: ${TOP_BAR_PIXELS}px; }
-    }
-  `);
 
   // ---- measurements ----------------------------------------------------------------------------------------------------
 
@@ -257,9 +217,9 @@
     camera.position.set(0, STAGE.centerY + Math.sin(pitch) * CAMERA.distance, Math.cos(pitch) * CAMERA.distance);
     camera.lookAt(0, STAGE.centerY, 0);
 
-    // Signals behind the panel: the preset, one per knob, one palette per figure, and the motion switches.
-    const preset = signal('toon');
-    const knobs = Object.fromEntries(look.KNOBS.map((knob) => [knob.id, signal(look.PRESETS.toon[knob.id])]));
+    // Signals behind the panel: the preset and the knobs (shared with every look screen), one palette per figure, and the motion switches.
+    const controls = lookControls(view, 'toon');
+    const { preset, knobs, choosePreset, knobValues } = controls;
     const palettes = figures.map((figure) => signal(figure.palette));
     const isTurning = signal(true);
     const isSwaying = signal(false);
@@ -271,36 +231,22 @@
     let nudge = 0;
     let governedPixelRatio = renderer.getPixelRatio();
 
-    const knobValues = () => Object.fromEntries(look.KNOBS.map((knob) => [knob.id, knobs[knob.id].value]));
-    const choosePreset = (presetId) => {
-      preset.value = presetId;
-      look.KNOBS.forEach((knob) => (knobs[knob.id].value = look.PRESETS[presetId][knob.id]));
-    };
     const choosePalette = (index, name) => {
       palettes[index].value = name;
       // The figure's rows are rewritten in place: no material changes, and the other figure's rows are untouched.
       view.atlas.write(figures[index].block, Kit.palette.SETS[name]);
     };
-    const stopSettingsEffect = effect(() => void view.use(preset.value, knobValues()));
 
     const paletteOptions = Object.keys(Kit.palette.SETS).map((name) => ({ value: name, label: name[0].toUpperCase() + name.slice(1) }));
-    const presetOptions = Object.keys(look.PRESETS).map((id) => ({ value: id, label: look.PRESETS[id].label }));
-    const panel = html`<div class=${computed(() => (isPanelShown.value ? 'look-panel' : 'look-panel look-hidden'))}>
-        <${ScrollPane} fill id="look-scroll" label="Look controls">
-          <div class="look-panel-inner">
-            <${Choice} label="Preset" options=${presetOptions} value=${preset} onPick=${choosePreset} idPrefix="look-preset" />
-            <p class="look-note">${computed(() => look.PRESETS[preset.value].about)} ${readout}</p>
-            ${figures.map((figure, index) => html`<${Choice} key=${figure.id} label=${`${figure.label} palette`} options=${paletteOptions} value=${palettes[index]} onPick=${(name) => choosePalette(index, name)} idPrefix=${`look-${figure.id}`} />`)}
-            ${look.KNOBS.map((knob) => html`<${KnobControl} key=${knob.id} knob=${knob} value=${knobs[knob.id]} onChange=${(value) => (knobs[knob.id].value = value)} />`)}
-            <${Cluster}>
-              <${Toggle} id="look-turn" label="Turn" checked=${isTurning} />
-              <${Toggle} id="look-sway" label="Walk side to side" checked=${isSwaying} />
-              <${Button} id="look-hide" onClick=${() => (isPanelShown.value = false)}>Hide controls<//>
-            <//>
-          </div>
-        <//>
-      </div>
-      <div class=${computed(() => (isPanelShown.value ? 'look-hidden' : 'look-show-button'))}><${Button} id="look-show" onClick=${() => (isPanelShown.value = true)}>Controls<//></div>`;
+    const panel = html`<${Panel} isShown=${isPanelShown} label="Look controls">
+      <${LookControls} controls=${controls} readout=${readout}>
+        ${figures.map((figure, index) => html`<${Choice} key=${figure.id} label=${`${figure.label} palette`} options=${paletteOptions} value=${palettes[index]} onPick=${(name) => choosePalette(index, name)} idPrefix=${`look-${figure.id}`} />`)}
+      <//>
+      <${Cluster}>
+        <${Toggle} id="look-turn" label="Turn" checked=${isTurning} />
+        <${Toggle} id="look-sway" label="Walk side to side" checked=${isSwaying} />
+      <//>
+    <//>`;
     ctx.ui.mount(panel);
 
     const poseFigures = () => {
@@ -535,7 +481,7 @@
       },
       render: drawFrame,
       dispose() {
-        stopSettingsEffect();
+        controls.stop();
         view.dispose();
         figures.forEach((figure) => figure.root.traverse((object) => object.geometry && object.geometry.dispose()));
       },
