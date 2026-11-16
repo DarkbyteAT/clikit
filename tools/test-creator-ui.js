@@ -54,7 +54,9 @@ const totalKinds = (kindsByGroup) =>
 async function fingerGestures({ page, press, state, settle, read }) {
   await press('.cr-panel [role=tab]:nth-of-type(1)');
   const yawBefore = (await state()).camera.yaw;
-  const stageBox = await read(`(() => { const rect = document.getElementById('cr-view').getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.55, w: rect.width }; })()`);
+  const stageBox = await read(
+    `(() => { const rect = document.getElementById('cr-view').getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.55, w: rect.width }; })()`
+  );
   const devtools = await page.context().newCDPSession(page);
   const touch = (type, points) => devtools.send('Input.dispatchTouchEvent', { type, touchPoints: points });
   await touch('touchStart', [{ x: stageBox.x - 60, y: stageBox.y }]);
@@ -67,9 +69,15 @@ async function fingerGestures({ page, press, state, settle, read }) {
   const yawAfter = (await state()).camera.yaw;
   check('touch: a one-finger drag across the stage turns the character', Math.abs(yawAfter - yawBefore) > 0.5, { yawBefore, yawAfter });
   const spanBefore = (await state()).cameraTarget.span;
-  await touch('touchStart', [{ x: stageBox.x - 20, y: stageBox.y }, { x: stageBox.x + 20, y: stageBox.y }]);
+  await touch('touchStart', [
+    { x: stageBox.x - 20, y: stageBox.y },
+    { x: stageBox.x + 20, y: stageBox.y },
+  ]);
   for (let step = 1; step <= 6; step++) {
-    await touch('touchMove', [{ x: stageBox.x - 20 - step * 12, y: stageBox.y }, { x: stageBox.x + 20 + step * 12, y: stageBox.y }]);
+    await touch('touchMove', [
+      { x: stageBox.x - 20 - step * 12, y: stageBox.y },
+      { x: stageBox.x + 20 + step * 12, y: stageBox.y },
+    ]);
     await page.waitForTimeout(20);
   }
   await touch('touchEnd', []);
@@ -79,7 +87,6 @@ async function fingerGestures({ page, press, state, settle, read }) {
   await read(`document.getElementById('cr-view').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))`);
   await settle(200);
   check('keyboard: Home on the stage puts the view back to the whole body, facing front', (await state()).cameraTarget.span === 1);
-
 }
 
 async function main() {
@@ -104,7 +111,10 @@ async function main() {
 
   await session.launchGame('creator');
   await settle(1200);
-  check('creator: registered in the menu as "Character Maker" and running', await read(`Kit.current && Kit.current.def.id === 'creator' && Kit.games.find((game) => game.id === 'creator').name === 'Character Maker'`));
+  check(
+    'creator: registered in the menu as "Character Maker" and running',
+    await read(`Kit.current && Kit.current.def.id === 'creator' && Kit.games.find((game) => game.id === 'creator').name === 'Character Maker'`)
+  );
   check('creator: starts with no page errors', session.errors.length === 0, session.errors);
   await shot('01-setup');
 
@@ -117,8 +127,16 @@ async function main() {
     return { tabs, schemaGroups, panel: [panel.left, panel.top, panel.width, panel.height].map(Math.round), stage: [stage.left, stage.top, stage.width, stage.height].map(Math.round), pageScroll: document.scrollingElement.scrollHeight - innerHeight };
   })()`);
   report.layout = structure;
-  check('tabs: Character first, then one per group of the schema, in order', JSON.stringify(structure.tabs.slice(1)) === JSON.stringify(structure.schemaGroups) && /Character/.test(structure.tabs[0]), structure);
-  check('layout: stage and panel side by side in landscape, stacked in portrait', isLandscape ? structure.stage[2] > 0 && structure.panel[0] >= structure.stage[2] - 2 : structure.panel[1] >= structure.stage[3] - 2, structure);
+  check(
+    'tabs: Character first, then one per group of the schema, in order',
+    JSON.stringify(structure.tabs.slice(1)) === JSON.stringify(structure.schemaGroups) && /Character/.test(structure.tabs[0]),
+    structure
+  );
+  check(
+    'layout: stage and panel side by side in landscape, stacked in portrait',
+    isLandscape ? structure.stage[2] > 0 && structure.panel[0] >= structure.stage[2] - 2 : structure.panel[1] >= structure.stage[3] - 2,
+    structure
+  );
   check('layout: the page itself does not scroll', structure.pageScroll <= 0, structure.pageScroll);
 
   // ---- each tab: counts, a shot, and the nodes it costs ----
@@ -126,7 +144,9 @@ async function main() {
   const nodeCounts = {};
   const kinds = {};
   for (const id of groupIds) {
-    await read(`(() => { const tab = [...document.querySelectorAll('.cr-panel [role=tab]')].find((candidate) => candidate.textContent.trim() === Kit.currentGame.session.schema().groups.find((group) => group.id === ${JSON.stringify(id)}).label); tab.click(); })()`);
+    await read(
+      `(() => { const tab = [...document.querySelectorAll('.cr-panel [role=tab]')].find((candidate) => candidate.textContent.trim() === Kit.currentGame.session.schema().groups.find((group) => group.id === ${JSON.stringify(id)}).label); tab.click(); })()`
+    );
     await settle(350);
     const facts = await read(`(() => {
       const panel = document.getElementById('cr-panel');
@@ -147,7 +167,9 @@ async function main() {
 
   // ---- an option strip shows its checked card ----
   await press('.cr-panel [role=tab]:nth-of-type(8)');
-  const hidden = await read(`[...document.querySelectorAll('#cr-pane .cr-strip')].map((strip) => { const card = strip.querySelector('[aria-checked=true]').getBoundingClientRect(); const box = strip.closest('.ui-scroll').getBoundingClientRect(); return card.left >= box.left - 1 && card.right <= box.right + 1; }).filter((isVisible) => !isVisible).length`);
+  const hidden = await read(
+    `[...document.querySelectorAll('#cr-pane .cr-strip')].map((strip) => { const card = strip.querySelector('[aria-checked=true]').getBoundingClientRect(); const box = strip.closest('.ui-scroll').getBoundingClientRect(); return card.left >= box.left - 1 && card.right <= box.right + 1; }).filter((isVisible) => !isVisible).length`
+  );
   check('option strips: the checked card of every strip is fully in view', hidden === 0, hidden);
 
   // ---- camera follows the group ----
@@ -155,7 +177,10 @@ async function main() {
   const faceTarget = await read(`Kit.currentGame.debugState().cameraTarget`);
   await press('.cr-panel [role=tab]:nth-of-type(6)');
   const legsTarget = await read(`Kit.currentGame.debugState().cameraTarget`);
-  check('camera: choosing Face looks at the head, Legs looks lower, both closer than the whole body', faceTarget.anchor > legsTarget.anchor + 0.3 && faceTarget.span < 1 && legsTarget.span < 1, { faceTarget, legsTarget });
+  check('camera: choosing Face looks at the head, Legs looks lower, both closer than the whole body', faceTarget.anchor > legsTarget.anchor + 0.3 && faceTarget.span < 1 && legsTarget.span < 1, {
+    faceTarget,
+    legsTarget,
+  });
   await settle(900);
   await shot('camera-legs');
 
@@ -183,18 +208,35 @@ async function main() {
   const afterSlider = await state();
   const inputToApply = timings.map((entry) => entry.inputToApplyMs);
   const applyOnly = timings.map((entry) => entry.applyMs);
-  report.sliderToFigure = { flushMs_last: timings[timings.length - 1].flushMs, inputToApplyMs_median: median(inputToApply), inputToApplyMs_max: Math.max(...inputToApply), applyMs_median: median(applyOnly), applyMs_max: Math.max(...applyOnly), inputs: LATENCY_INPUTS, wallToTwoFramesMs_median: median(timings.map((entry) => entry.wallMs)) };
-  check('slider: dragging changes the recipe and the figure draws the new one', JSON.stringify(afterSlider.recipe) !== JSON.stringify(before.recipe) && afterSlider.drawnIsCurrent, { applied: afterSlider.measurement.applied });
+  report.sliderToFigure = {
+    flushMs_last: timings[timings.length - 1].flushMs,
+    inputToApplyMs_median: median(inputToApply),
+    inputToApplyMs_max: Math.max(...inputToApply),
+    applyMs_median: median(applyOnly),
+    applyMs_max: Math.max(...applyOnly),
+    inputs: LATENCY_INPUTS,
+    wallToTwoFramesMs_median: median(timings.map((entry) => entry.wallMs)),
+  };
+  check('slider: dragging changes the recipe and the figure draws the new one', JSON.stringify(afterSlider.recipe) !== JSON.stringify(before.recipe) && afterSlider.drawnIsCurrent, {
+    applied: afterSlider.measurement.applied,
+  });
   await press('#cr-undo');
   const undone = await state();
   check('undo: one press takes the whole drag back', JSON.stringify(undone.recipe) === JSON.stringify(before.recipe), undone.recipe);
   await press('#cr-redo');
   check('redo: puts it back', JSON.stringify((await state()).recipe) === JSON.stringify(afterSlider.recipe));
   await press('#cr-pane .cr-dial .cr-tool');
-  check('reset button: puts the slider back to its default (and undo remains)', await read(`(() => { const slider = document.querySelector('#cr-pane .cr-dial input[type=range]'); const output = document.querySelector('#cr-pane .cr-dial output'); return output.textContent.length > 0 && Kit.currentGame.session.canUndo(); })()`));
+  check(
+    'reset button: puts the slider back to its default (and undo remains)',
+    await read(
+      `(() => { const slider = document.querySelector('#cr-pane .cr-dial input[type=range]'); const output = document.querySelector('#cr-pane .cr-dial output'); return output.textContent.length > 0 && Kit.currentGame.session.canUndo(); })()`
+    )
+  );
 
   // A slider held mid-drag, with the real mouse, for the screenshot.
-  const box = await read(`(() => { const rect = document.querySelector('#cr-pane .cr-dial input[type=range]').getBoundingClientRect(); return { x: rect.left, y: rect.top + rect.height / 2, w: rect.width }; })()`);
+  const box = await read(
+    `(() => { const rect = document.querySelector('#cr-pane .cr-dial input[type=range]').getBoundingClientRect(); return { x: rect.left, y: rect.top + rect.height / 2, w: rect.width }; })()`
+  );
   await page.mouse.move(box.x + box.w * 0.4, box.y);
   await page.mouse.down();
   await page.mouse.move(box.x + box.w * 0.8, box.y, { steps: 6 });
@@ -204,7 +246,9 @@ async function main() {
   await settle(300);
 
   // Double tap on a moved slider puts it back to its default.
-  await read(`(() => { const input = document.querySelector('#cr-pane .cr-dial input[type=range]'); input.value = String(Number(input.min) + (Number(input.max) - Number(input.min)) * 0.85); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await read(
+    `(() => { const input = document.querySelector('#cr-pane .cr-dial input[type=range]'); input.value = String(Number(input.min) + (Number(input.max) - Number(input.min)) * 0.85); input.dispatchEvent(new Event('input', { bubbles: true })); })()`
+  );
   await frames();
   await frames();
   const movedByDrag = await read(`document.querySelector('#cr-pane .cr-dial output').textContent`);
@@ -231,15 +275,23 @@ async function main() {
     return { row: row.id, value: Kit.currentGame.session.schema().colors.find((color) => color.id === 'skin').value };
   })()`);
   await press('.cr-panel [role=tab]:nth-of-type(11)');
-  const lockButton = await read(`(() => { const row = document.querySelector('[data-row="color:skin"]'); const button = row && [...row.querySelectorAll('button')].find((candidate) => /^Keep/.test(candidate.getAttribute('aria-label'))); if (button) button.click(); return Boolean(button); })()`);
+  const lockButton = await read(
+    `(() => { const row = document.querySelector('[data-row="color:skin"]'); const button = row && [...row.querySelectorAll('button')].find((candidate) => /^Keep/.test(candidate.getAttribute('aria-label'))); if (button) button.click(); return Boolean(button); })()`
+  );
   await settle(300);
-  check('lock: a colour row has a lock button, and pressing it marks it pressed', lockButton && (await read(`document.querySelector('[data-row="color:skin"] [aria-label^="Keep"]').getAttribute('aria-pressed')`)) === 'true');
+  check(
+    'lock: a colour row has a lock button, and pressing it marks it pressed',
+    lockButton && (await read(`document.querySelector('[data-row="color:skin"] [aria-label^="Keep"]').getAttribute('aria-pressed')`)) === 'true'
+  );
   await press('.cr-panel [role=tab]:nth-of-type(1)');
   const firstRecipe = (await state()).recipe;
   for (let roll = 0; roll < 4; roll++) await press('#cr-randomize-all');
   const rolled = await state();
   const skinNow = await read(`Kit.currentGame.session.schema().colors.find((color) => color.id === 'skin').value`);
-  check('randomise all: changes the character and keeps the locked skin', JSON.stringify(rolled.recipe) !== JSON.stringify(firstRecipe) && skinNow === lockedValue.value, { skinNow, locked: lockedValue.value });
+  check('randomise all: changes the character and keeps the locked skin', JSON.stringify(rolled.recipe) !== JSON.stringify(firstRecipe) && skinNow === lockedValue.value, {
+    skinNow,
+    locked: lockedValue.value,
+  });
   await shot('after-randomise');
 
   const comparing = await page.evaluate(async () => {
@@ -274,11 +326,31 @@ async function main() {
   await press('#cr-zoom-in');
   const zoomed = await state();
   check('zoom: the buttons narrow the view', zoomed.cameraTarget.span < 0.7, zoomed.cameraTarget);
-  await press('#cr-walk');
+  // The character is never frozen: it idles until a performance is picked, and a one-shot hands back to idling.
+  const standing = await state();
+  check('performance: the character idles by default', standing.performance === 'idle', standing.performance);
+  await press('#cr-perform');
+  const offered = await read(`[...document.querySelectorAll('#cr-perform-list [role="option"]')].map((option) => option.textContent.trim())`);
+  check(
+    'performance picker: opens a list that starts with idle, walk and run and goes on to the repertoire',
+    offered.length > 8 && /^Idle/.test(offered[0]) && /^Walk/.test(offered[1]) && /^Run/.test(offered[2]),
+    offered
+  );
+  await press('#cr-perform-walk');
   await settle(900);
-  check('walk preview: the toggle starts a walk without errors', (await state()).isWalking || session.errors.length === 0, session.errors);
+  check(
+    'performance picker: picking walk starts a walk without errors and closes the list',
+    (await state()).performance === 'walk' && session.errors.length === 0 && !(await read(`document.getElementById('cr-perform-list').matches(':popover-open')`)),
+    session.errors
+  );
   await shot('walking');
-  await press('#cr-walk');
+  await press('#cr-perform');
+  await press('#cr-perform-wave');
+  await settle(700);
+  check('performance picker: a one-shot plays over what the character was doing', (await state()).performance === 'wave' && session.errors.length === 0, session.errors);
+  await shot('waving');
+  await settle(3200);
+  check('performance picker: when the one-shot is over the character idles again', (await state()).performance === 'idle', (await state()).performance);
 
   // ---- saves ----
   await press('#cr-open-saves');
@@ -290,11 +362,19 @@ async function main() {
   await page.fill('#cr-save-name', 'Second one');
   await press('#cr-save-new');
   const saved = await read(`[...document.querySelectorAll('dialog[open] .cr-slot')].map((slot) => slot.textContent.replace(/\\s+/g, ' ').trim())`);
-  check('saves: two characters are listed with colours and a body type', saved.length === 2 && /Test Hero/.test(saved.join()) && (await read(`document.querySelectorAll('dialog[open] .cr-chips i').length`)) === 8, saved);
+  check(
+    'saves: two characters are listed with colours and a body type',
+    saved.length === 2 && /Test Hero/.test(saved.join()) && (await read(`document.querySelectorAll('dialog[open] .cr-chips i').length`)) === 8,
+    saved
+  );
   await shot('saves-two');
   await read(`document.querySelector('dialog[open] .cr-slot-open').click()`);
   await settle();
-  check('saves: Open loads the character and closes the sheet', !(await read(`Boolean(document.querySelector('dialog[open]'))`)) && /Test Hero|Second one/.test((await state()).name), (await state()).name);
+  check(
+    'saves: Open loads the character and closes the sheet',
+    !(await read(`Boolean(document.querySelector('dialog[open]'))`)) && /Test Hero|Second one/.test((await state()).name),
+    (await state()).name
+  );
   check('saves: they are kept in the store (survive a reload of the screen)', (await read(`Kit.currentGame.slots.list().length`)) === 2);
 
   // ---- share code ----
@@ -334,7 +414,9 @@ async function main() {
   check('keyboard: arrow keys move between tabs', keyboard.selectedAfterArrow !== 'Face', keyboard);
   check('keyboard: arrow keys move a slider and the character follows', sliderAfter !== keyboard.sliderBefore && (await state()).drawnIsCurrent, { before: keyboard.sliderBefore, after: sliderAfter });
   await page.keyboard.press('Tab');
-  const focusRing = await read(`(() => { const style = getComputedStyle(document.activeElement); return { tag: document.activeElement.tagName, outline: style.outlineStyle + ' ' + style.outlineWidth }; })()`);
+  const focusRing = await read(
+    `(() => { const style = getComputedStyle(document.activeElement); return { tag: document.activeElement.tagName, outline: style.outlineStyle + ' ' + style.outlineWidth }; })()`
+  );
   check('keyboard: the focused control shows a focus ring', !/^none/.test(focusRing.outline), focusRing);
   await page.keyboard.press('Home');
 
@@ -352,7 +434,11 @@ async function main() {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await press('.cr-panel [role=tab]:nth-of-type(6)');
   const reduced = await state();
-  check('reduced motion: the camera is at its target one moment after choosing a group (no easing)', Math.abs(reduced.camera.span - reduced.cameraTarget.span) < 1e-6 && Math.abs(reduced.camera.anchor - reduced.cameraTarget.anchor) < 1e-6, reduced);
+  check(
+    'reduced motion: the camera is at its target one moment after choosing a group (no easing)',
+    Math.abs(reduced.camera.span - reduced.cameraTarget.span) < 1e-6 && Math.abs(reduced.camera.anchor - reduced.cameraTarget.anchor) < 1e-6,
+    reduced
+  );
   await page.emulateMedia({ reducedMotion: 'no-preference' });
 
   // ---- 44px targets ----
@@ -379,7 +465,11 @@ async function main() {
   await session.launchGame('creator');
   await settle(1200);
   const returned = await state();
-  check('draft: leaving to the menu and coming back restores the character, its name and its look', JSON.stringify(returned.recipe) === JSON.stringify(lastSeen.recipe) && returned.name === lastSeen.name && returned.preset === lastSeen.preset, { lastSeen: lastSeen.name, returned: returned.name });
+  check(
+    'draft: leaving to the menu and coming back restores the character, its name and its look',
+    JSON.stringify(returned.recipe) === JSON.stringify(lastSeen.recipe) && returned.name === lastSeen.name && returned.preset === lastSeen.preset,
+    { lastSeen: lastSeen.name, returned: returned.name }
+  );
 
   // ---- done ----
   check('no page errors during the whole run', session.errors.length === 0, session.errors);

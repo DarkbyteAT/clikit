@@ -991,7 +991,8 @@
       // +1 while the leg this arm swings with is out in front: the arm is forward with it.
       const forward = footOffset(fraction(motion.phase + clock.offsets[rig.armLeg[arm]] + rig.armShift[arm]), clock.duty);
       Kit.rig.turn(rotation, rotation, rig.armUpper[arm], AXES.x, -reach * forward);
-      if (rig.armElbow[arm] >= 0) Kit.rig.turn(rotation, rotation, rig.armElbow[arm], AXES.x, rig.elbowSign[arm] * (carry + ARMS.elbowSwing * Math.max(0, forward) * Math.min(1, reach / ARMS.swingPerStride)));
+      if (rig.armElbow[arm] >= 0)
+        Kit.rig.turn(rotation, rotation, rig.armElbow[arm], AXES.x, rig.elbowSign[arm] * (carry + ARMS.elbowSwing * Math.max(0, forward) * Math.min(1, reach / ARMS.swingPerStride)));
     }
     motion.isWorldCurrent = false;
   };
@@ -1006,6 +1007,12 @@
    */
   const arms = () => Kit.motion.stage({ name: 'gait.arms', pose: poseArms });
 
+  /** Turns `lean`'s forward tilt per metre per second into one per unit of Froude number, for an upright body only. */
+  const leanPerSpeed = (motion, plan) => {
+    const rig = legs(plan, motion.rest);
+    return (rig.upright * Math.abs(motion.forwardSpeed)) / (GRAVITY * rig.legLength);
+  };
+
   /**
    * Walking, ready made: lean, arms, planted feet, and tails, wings and everything loose trailing at full
    * detail; clock-driven swing at level of detail 1; nothing beyond. The same stage walks any plan with two or
@@ -1019,11 +1026,6 @@
    * const motion = Kit.motion.state(bake, Kit.gait.walk());
    * Kit.motion.advance(motion, dt, x, 0, z, heading);
    */
-  /** Turns `lean`'s forward tilt per metre per second into one per unit of Froude number, for an upright body only. */
-  const leanPerSpeed = (motion, plan) => {
-    const rig = legs(plan, motion.rest);
-    return (rig.upright * Math.abs(motion.forwardSpeed)) / (GRAVITY * rig.legLength);
-  };
   const walk = ({ before = [], after = [] } = {}) =>
     Kit.motion.byDetail([
       Kit.motion.sequence(
@@ -1103,5 +1105,31 @@
     return out;
   };
 
-  Kit.gait = { STRIDE, GAITS, GAIT_NAMES, CLOCK, SWING, STANCE, SWING_ONLY, SWING_PATH, ARMS, RUN, TORSO, FLIGHT_BOOST, WALK_NEEDS, froude, strideLength, footOffset, legs, reachLeg, levelFoot, plant, swing, arms, walk, feet, support };
+  Kit.gait = {
+    STRIDE,
+    GAITS,
+    GAIT_NAMES,
+    CLOCK,
+    SWING,
+    STANCE,
+    SWING_ONLY,
+    SWING_PATH,
+    ARMS,
+    RUN,
+    TORSO,
+    FLIGHT_BOOST,
+    WALK_NEEDS,
+    froude,
+    strideLength,
+    footOffset,
+    legs,
+    reachLeg,
+    levelFoot,
+    plant,
+    swing,
+    arms,
+    walk,
+    feet,
+    support,
+  };
 })();

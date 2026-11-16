@@ -20,7 +20,8 @@
  * Registered like a game, so the shell gives it a HUD, a back button and clean-up. It draws its own frame (`render`).
  */
 (() => {
-  if (!Kit.ui || !Kit.ui.html || !Kit.body || !Kit.body.wardrobe || !Kit.figure || !Kit.figure.build || !Kit.creator || !Kit.creator.ControlTabs || !Kit.creator.SetupView || !Kit.creator.THEME) return;
+  if (!Kit.ui || !Kit.ui.html || !Kit.body || !Kit.body.wardrobe || !Kit.figure || !Kit.figure.build || !Kit.creator || !Kit.creator.ControlTabs || !Kit.creator.SetupView || !Kit.creator.THEME)
+    return;
   const { html, signal, css } = Kit.ui;
   const { lookControls } = Kit.look.panel;
   const creator = Kit.creator;
@@ -55,8 +56,6 @@
   const DRAFT_KEY = 'draft';
   /** A change is written to the draft after this many seconds of quiet. */
   const DRAFT_DELAY_SECONDS = 1.5;
-  /** Walking in place: how fast the treadmill runs, metres per second. */
-  const WALK_SPEED = 1.3;
   /** Share of the screen the panel takes: the height in portrait, the width in landscape (CSS clamp bounds). */
   const PANEL_SIZE = Object.freeze({ portraitHeight: 'clamp(300px, 50dvh, 520px)', landscapeWidth: 'clamp(320px, 44vw, 460px)' });
   /** Slider-to-figure latencies kept for the report (the newest this many). */
@@ -91,7 +90,7 @@
       <section class="cr-stage" aria-label="Character stage" ref=${(element) => (app.stageElement = element)}>
         <${creator.StageGestures} director=${app.director} label="Character preview" />
         <${creator.StageTitle} status=${app.status} held=${app.held} />
-        <${creator.StageRails} director=${app.director} status=${app.status} held=${app.held} walking=${app.walking} onUndo=${app.actions.undo} onRedo=${app.actions.redo} />
+        <${creator.StageRails} director=${app.director} status=${app.status} held=${app.held} performance=${app.performing} choices=${app.choices} onUndo=${app.actions.undo} onRedo=${app.actions.redo} />
         <${creator.LookChips} controls=${app.look} />
       </section>
       <section class="cr-panel" id="cr-panel" aria-label="Character controls">
@@ -147,8 +146,7 @@
     const tab = signal(creator.SETUP_TAB);
     const speciesSignal = signal(session.recipe().species);
     const nameSignal = signal(session.name());
-    const canWalk = Boolean(Kit.motion && Kit.gait && Kit.gait.walk);
-    const walking = canWalk ? signal(false) : null;
+    const performing = creator.stagePlayer ? signal(creator.IDLE_PERFORMANCE) : null;
     const titleCase = (id) => id.charAt(0).toUpperCase() + id.slice(1);
     const statusNow = () => {
       const { canUndo, canRedo, isChanged } = session.summary();
@@ -217,7 +215,23 @@
         }),
       openShare: () => Kit.ui.openDialog({ title: 'Share code', body: (close) => html`<${creator.ShareBody} code=${() => session.code()} onImport=${importCode} close=${close} />` }),
     };
-    const app = { session, catalog, host, director, status, held, walking, tab, look, speciesSignal, nameSignal, actions, stageElement: null, watched: false };
+    const app = {
+      session,
+      catalog,
+      host,
+      director,
+      status,
+      held,
+      performing,
+      choices: () => creator.performanceChoices(bake),
+      tab,
+      look,
+      speciesSignal,
+      nameSignal,
+      actions,
+      stageElement: null,
+      watched: false,
+    };
     ctx.ui.mount(html`<${CreatorRoot} app=${app} />`);
 
     // ---- the frame ----
@@ -255,27 +269,18 @@
       }
     };
 
-    /** The treadmill: a walking motion state for the bake on stage, made again when the body changes. */
-    let walk = null;
-    const advanceWalk = (dt) => {
-      if (!walk || walk.bake !== bake) {
-        const problem = Kit.motion.refusal(Kit.gait.walk(), bake.plan, bake.rest);
-        if (problem) {
-          walking.value = false;
-          Kit.ui.notify('This body cannot walk.', { tone: 'warn' });
-          walk = null;
-          return;
-        }
-        walk = { bake, motion: Kit.motion.state(bake, Kit.gait.walk()), z: walk ? walk.z : 0 };
-      }
-      walk.z += WALK_SPEED * dt;
-      Kit.motion.advance(walk.motion, dt, 0, 0, walk.z, 0);
-      // The motion's pose is relative to the body, so copied into the figure it walks on the spot.
-      Kit.rig.copy(walk.motion.pose, figure.local);
+    /** The character is never still: the stage's player idles, and plays whatever the picker has chosen. */
+    const player = performing ? creator.stagePlayer() : null;
+    const perform = (dt) => {
+      performing.value = player.advance(dt, bake, performing.value);
+      const motion = player.motion();
+      Kit.rig.copy(motion.pose, figure.local);
+      // A kick steps and a dive flies: the stage stays on the character.
+      Kit.act.keepInPlace(motion, figure.local);
+      figure.face(Kit.act.face(motion));
       figure.pose();
     };
     let lastFrameAt = performance.now();
-    let wasWalking = false;
 
     const fitCamera = () => {
       const window3d = director.windowFor(figure.measured, stageBox.width / stageBox.height);
@@ -307,13 +312,7 @@
         const now = performance.now();
         const dt = Math.min((now - lastFrameAt) / 1000, 0.1);
         lastFrameAt = now;
-        const isWalking = Boolean(walking && walking.value);
-        if (isWalking) advanceWalk(dt);
-        else if (wasWalking) {
-          figure.rest();
-          figure.pose();
-        }
-        wasWalking = isWalking;
+        if (player) perform(dt);
         figure.root.rotation.y = Kit.look.stepYaw(director.state().yaw, view.settings().yawSteps);
         fitCamera();
         view.render(camera, { clearColor: BACKDROP_COLOR });
@@ -337,7 +336,7 @@
         tab: tab.value,
         preset: look.preset.value,
         isComparing: held.value,
-        isWalking: Boolean(walking && walking.value),
+        performance: performing ? performing.value : null,
         canUndo: session.canUndo(),
         canRedo: session.canRedo(),
         camera: director.state(),

@@ -24,7 +24,8 @@
  *        `REPERTOIRE` / `define` (the performances by id), `rig` (what a plan's roles are, measured once),
  *        `stage` (one performance as a stage, for `Kit.motion.sequence` / `layer` / `blend`), `performer` (a
  *        stage that plays whatever `play` asks, cross-fading, with a seeded schedule of idle fidgets) and its
- *        controls (`play`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `takeRootMotion`, `cast`), `refusal`,
+ *        controls (`play`, `stop`, `base`, `aim`, `playing`, `progress`, `rootMotion`, `keepInPlace`,
+ *        `takeRootMotion`, `cast`), `refusal`,
  *        and the pieces other act modules share (`turnHead`, `turnShared`, `lookAngles`, `face`).
  * Does not own: the stage machinery (kit/motion.js), how legs walk (kit/gait.js; a performance that moves the
  *        body solves the legs with `Kit.gait.reachLeg`), the solvers (kit/reach.js), always-on life such as
@@ -108,6 +109,8 @@
   const SIDES = Object.freeze(['left', 'right']);
   /** +1 for the left side, -1 for the right: the sign of "out" along the body's left axis. */
   const SIDE_SIGN = Object.freeze([1, -1]);
+  /** Joints an arm needs to be posed as an arm: shoulder, elbow, hand. */
+  const ARM_JOINTS = 3;
 
   const BACK_OVERSHOOT = 1.70158;
   /**
@@ -189,8 +192,9 @@
    * @property {Object} [needs] a requirement spec for `Kit.body.requirement` ({ needs, atLeast })
    * @property {string} [side] 'left' or 'right': the side it is authored for; played mirrored for the other
    * @property {string} [sideBy] the name of a target: the side is the one that point is on
-   * @property {Object<string, number[]>} [defaults] target name -> [left, up, forward] in statures (the body's
-   *   standing height) from where the body stands: where the point is when the caller gives none
+   * @property {Object<string, number[]>} [defaults] target name -> [left, up, forward] from where the body stands, in
+   *   units of how high its hands reach (`ActRig.high`; its standing height when it has no arms): where the
+   *   point is when the caller gives none, so a default is within reach of a long body and a squat one alike
    * @property {PerformanceKey[]} keys
    * @property {PerformanceReach[]} [reaches]
    * @property {PerformanceTravel} [travel]
@@ -276,7 +280,14 @@
       if (!limb) fail(where, `a reach names the limb "${reach.limb}". Limbs: ${Object.keys(REACH_LIMBS).join(', ')}.`);
       requireSpan(where, `the \`in\` of the ${reach.limb} reach`, reach.in);
       if (reach.out) requireSpan(where, `the \`out\` of the ${reach.limb} reach`, reach.out);
-      return Object.freeze({ ...limb, target: targetIndex(reach.target), in: reach.in.slice(), out: reach.out ? reach.out.slice() : null, offset: requireNumbers(where, 'a reach `offset`', reach.offset || [0, 0, 0], 3).slice(), ground: reach.ground === true });
+      return Object.freeze({
+        ...limb,
+        target: targetIndex(reach.target),
+        in: reach.in.slice(),
+        out: reach.out ? reach.out.slice() : null,
+        offset: requireNumbers(where, 'a reach `offset`', reach.offset || [0, 0, 0], VECTOR_STRIDE).slice(),
+        ground: reach.ground === true,
+      });
     });
     reaches.forEach((reach) => {
       if (reach.hand) reach.hand.forEach((side) => used.add(side ? 'armRight' : 'armLeft'));
@@ -284,16 +295,30 @@
       if (reach.head) used.add('head');
     });
     const travelSpec = spec.travel;
-    if (travelSpec && !(travelSpec.start >= 0 && travelSpec.arrive > travelSpec.start && travelSpec.arrive <= 1 && (travelSpec.land === undefined || (travelSpec.land > travelSpec.arrive && travelSpec.land <= 1))))
+    if (
+      travelSpec &&
+      !(travelSpec.start >= 0 && travelSpec.arrive > travelSpec.start && travelSpec.arrive <= 1 && (travelSpec.land === undefined || (travelSpec.land > travelSpec.arrive && travelSpec.land <= 1)))
+    )
       fail(where, `a travel needs 0 <= start < arrive (< land) <= 1, got ${JSON.stringify(travelSpec)}.`);
     const travel = travelSpec
-      ? Object.freeze({ keep: 0, most: 1, mostUp: 0.4, land: -1, ...travelSpec, target: targetIndex(travelSpec.target), axes: requireNumbers(where, 'a travel `axes`', travelSpec.axes || [1, 1, 1], 3).slice() })
+      ? Object.freeze({
+          keep: 0,
+          most: 1,
+          mostUp: 0.4,
+          land: -1,
+          ...travelSpec,
+          target: targetIndex(travelSpec.target),
+          axes: requireNumbers(where, 'a travel `axes`', travelSpec.axes || [1, 1, 1], VECTOR_STRIDE).slice(),
+        })
       : null;
     if (travel) used.add('shift');
     const defaults = new Float32Array(TUNING.mostTargets * VECTOR_STRIDE);
     targets.forEach((name, index) => {
       if (spec.sideBy !== undefined && !targets.includes(spec.sideBy)) fail(where, `\`sideBy\` names "${spec.sideBy}", which no reach or travel uses.`);
-      defaults.set(requireNumbers(where, `the default of the point "${name}" (\`defaults.${name}\`: [left, up, forward] in leg lengths)`, (spec.defaults || {})[name], 3), index * VECTOR_STRIDE);
+      defaults.set(
+        requireNumbers(where, `the default of the point "${name}" (\`defaults.${name}\`: [left, up, forward] in hand-reach heights)`, (spec.defaults || {})[name], VECTOR_STRIDE),
+        index * VECTOR_STRIDE
+      );
     });
     const uses = new Uint8Array(GROUP_NAMES.length);
     used.forEach((name) => (uses[GROUP[CHANNELS[name].group]] = 1));
@@ -359,7 +384,8 @@
    * @property {number} carrier the bone the body is carried by (`Kit.motion.carrier`)
    * @property {?Object} legs the `LegRig` of kit/gait.js, or null for a body that cannot stand on legs
    * @property {number} unit metres a `shift` of 1 moves the body: its leg length (half its height without legs)
-   * @property {number} stature metres from its lowest point to its highest at rest: what default points and travel caps scale by
+   * @property {number} stature metres from its lowest point to its highest at rest: what travel caps scale by
+   * @property {number} high metres from its lowest point to as high as a hand reaches (the stature without arms): what default points scale by
    * @property {number} reach metres from the hips to the end of an outstretched arm (0 without arms)
    * @property {Int16Array} spine the spine's bones above the carrier
    * @property {Int16Array} neck
@@ -406,7 +432,7 @@
     const sideOfBone = (bone) => (plan.roles[bone] & maskOf('left') ? 0 : plan.roles[bone] & maskOf('right') ? 1 : at(bone, 0) >= 0 ? 0 : 1);
     // One arm a side: the primary one when a body has several; it needs a shoulder, an elbow and a wrist to be placed.
     const primary = maskOf('primary');
-    const armChains = Kit.body.chains(plan, maskOf('arm')).filter((chain) => chain.length >= 3);
+    const armChains = Kit.body.chains(plan, maskOf('arm')).filter((chain) => chain.length >= ARM_JOINTS);
     const armOf = (side) => {
       const onSide = armChains.filter((chain) => sideOfBone(chain[0]) === side);
       return onSide.find((chain) => plan.roles[chain[0]] & primary) || onSide[0] || null;
@@ -418,7 +444,10 @@
       if (!chain) return;
       const offset = [0, 1, 2].map((axis) => at(chain[2], axis) - at(chain[0], axis));
       const distance = Math.hypot(...offset) || 1;
-      armRest.set([Math.acos(clamp(-offset[1] / distance, -1, 1)), Math.atan2(offset[2], offset[0] * SIDE_SIGN[side]), clamp(distance / armLength[side], TUNING.armShortest, TUNING.armLongest), 0], side * CHANNELS.armLeft.size);
+      armRest.set(
+        [Math.acos(clamp(-offset[1] / distance, -1, 1)), Math.atan2(offset[2], offset[0] * SIDE_SIGN[side]), clamp(distance / armLength[side], TUNING.armShortest, TUNING.armLongest), 0],
+        side * CHANNELS.armLeft.size
+      );
     });
     const legOf = (side) => {
       if (!legs) return -1;
@@ -442,6 +471,7 @@
       legs,
       unit: legs ? legs.legLength : (Math.max(...heights) - Math.min(...heights)) / 2 || 1,
       stature: Math.max(...tops) - Math.min(...heights, ...tops) || 1,
+      high: Math.max(...armLength) > 0 ? shoulderHeight - Math.min(...heights, ...tops) + Math.max(...armLength) : Math.max(...tops) - Math.min(...heights, ...tops) || 1,
       reach: Math.max(...armLength) > 0 ? shoulderHeight - at(carrier, 1) + Math.max(...armLength) : 0,
       spine: Int16Array.from(spine),
       neck: Int16Array.from(neck),
@@ -672,10 +702,10 @@
         acting.points[at + 2] = given[2];
         continue;
       }
-      const { stature } = acting.rig;
-      toWorld(motion, compiled.defaults[at] * stature, compiled.defaults[at + 2] * stature);
+      const { high } = acting.rig;
+      toWorld(motion, compiled.defaults[at] * high, compiled.defaults[at + 2] * high);
       acting.points[at] = scratchPoint[0];
-      acting.points[at + 1] = motion.y + compiled.defaults[at + 1] * stature;
+      acting.points[at + 1] = motion.y + compiled.defaults[at + 1] * high;
       acting.points[at + 2] = scratchPoint[2];
     }
     // The side: asked for outright, or the one the named point is on; mirrored when it is not the authored one.
@@ -740,9 +770,9 @@
       for (let index = 0; index < CHANNELS.armLeft.size; index++) {
         const first = values[fromAt + channel + index];
         const second = values[toAt + channel + index];
-        if (first === first && second === second) continue;
+        if (!Number.isNaN(first) && !Number.isNaN(second)) continue;
         const rest = measured.armRest[restAt + index];
-        out[channel + index] = lerp(first === first ? first : rest, second === second ? second : rest, amount);
+        out[channel + index] = lerp(Number.isNaN(first) ? rest : first, Number.isNaN(second) ? rest : second, amount);
       }
     }
     if (acting.isMirrored) mirrorValues(out);
@@ -790,7 +820,17 @@
   // ---- applying channels to the pose ---------------------------------------------------------------------------------
 
   /** How strongly each reach of the playing performance pulls now; per side for hands and feet, and the gaze. Rewritten every frame. */
-  const pulls = { hand: new Float32Array(2), handPoint: new Int8Array(2), handOffset: [null, null], foot: new Float32Array(2), footPoint: new Int8Array(2), footOffset: [null, null], footGround: [false, false], head: 0, headPoint: 0 };
+  const pulls = {
+    hand: new Float32Array(2),
+    handPoint: new Int8Array(2),
+    handOffset: [null, null],
+    foot: new Float32Array(2),
+    footPoint: new Int8Array(2),
+    footOffset: [null, null],
+    footGround: [false, false],
+    head: 0,
+    headPoint: 0,
+  };
 
   const measurePulls = (acting, progress) => {
     pulls.hand.fill(0);
@@ -896,7 +936,18 @@
     // The frame the arm hangs in: how its parent has turned from rest (rest^-1 first, then the parent's world rotation).
     const parentAt = plan.parent[upper] * QUATERNION_STRIDE;
     const frameAt = upper * QUATERNION_STRIDE;
-    multiplyInto(scratchTurn, 0, world.rotation[parentAt], world.rotation[parentAt + 1], world.rotation[parentAt + 2], world.rotation[parentAt + QUATERNION_W], -measured.frame[frameAt], -measured.frame[frameAt + 1], -measured.frame[frameAt + 2], measured.frame[frameAt + QUATERNION_W]);
+    multiplyInto(
+      scratchTurn,
+      0,
+      world.rotation[parentAt],
+      world.rotation[parentAt + 1],
+      world.rotation[parentAt + 2],
+      world.rotation[parentAt + QUATERNION_W],
+      -measured.frame[frameAt],
+      -measured.frame[frameAt + 1],
+      -measured.frame[frameAt + 2],
+      measured.frame[frameAt + QUATERNION_W]
+    );
     const frameX = scratchTurn[0];
     const frameY = scratchTurn[1];
     const frameZ = scratchTurn[2];
@@ -921,7 +972,20 @@
       targetZ = lerp(targetZ, scratchPoint[2], pull);
     }
     rotateBy(scratchTurn, 0, outSign * (TUNING.elbowAside + elbowOut) * length, -TUNING.elbowDown * length, -TUNING.elbowBack * length);
-    Kit.reach.twoBone(plan.parent, motion.pose, world, upper, measured.armMiddle[side], measured.armEnd[side], targetX, targetY, targetZ, shoulderX + scratchPoint[0], shoulderY + scratchPoint[1], shoulderZ + scratchPoint[2]);
+    Kit.reach.twoBone(
+      plan.parent,
+      motion.pose,
+      world,
+      upper,
+      measured.armMiddle[side],
+      measured.armEnd[side],
+      targetX,
+      targetY,
+      targetZ,
+      shoulderX + scratchPoint[0],
+      shoulderY + scratchPoint[1],
+      shoulderZ + scratchPoint[2]
+    );
   };
 
   /** Mixes the bones of one group back towards the pose they had before the performance, by what is left of the group's weight. */
@@ -968,7 +1032,8 @@
       const group = GROUP[CHANNELS[name].group];
       const wasUsed = acting.fromWeights[group] > 0;
       const isUsed = compiled ? compiled.uses[group] === 1 : false;
-      for (let part = 0, at = OFFSET[name]; part < CHANNELS[name].size; part++, at++) values[at] = !wasUsed ? target[at] : !isUsed ? acting.fromValues[at] : lerp(acting.fromValues[at], target[at], fade);
+      for (let part = 0, at = OFFSET[name]; part < CHANNELS[name].size; part++, at++)
+        values[at] = !wasUsed ? target[at] : !isUsed ? acting.fromValues[at] : lerp(acting.fromValues[at], target[at], fade);
     }
     let isActive = acting.carried[0] !== 0 || acting.carried[1] !== 0;
     for (let group = 0; group < GROUP_NAMES.length; group++) {
@@ -1013,7 +1078,8 @@
     }
     if (weights[GROUP.spine] > 0) turnShared(rotation, measured, measured.spine, values[OFFSET.spine], values[OFFSET.spine + 1], values[OFFSET.spine + 2]);
     if (weights[GROUP.head] > 0) turnHead(rotation, measured, values[OFFSET.head], values[OFFSET.head + 1], values[OFFSET.head + 2]);
-    if (weights[GROUP.tail] > 0) for (let index = 0; index < measured.tails.length; index++) turnBody(rotation, measured, measured.tails[index], values[OFFSET.tail], values[OFFSET.tail + 1], values[OFFSET.tail + 2]);
+    if (weights[GROUP.tail] > 0)
+      for (let index = 0; index < measured.tails.length; index++) turnBody(rotation, measured, measured.tails[index], values[OFFSET.tail], values[OFFSET.tail + 1], values[OFFSET.tail + 2]);
     if (weights[GROUP.wings] > 0) {
       // Lifting a left wing's tip is a lean to the right about the forward axis; the right wing mirrors it.
       for (let index = 0; index < measured.wings.length; index++)
@@ -1256,6 +1322,24 @@
   };
 
   /**
+   * Puts a body that a performance has carried away back over the instance's position in a copy of its pose:
+   * the pose is kept, the distance covered is not. For a view that stays on the character (a maker's stage, a
+   * proof sheet); a game moves the instance with `takeRootMotion` instead.
+   * @param {Object} motion a `MotionState`
+   * @param {Object} pose a copy of `motion.pose` (`Kit.rig.copy`); its carrier bone is moved back
+   * @returns {void}
+   * @complexity O(1), no allocation
+   * @example Kit.rig.copy(motion.pose, figure.local); Kit.act.keepInPlace(motion, figure.local); figure.pose();
+   */
+  const keepInPlace = (motion, pose) => {
+    const acting = actingOf(motion);
+    const measured = acting.rig || rig(motion.plan, motion.rest);
+    const at = measured.carrier * VECTOR_STRIDE;
+    pose.translation[at] -= (acting.carried[0] + acting.travelled[0]) / measured.stretch[0];
+    pose.translation[at + 2] -= (acting.carried[1] + acting.travelled[2]) / measured.stretch[2];
+  };
+
+  /**
    * Collects where a finished performance left the body (a kick's step, a dive's flight): the world offset
    * from the instance's position to where the body now stands. Until it is collected the body is drawn there
    * anyway; add the offset to the game's own position, and `Kit.motion.place` the instance there.
@@ -1322,6 +1406,7 @@
     playing,
     progress,
     rootMotion,
+    keepInPlace,
     takeRootMotion,
     cast,
     seedOf,

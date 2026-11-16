@@ -756,12 +756,17 @@
   const createLoose = (motion, tune) => {
     const { plan } = motion;
     const world = refreshWorld(motion);
-    const between = (from, to) => Math.hypot(world.translation[to] - world.translation[from], world.translation[to + 1] - world.translation[from + 1], world.translation[to + 2] - world.translation[from + 2]);
+    const between = (from, to) =>
+      Math.hypot(world.translation[to] - world.translation[from], world.translation[to + 1] - world.translation[from + 1], world.translation[to + 2] - world.translation[from + 2]);
     const chains = looseChains(plan, tune)
       .map((joints) => {
         const last = joints[joints.length - 1];
         Kit.body.tailPosition(plan, world, last, scratchTip);
-        const tipLength = Math.hypot(scratchTip[0] - world.translation[last * VECTOR_STRIDE], scratchTip[1] - world.translation[last * VECTOR_STRIDE + 1], scratchTip[2] - world.translation[last * VECTOR_STRIDE + 2]);
+        const tipLength = Math.hypot(
+          scratchTip[0] - world.translation[last * VECTOR_STRIDE],
+          scratchTip[1] - world.translation[last * VECTOR_STRIDE + 1],
+          scratchTip[2] - world.translation[last * VECTOR_STRIDE + 2]
+        );
         const hasTip = tipLength > tune.shortestTip;
         const lengths = [...joints.slice(1).map((joint, link) => between(joints[link] * VECTOR_STRIDE, joint * VECTOR_STRIDE)), ...(hasTip ? [tipLength] : [])];
         if (!lengths.length) return null;

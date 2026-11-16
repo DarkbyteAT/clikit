@@ -65,7 +65,12 @@
     /** Seeded rolls across the species, three-quarter view: what random generation really gives. */
     rolls: (catalog, _editor, { species, count = 32 }) => {
       const table = catalog.table(species.map((id) => ({ species: id })));
-      return { title: 'Rolls', columns: 8, framing: 'body', cells: Array.from({ length: count }, (_unused, index) => ({ label: `roll ${index}`, recipe: table.roll(ROLL_SEED, index), yaw: THREE_VIEWS[0] })) };
+      return {
+        title: 'Rolls',
+        columns: 8,
+        framing: 'body',
+        cells: Array.from({ length: count }, (_unused, index) => ({ label: `roll ${index}`, recipe: table.roll(ROLL_SEED, index), yaw: THREE_VIEWS[0] })),
+      };
     },
     /** The same rolls close on the head. */
     faces: (catalog, editor, options) => ({ ...SUITES.rolls(catalog, editor, options), title: 'Faces', framing: 'head' }),
@@ -75,9 +80,13 @@
       columns: THREE_VIEWS.length * 3,
       framing: 'body',
       cells: species.flatMap((id) =>
-        editor.schema(subjectOf(id)).sockets.flatMap((socket) =>
-          socket.choices.flatMap((choice) => THREE_VIEWS.map((yaw) => ({ label: `${id} ${socket.path}: ${choice.id || 'none'}`, recipe: editor.setSocket(subjectOf(id), socket.path, choice.id), yaw })))
-        )
+        editor
+          .schema(subjectOf(id))
+          .sockets.flatMap((socket) =>
+            socket.choices.flatMap((choice) =>
+              THREE_VIEWS.map((yaw) => ({ label: `${id} ${socket.path}: ${choice.id || 'none'}`, recipe: editor.setSocket(subjectOf(id), socket.path, choice.id), yaw }))
+            )
+          )
       ),
     }),
     /** Every dial of each species' subject at its least and its most. */
@@ -105,7 +114,9 @@
         cells: species.flatMap((id) =>
           acts
             .filter((act) => canDo(id, act))
-            .flatMap((act) => [0.2, 0].flatMap((yaw) => Array.from({ length: PHASES }, (_unused, step) => ({ label: `${id} ${act} ${step}/${PHASES}`, recipe: subjectOf(id), yaw, act, phase: step / PHASES }))))
+            .flatMap((act) =>
+              [0.2, 0].flatMap((yaw) => Array.from({ length: PHASES }, (_unused, step) => ({ label: `${id} ${act} ${step}/${PHASES}`, recipe: subjectOf(id), yaw, act, phase: step / PHASES })))
+            )
         ),
       };
     },
@@ -150,17 +161,6 @@
   /** Why a bake cannot do an act: the stage's refusal, or the act's own. */
   const refusalOf = (act, bake) => Kit.motion.refusal(act.stage(), bake.plan, bake.rest) || (act.refusal ? act.refusal(bake) : null);
 
-  const travelled = [0, 0];
-
-  /** Keeps a body that a kick's step or a dive's flight has carried away in its cell: the pose is shown, not the distance covered. */
-  const anchorBody = (motion, local) => {
-    const measured = Kit.act.rig(motion.plan, motion.rest);
-    const at = measured.carrier * 3;
-    Kit.act.rootMotion(motion, travelled);
-    local.translation[at] -= travelled[0] / measured.stretch[0];
-    local.translation[at + 2] -= travelled[1] / measured.stretch[2];
-  };
-
   /** A performance of `Kit.act.REPERTOIRE` as an act: a whole character standing on the spot, the performance played from its start. */
   const performanceAct = (id) => ({
     stage: () => Kit.act.character({ fidgets: [] }),
@@ -168,7 +168,8 @@
     cycle: () => Kit.act.REPERTOIRE[id].seconds,
     begin: (motion) => Kit.act.play(motion, id),
     refusal: (bake) => Kit.act.refusal(id, bake.plan, bake.rest),
-    anchor: anchorBody,
+    // A kick's step or a dive's flight would leave the cell: the pose is shown, not the distance covered.
+    anchor: (motion, local) => Kit.act.keepInPlace(motion, local),
   });
 
   /**
@@ -186,7 +187,13 @@
     // Standing with nothing asked of it: breathing, a weight shift, a gaze and blinks over six seconds.
     ACTS.idle = { stage: () => Kit.act.character({ fidgets: [] }), speed: () => 0, cycle: () => IDLE_SECONDS };
     // A wave laid over a walk: the legs keep walking, one arm is taken over.
-    ACTS.walkWave = { ...ACTS.walk, stage: () => Kit.act.character({ fidgets: [] }), cycle: () => Kit.act.REPERTOIRE.wave.seconds, begin: (motion) => Kit.act.play(motion, 'wave'), refusal: (bake) => Kit.act.refusal('wave', bake.plan, bake.rest) };
+    ACTS.walkWave = {
+      ...ACTS.walk,
+      stage: () => Kit.act.character({ fidgets: [] }),
+      cycle: () => Kit.act.REPERTOIRE.wave.seconds,
+      begin: (motion) => Kit.act.play(motion, 'wave'),
+      refusal: (bake) => Kit.act.refusal('wave', bake.plan, bake.rest),
+    };
     Object.keys(Kit.act.REPERTOIRE).forEach((id) => (ACTS[id] = performanceAct(id)));
   }
 
