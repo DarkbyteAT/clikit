@@ -61,6 +61,11 @@
   /** The role kit/body-parts.js gives every bone of an attached part. */
   const PROP_ROLE = 'prop';
   const VECTOR = 3;
+  /** Numbers in a 4x4 matrix, and in one of its columns (column-major, as THREE stores it). */
+  const MATRIX = 16;
+  const COLUMN = 4;
+  /** One coordinate (`axis` 0, 1 or 2) of a point carried by a 4x4 matrix. */
+  const alongAxis = (matrix, axis, x, y, z) => matrix[axis] * x + matrix[axis + COLUMN] * y + matrix[axis + COLUMN * 2] * z + matrix[axis + COLUMN * 3];
 
   const fail = (where, message) => {
     throw new Error(`Kit.figure.${where}: ${message}`);
@@ -371,7 +376,7 @@
    * @example const { lowestY } = Kit.figure.measureRest(layout, restWorld, (piece) => cache.positions(piece));
    */
   const measureRest = (figureLayout, world, positionsOf) => {
-    const matrix = new Float32Array(16);
+    const matrix = new Float32Array(MATRIX);
     const box = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity };
     let lowestPropY = Infinity;
     figureLayout.pieces.forEach((piece) => {
@@ -429,7 +434,7 @@
    * @example const head = Kit.figure.measureSwept(figure.layout, figure.world, cache.positions, (piece) => piece.bone === headBone);
    */
   const measureSwept = (figureLayout, world, positionsOf, includes = () => true) => {
-    const matrix = new Float32Array(16);
+    const matrix = new Float32Array(MATRIX);
     const pieces = figureLayout.pieces.filter(includes);
     const low = [Infinity, Infinity, Infinity];
     const high = [-Infinity, -Infinity, -Infinity];
@@ -443,7 +448,7 @@
         // Measured hot loop over typed arrays (thousands of vertices): plain index arithmetic.
         for (let offset = 0; offset < positions.length; offset += VECTOR) {
           const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
-          visit(matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12], matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13], matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]);
+          visit(alongAxis(matrix, 0, x, y, z), alongAxis(matrix, 1, x, y, z), alongAxis(matrix, 2, x, y, z));
         }
       });
     eachPoint((x, y, z) => {

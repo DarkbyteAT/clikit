@@ -39,6 +39,15 @@
   const subtract = (first, second) => first.map((value, axis) => value - second[axis]);
 
   /**
+   * How the primitives are proportioned, as shares of the size each is given unless a unit is named: a fringe
+   * lock's taper; a bun's height, how far it stands off the head, and its tie (length, radius, taper); the end
+   * of a tail whose last radius is not stated; a braid's bead as [across, along, deep]; a sideburn's lowest
+   * point (rise below the middle of the head), how far it stands off (metres), its lean forward (degrees) and
+   * taper; a fall's width (of the head's half width) and depth (of its own width).
+   */
+  const FORM = Object.freeze({ fringeTaper: 0.3, bunHeight: 0.9, bunOut: 0.7, tieLength: 0.6, tieRadius: 0.55, tieTaper: 0.9, tailEnd: 0.55, bead: [1, 0.82, 0.9], burnBottom: 0.3, burnOut: 0.002, burnLean: 4, burnTaper: 0.5, fallWidth: 0.9, fallDepth: 0.3 });
+
+  /**
    * The hair primitives for a head. Each returns bone rows (`BoneSpec`, kit/body-plan.js) painted 'hair'; a
    * style is their concatenation. Names must be unique within a style: every primitive takes the name (or the
    * prefix of the names) of its rows first.
@@ -116,7 +125,7 @@
       return Array.from({ length: count }, (_unused, index) => {
         const azimuth = count === 1 ? (from + to) / 2 : from + ((to - from) * index) / (count - 1);
         const reach = bottom + (top - bottom) * (index % 2 ? ragged : 0);
-        return lock(`${prefix}${index + 1}`, [azimuth, top, out], [azimuth + sweep, reach, out], radius, 0.3);
+        return lock(`${prefix}${index + 1}`, [azimuth, top, out], [azimuth + sweep, reach, out], radius, FORM.fringeTaper);
       }).flat();
     };
 
@@ -148,7 +157,10 @@
      * @param {number} radius metres
      * @returns {Object[]} two rows
      */
-    const bun = (name, place, radius) => [...mass(name, [place[0], place[1], (place[2] || 0) + radius * 0.7], [radius, radius * 0.9, radius]), ...lock(`${name}Tie`, [place[0], place[1], 0], [place[0], place[1], radius * 0.6], radius * 0.55, 0.9)];
+    const bun = (name, place, radius) => [
+      ...mass(name, [place[0], place[1], (place[2] || 0) + radius * FORM.bunOut], [radius, radius * FORM.bunHeight, radius]),
+      ...lock(`${name}Tie`, [place[0], place[1], 0], [place[0], place[1], radius * FORM.tieLength], radius * FORM.tieRadius, FORM.tieTaper),
+    ];
 
     /**
      * A tail: a chain of loose segments that swings, from a place on the scalp (a ponytail, a pigtail).
@@ -167,7 +179,7 @@
         ...(index === steps.length - 1 ? { tail: step } : {}),
         roles: [...(index ? [] : ['root']), ...roles],
         girth: radii[index] * 2,
-        shape: { kind: 'capsule', radius: radii[index], taper: (radii[index + 1] || radii[index] * 0.55) / radii[index] },
+        shape: { kind: 'capsule', radius: radii[index], taper: (radii[index + 1] || radii[index] * FORM.tailEnd) / radii[index] },
         ...SWING,
         paint,
       }));
@@ -192,7 +204,7 @@
           tail: step,
           roles: [...(index ? [] : ['root']), ...roles],
           girth: size * 2,
-          shape: { kind: 'sphere', radius: size, scale: [1, 0.82, 0.9], at: step.map((value) => value / 2) },
+          shape: { kind: 'sphere', radius: size, scale: FORM.bead, at: step.map((value) => value / 2) },
           ...SWING,
           paint,
         };
@@ -205,9 +217,9 @@
      *   from the front to each (default 66); `top`, `bottom`: rises (default 0.2 and -0.3)
      * @returns {Object[]} two rows
      */
-    const sideburns = (prefix, { azimuth = 66, top = 0.2, bottom = -0.3, radius = 0.014 } = {}) => [
-      ...lock(`${prefix}Left`, [azimuth, top, 0.002], [azimuth - 4, bottom, 0], radius, 0.5),
-      ...lock(`${prefix}Right`, [-azimuth, top, 0.002], [4 - azimuth, bottom, 0], radius, 0.5),
+    const sideburns = (prefix, { azimuth = 66, top = 0.2, bottom = -FORM.burnBottom, radius = 0.014 } = {}) => [
+      ...lock(`${prefix}Left`, [azimuth, top, FORM.burnOut], [azimuth - FORM.burnLean, bottom, 0], radius, FORM.burnTaper),
+      ...lock(`${prefix}Right`, [-azimuth, top, FORM.burnOut], [FORM.burnLean - azimuth, bottom, 0], radius, FORM.burnTaper),
     ];
 
     /**
@@ -222,7 +234,7 @@
      *   behind its start (default 0.02)
      * @returns {Object[]} one row
      */
-    const fall = (name, { top = -0.1, length, width = halves[0] * 0.9, depth = 0.3, taper = 0.6, back = 0.02 }) => {
+    const fall = (name, { top = -0.1, length, width = halves[0] * FORM.fallWidth, depth = FORM.fallDepth, taper = 0.6, back = 0.02 }) => {
       const start = at([180, top, -width * depth * 0.5]);
       return [row(name, { at: start, tail: [0, -length, -back], girth: width * 2, wear: 'drape', hangs: ['head', 'neck', 'spine'], shape: { kind: 'capsule', radius: width, taper, scale: [1, 1, depth] } })];
     };

@@ -27,6 +27,39 @@
    * grid and is cut off short, or leaves a fleck of its tip floating over the ear.
    */
   const POINT_TAPER = 0.5;
+  /**
+   * How a nose is built from its row, as shares of the row's own lengths: where the bridge ends in the tip
+   * (`bridgeEnd`, of the tip's radius), how far the wings hang under the tip (`wingsDrop`, of the tip's drop),
+   * and a hump's half sizes and place on the bridge. `flare`: degrees between the wings when a row states none.
+   */
+  const NOSE_FORM = Object.freeze({ bridgeEnd: 0.8, wingsDrop: 0.4, flare: 14, humpWidth: 1.1, humpLength: 0.3, humpAlong: 0.55, humpDrop: 0.5, humpOut: 0.5 });
+  /**
+   * How an ear is built from its row: the plate's thickness when a row states none and the fillet that joins it
+   * to the head (metres), then the lobe's half sizes and place as shares of the plate's.
+   */
+  const EAR_FORM = Object.freeze({ thickness: 0.011, blend: 0.006, lobeWidth: 0.5, lobeHeight: 0.34, lobeThickness: 0.6, lobeBack: 0.75, lobeDown: 0.8 });
+  /** The swells of a face, metres at the reference head: [across, up, out] half sizes of a buried ball and the fillet that joins it; `elevation`: degrees from its anchor. */
+  const SWELLS = Object.freeze({
+    ridge: Object.freeze({ halves: [0.023, 0.0075, 0.0075], blend: 0.012, elevation: -5 }),
+    cheek: Object.freeze({ halves: [0.024, 0.02, 0.0085], blend: 0.02 }),
+    chin: Object.freeze({ halves: [0.019, 0.013, 0.011], blend: 0.014 }),
+  });
+  /**
+   * Lips, metres at the reference head: each lip's half height and how far it sits above the mouth's line
+   * (`upper`, `lower`: [halfHeight, up]), their half width as a share of the mouth stamp's, how far they stand
+   * out and are sunk, and the fillet that joins them to the face.
+   */
+  const LIPS = Object.freeze({ upper: [0.0036, 0.0036], lower: [0.0044, -0.0042], width: 0.52, out: 0.0048, sunk: -0.0016, blend: 0.006 });
+  /** An eye socket: its half sizes as shares of the eye stamp's [width, height], how deep the pressing ball is, and the fillet round its rim (metres). */
+  const SOCKET = Object.freeze({ across: 0.78, up: 0.74, ball: 0.012, blend: 0.012 });
+  /**
+   * The plain stamps, in the stamp's own square (-1..1): how many sides a dot and its glint are drawn with, a
+   * glint as [x, y, halfWidth, halfHeight] on an eye and on a nose pad, and a smile as two arcs of an ellipse
+   * centred `smileUp` above the stamp's middle, between two angles (degrees).
+   */
+  const STAMPS = Object.freeze({ dotSides: 14, glintSides: 8, eyeGlint: [-0.3, 0.36, 0.3, 0.3], padGlint: [-0.25, 0.4, 0.3, 0.2], smileUp: 0.6, smileOuter: [1, 1.1], smileInner: [0.94, 0.8], smileFrom: 200, smileTo: 340 });
+  /** The lightest shade of a ramp: a glint. */
+  const LIGHTEST = 4;
   /** How much of a solid's radius is sunk into the surface it grows from, so its edge is a slope and not a step. */
   const SUNK = 0.3;
 
@@ -110,11 +143,11 @@
     const start = [0, row.length, -row.bridge * SUNK];
     const tipAt = [0, -drop, row.out - tipRadius * SUNK];
     const features = [
-      { ...common, shape: { kind: 'capsule', at: scaled(start, scale), end: scaled([tipAt[0] - start[0], tipAt[1] - start[1], tipAt[2] - start[2]], scale), radius: row.bridge * scale, taper: (tipRadius * 0.8) / row.bridge } },
+      { ...common, shape: { kind: 'capsule', at: scaled(start, scale), end: scaled([tipAt[0] - start[0], tipAt[1] - start[1], tipAt[2] - start[2]], scale), radius: row.bridge * scale, taper: (tipRadius * NOSE_FORM.bridgeEnd) / row.bridge } },
       { ...common, shape: pressed(row.tip, tipAt, scale) },
     ];
-    if (row.wings) features.push({ ...common, spacing: row.flare === undefined ? 14 : row.flare, shape: pressed(row.wings, [0, -drop * 0.4, row.wings[2] * (1 - SUNK)], scale) });
-    if (row.hump) features.push({ ...common, shape: pressed([row.bridge * 1.1, row.length * 0.3, row.bridge], [0, row.length * 0.55 - drop * 0.5, row.out * 0.5 + row.hump - row.bridge], scale) });
+    if (row.wings) features.push({ ...common, spacing: row.flare === undefined ? NOSE_FORM.flare : row.flare, shape: pressed(row.wings, [0, -drop * NOSE_FORM.wingsDrop, row.wings[2] * (1 - SUNK)], scale) });
+    if (row.hump) features.push({ ...common, shape: pressed([row.bridge * NOSE_FORM.humpWidth, row.length * NOSE_FORM.humpLength, row.bridge], [0, row.length * NOSE_FORM.humpAlong - drop * NOSE_FORM.humpDrop, row.out * NOSE_FORM.humpOut + row.hump - row.bridge], scale) });
     return features;
   };
 
@@ -151,14 +184,14 @@
    */
   const ears = (style, { scale = 1, paint = 'skin' } = {}) => {
     const row = rowOf(EARS, style, 'ears');
-    const thickness = row.thickness || 0.011;
+    const thickness = row.thickness || EAR_FORM.thickness;
     const flare = row.flare === undefined ? 38 : row.flare;
     const [halfWidth, halfHeight] = [row.width / 2, row.height / 2];
-    const common = { anchor: 'ear', size: scaled([row.width, row.height], scale), paint, lean: [0, flare], blend: 0.006 * scale };
+    const common = { anchor: 'ear', size: scaled([row.width, row.height], scale), paint, lean: [0, flare], blend: EAR_FORM.blend * scale };
     // The plate turns about its front edge, which stays sunk in the head at the anchor; the rest swings out by the flare.
     const plateAt = [halfWidth, 0, -thickness * SUNK];
     const features = [{ ...common, id: 'ear', shape: pressed([halfWidth, halfHeight, thickness / 2], plateAt, scale) }];
-    if (row.lobe !== false) features.push({ ...common, id: 'ear', shape: pressed([halfWidth * 0.5, halfHeight * 0.34, thickness * 0.6], [halfWidth * 0.75, -halfHeight * 0.8, plateAt[2]], scale) });
+    if (row.lobe !== false) features.push({ ...common, id: 'ear', shape: pressed([halfWidth * EAR_FORM.lobeWidth, halfHeight * EAR_FORM.lobeHeight, thickness * EAR_FORM.lobeThickness], [halfWidth * EAR_FORM.lobeBack, -halfHeight * EAR_FORM.lobeDown, plateAt[2]], scale) });
     if (row.point) {
       const from = [plateAt[0], halfHeight * 0.45, plateAt[2]];
       features.push({ ...common, id: 'earTip', size: scaled([row.width, row.point.length], scale), shape: { kind: 'capsule', at: scaled(from, scale), end: scaled([row.point.back, row.point.length, 0], scale), radius: row.point.radius * scale, taper: POINT_TAPER } });
@@ -185,7 +218,7 @@
    * @complexity O(1)
    * @example plan.features = [...Kit.body.face.browRidge({ scale: 2 }), ...Kit.body.face.cheeks({ scale: 2 })];
    */
-  const browRidge = (options) => [{ ...swell('ridge', 'brow', [0.023, 0.0075, 0.0075], 0.012, options), elevation: -5 }];
+  const browRidge = (options) => [{ ...swell('ridge', 'brow', SWELLS.ridge.halves, SWELLS.ridge.blend, options), elevation: SWELLS.ridge.elevation }];
 
   /**
    * Cheeks: a soft fullness each side on the 'cheek' anchor. Id 'cheek': a dial on its `size` fills or hollows them.
@@ -194,7 +227,7 @@
    * @complexity O(1)
    * @example plan.features = Kit.body.face.cheeks();
    */
-  const cheeks = (options) => [swell('cheek', 'cheek', [0.024, 0.02, 0.0085], 0.02, options)];
+  const cheeks = (options) => [swell('cheek', 'cheek', SWELLS.cheek.halves, SWELLS.cheek.blend, options)];
 
   /**
    * A chin: a rounded point on the 'chin' anchor. Id 'chin': a dial on its `lift` draws it out or sets it back.
@@ -203,7 +236,7 @@
    * @complexity O(1)
    * @example plan.features = Kit.body.face.chin({ scale: 1.3 });
    */
-  const chin = (options) => [swell('chin', 'chin', [0.019, 0.013, 0.011], 0.014, options)];
+  const chin = (options) => [swell('chin', 'chin', SWELLS.chin.halves, SWELLS.chin.blend, options)];
 
   /**
    * Lips under a mouth stamp: an upper and a fuller lower lip on the 'mouth' anchor, as wide as the stamp. Id
@@ -215,10 +248,10 @@
    * @example mouthPart.features.push(...Kit.body.face.lips([0.04, 0.02]));
    */
   const lips = (size, { scale = 1, paint = 'skin', fullness = 1 } = {}) => {
-    const halfWidth = size[0] * 0.52;
-    const common = { id: 'mouth', anchor: 'mouth', size: scaled(size, scale), paint, outlined: false, blend: 0.006 * scale };
-    const lip = (halfHeight, up) => ({ ...common, shape: pressed([halfWidth, halfHeight * fullness, 0.0048 * fullness], [0, up * fullness, -0.0016], scale) });
-    return [lip(0.0036, 0.0036), lip(0.0044, -0.0042)];
+    const halfWidth = size[0] * LIPS.width;
+    const common = { id: 'mouth', anchor: 'mouth', size: scaled(size, scale), paint, outlined: false, blend: LIPS.blend * scale };
+    const lip = (halfHeight, up) => ({ ...common, shape: pressed([halfWidth, halfHeight * fullness, LIPS.out * fullness], [0, up * fullness, LIPS.sunk], scale) });
+    return [lip(...LIPS.upper), lip(...LIPS.lower)];
   };
 
   /**
@@ -231,8 +264,8 @@
    * @example eyesPart.features.push(...Kit.body.face.eyeSockets([0.042, 0.038]));
    */
   const eyeSockets = (size, { scale = 1, depth = 0.0032 } = {}) => {
-    const halves = [size[0] * 0.78, size[1] * 0.74, 0.012];
-    return [{ id: 'eye', anchor: 'eye', size: scaled(size, scale), carve: true, blend: 0.012 * scale, shape: pressed(halves, [0, 0, halves[2] - depth], scale) }];
+    const halves = [size[0] * SOCKET.across, size[1] * SOCKET.up, SOCKET.ball];
+    return [{ id: 'eye', anchor: 'eye', size: scaled(size, scale), carve: true, blend: SOCKET.blend * scale, shape: pressed(halves, [0, 0, halves[2] - depth], scale) }];
   };
 
   /**
@@ -248,8 +281,8 @@
     const { ellipse } = Kit.surface;
     const frames = {
       open: [
-        { outline: ellipse(0, 0, 1, 1, 14), paint: { channel, shade: 0 }, least: 2 },
-        { outline: ellipse(-0.3, 0.36, 0.3, 0.3, 8), paint: { channel, shade: 4 }, least: 1, fixed: true },
+        { outline: ellipse(0, 0, 1, 1, STAMPS.dotSides), paint: { channel, shade: 0 }, least: 2 },
+        { outline: ellipse(...STAMPS.eyeGlint, STAMPS.glintSides), paint: { channel, shade: LIGHTEST }, least: 1, fixed: true },
       ],
       closed: [{ outline: ellipse(0, -0.1, 1, 0.16, 10), paint: { channel, shade: 0 } }],
     };
@@ -267,7 +300,8 @@
    */
   const lineMouth = (size, { scale = 1, channel = 'skin' } = {}) => {
     const { ellipse } = Kit.surface;
-    const smile = [...ellipse(0, 0.6, 1, 1.1, 8, { from: 200, to: 340 }), ...ellipse(0, 0.6, 0.94, 0.8, 8, { from: 200, to: 340 }).reverse()];
+    const arc = (halves) => ellipse(0, STAMPS.smileUp, halves[0], halves[1], STAMPS.glintSides, { from: STAMPS.smileFrom, to: STAMPS.smileTo });
+    const smile = [...arc(STAMPS.smileOuter), ...arc(STAMPS.smileInner).reverse()];
     return [{ id: 'mouth', anchor: 'mouth', size: scaled(size, scale), frames: { rest: [{ outline: smile, paint: { channel, shade: 0 }, least: 1 }] }, rest: 'rest' }];
   };
 
@@ -284,8 +318,8 @@
   const nosePad = (size, { scale = 1, channel = 'skin', elevation = 0 } = {}) => {
     const { ellipse } = Kit.surface;
     const layers = [
-      { outline: ellipse(0, 0, 1, 1, 14), paint: { channel, shade: 0 }, least: 2 },
-      { outline: ellipse(-0.25, 0.4, 0.3, 0.2, 8), paint: { channel, shade: 4 }, least: 1, fixed: true },
+      { outline: ellipse(0, 0, 1, 1, STAMPS.dotSides), paint: { channel, shade: 0 }, least: 2 },
+      { outline: ellipse(...STAMPS.padGlint, STAMPS.glintSides), paint: { channel, shade: LIGHTEST }, least: 1, fixed: true },
     ];
     return [{ id: 'nosePad', anchor: 'nose', elevation, size: scaled(size, scale), frames: { rest: layers }, rest: 'rest' }];
   };

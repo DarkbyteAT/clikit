@@ -207,6 +207,8 @@
   /** Palette rows: an options page of 36 figures at `Kit.figure.RAMP_SLOTS` rows each, with room to spare (the indexed looks address the first `Kit.look.INDEXED_ROWS`, a page of 32). */
   const ATLAS_ROWS = 1024;
   const CAMERA = Object.freeze({ pitchDegrees: 6, distance: 12, near: 0.1, far: 60 });
+  /** The camera's pitch, radians. */
+  const PITCH = (CAMERA.pitchDegrees * Math.PI) / 180;
   /**
    * Room round a figure in its cell. A body cell holds everything the figure sweeps when it turns (wings, a hat,
    * a staff), plus `sideMargin` and `topMargin` as shares of that; `floor` is the share of the cell left under
@@ -346,7 +348,7 @@
           const [x, y, z] = heads[index].center;
           const toCamera = (z * Math.cos(turn) - x * Math.sin(turn)) * entry.scale;
           entry.figure.root.position.x = (column - (columns - 1) / 2) * side - (x * Math.cos(turn) + z * Math.sin(turn)) * entry.scale;
-          entry.figure.root.position.y = (rows - 1 - row + 0.5) * side - y * entry.scale + toCamera * Math.tan((CAMERA.pitchDegrees * Math.PI) / 180);
+          entry.figure.root.position.y = (rows - 1 - row + 0.5) * side - y * entry.scale + toCamera * Math.tan(PITCH);
         });
       };
 
@@ -404,8 +406,7 @@
         const [halfWidth, halfHeight] = [(size.w * worldPerPixel) / 2, (size.h * worldPerPixel) / 2];
         Object.assign(camera, { left: -halfWidth, right: halfWidth, top: halfHeight, bottom: -halfHeight });
         camera.updateProjectionMatrix();
-        const pitch = (CAMERA.pitchDegrees * Math.PI) / 180;
-        camera.position.set(0, height / 2 + Math.sin(pitch) * CAMERA.distance, Math.cos(pitch) * CAMERA.distance);
+        camera.position.set(0, height / 2 + Math.sin(PITCH) * CAMERA.distance, Math.cos(PITCH) * CAMERA.distance);
         camera.lookAt(0, height / 2, 0);
       };
 

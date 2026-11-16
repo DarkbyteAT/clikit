@@ -73,6 +73,8 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [body-recipe.js](#body-recipejs) (0) - Kit body recipe: an individual as three small things, `{ species, seed, overrides }`, and everything needed to turn that into a body and bac
 - [body-edit.js](#body-editjs) (0) - Kit body edit: everything a character editor needs from a catalogue, with no editor in it.
 - [body-store.js](#body-storejs) (0) - Kit body store: many body instances as columns - where each is, which way it faces, how far through its movement cycle it is, how much detai
+- [body-face.js](#body-facejs) (0) - Kit body face: a face as relief, as data.
+- [body-hair.js](#body-hairjs) (0) - Kit body hair: hair as a small vocabulary of shapes, as data.
 - [body-samples.js](#body-samplesjs) (0) - Kit body samples: three deliberately different body plans (a biped, a quadruped, a fish), four parts (a one-bone sword with grip and gem soc
 - [body-wardrobe.js](#body-wardrobejs) (0) - Kit body wardrobe: an original, generic humanoid catalogue for a character creator, as data.
 - [body-debug.js](#body-debugjs) (0) - Kit body debug: a stick figure of any posed body plan on a 2D canvas, with its sockets marked.
@@ -86,6 +88,7 @@ Each module lists what it assigns to `Kit`, then what its factories return, then
 - [figure-shapes.js](#figure-shapesjs) (0) - Kit figure shapes: the surface of one bone, as plain arrays.
 - [figure-layout.js](#figure-layoutjs) (0) - Kit figure layout: what a renderer draws for one body bake, decided as plain data.
 - [sculpt.js](#sculptjs) (17) - Kit sculpt: smooth surfaces from simple solids.
+- [sculpt-relief.js](#sculpt-reliefjs) (0) - Kit sculpt relief: one solid modelled out of another.
 - [figure-sculpt.js](#figure-sculptjs) (0) - Kit figure sculpt: a body bake as a few smooth, skinned surfaces instead of one rigid solid per bone.
 - [figure.js](#figurejs) (0) - Kit figure: a body bake plus a pose, drawn in 3D through Kit.look.
 - [figure-show.js](#figure-showjs) (0) - Kit figure show: the `figures` screen (`Kit.play('figures')`): the sample bodies of kit/body-samples.js (a human, a winged variant, a hound,
@@ -7461,6 +7464,7 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 - **FeatureSpec**
   - `id` *string* - what dials and animators call it ('eye', 'mouth'); several features may share an id
   - `[bone]` *string* - the bone it sits on (a part's features default to the bone of the socket it is in)
+  - `[anchor]` *string* - a named place of the plan (`AnchorSpec`, `plan.spec.anchors`): the feature sits there. Its own `azimuth` and `elevation` are then steps away from the anchor, and it takes the anchor's `spacing` (and, on a plan, its `bone`) unless it states its own. A nose made for one head then sits right on any head that says where its nose is
   - `[azimuth=0]` *number* - degrees about the bone's +Y from its +Z (the front) towards +X (its left)
   - `[elevation=0]` *number* - degrees above the middle of the bone's shape
   - `[spacing]` *number* - degrees between the two copies of a mirrored pair (left at +spacing/2); omit for one copy
@@ -7470,7 +7474,10 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `[frames]` *Object\<string, StampLayer[]\>* - frame name -> the stamp's layers, bottom first
   - `[rest]` *string* - the frame shown when nothing animates it (default: the first frame)
   - `[shape]` *Object* - a solid in the feature's own frame, metres at the authored size (`Kit.body.SHAPES` row: +X across, +Y along `up`, +Z out along the normal), for a nose or an ear that has a silhouette. A capsule, lathe or extrude states `end` [x, y, z], the far end of its long axis (a nose runs down: [0, -0.03, 0.01])
-  - `[paint]` *string* - the colour channel of the solid (default 'skin')
+  - `[paint]` *string* - the colour channel of the solid (default 'skin'). A solid painted as its bone is modelled out of the bone's own surface (a relief mark, kit/sculpt-relief.js); one with another paint (a moustache) is a solid of its own lying on it
+  - `[blend]` *number* - metres: how wide a fillet joins the solid to the surface it is modelled out of (default: from its thickness)
+  - `[carve=false]` *boolean* - the solid is pressed in, not on: the bone's surface loses what it holds (an eye socket, a gill line). Never drawn as a piece of its own
+  - `[lean=[0, 0]` *number[]* - ] degrees the solid is tipped out of the surface: [about its across axis (a nose tip turned up is positive), about its up axis (an ear standing off the head)]. The right copy of a pair leans the mirrored way
   - `[glow]` *boolean* - draw it as a glow (eyes): a renderer leaves it out of outlines
   - `[under=0]` *number* - stamps of a feature with a higher `under` are drawn beneath the others on its bone whatever order the parts were attached in: blush and freckles go under the eyes
   - `[outlined=true]` *boolean* - false for a solid that should not get an outline of its own (a nose inside the face's silhouette), while still shading and inking as part of its bone
@@ -7506,6 +7513,14 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
   - `glow` *boolean* - the feature asked to be drawn as a glow (eyes): never outlined
   - `outlined` *boolean* - false when the solid should get no outline of its own
   - `lift` *number* - metres `point` stands off the surface (already applied to it)
+  - `lean` *number[]* - radians [about across, about up] the solid is tipped by
+  - `blend` *?number* - metres, the solid's fillet when it is a relief mark; null: from its thickness
+  - `carve` *boolean* - the solid is pressed into the bone's surface
+- **AnchorSpec** - A named place on a plan's surface (`plan.spec.anchors[name]`): where this body keeps its nose, its ears, its brow.
+  - `bone` *string* - the bone it is on
+  - `[azimuth=0]` *number* - degrees, as a feature's
+  - `[elevation=0]` *number* - degrees
+  - `[spacing]` *number* - degrees between the two places of a mirrored pair (ears, eyes)
 
 ## body-recipe.js
 
@@ -7698,6 +7713,65 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >        drawing them, or finding neighbours (`Kit.spatialHash`).
 >
 > Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-kit.js.
+
+## body-face.js
+
+> Kit body face: a face as relief, as data. A nose, a pair of ears, a brow ridge, cheeks, a chin, lips and eye
+> sockets are each a few small solids (`FeatureSpec` rows of kit/body-surface.js) that sit on a head's named
+> anchors and are modelled out of its surface when the body is sculpted (kit/sculpt-relief.js). A style is a
+> row of numbers (`NOSES`, `EARS`); a builder turns a row into features at any head size. A catalogue lists
+> them on a plan (a ridge, cheeks, a chin: every individual has them) or on a part (a nose to choose).
+>
+> Owns:  `Kit.body.face`: the style tables `NOSES` and `EARS`, the builders `nose`, `ears`, `browRidge`,
+>        `cheeks`, `chin`, `lips`, `eyeSockets`, `dotEyes`, `lineMouth` and `nosePad`, `anchors` (where a head of a given shape keeps
+>        its features) and `ANCHOR_NAMES`.
+> Does not own: placing features or dials (kit/body-surface.js), the modelling (kit/sculpt-relief.js), eye and
+>        mouth stamps of a full creator (kit/body-wardrobe.js), or any species (the catalogues).
+>
+> Conventions: lengths are metres on the reference head (`REFERENCE`: 0.21 m tall, a grown person's); every
+> builder takes `scale` for another size. A feature's solid is stated in its own frame: +X across (towards the
+> back of the head for an ear), +Y up the face, +Z out of the surface. Every solid is original and generic.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-faces.js.
+
+### Types
+
+- **NoseRow** - A nose as three masses: a bridge running down the face to the tip, the ball of the tip, and a wing each side.
+  - `length` *number* - metres the bridge runs up the face from the tip
+  - `out` *number* - metres the tip stands off the face
+  - `[drop=0]` *number* - metres the tip hangs below the nose's anchor (a hooked nose)
+  - `bridge` *number* - radius of the bridge where it starts, metres
+  - `tip` *number[]* - [across, up, out] half-sizes of the tip
+  - `[wings]` *?number[]* - [across, up, out] half-sizes of each wing; none for a nose too small to have them
+  - `[flare=14]` *number* - degrees between the two wings
+  - `[hump]` *?number* - metres a hump stands off the middle of the bridge
+- **EarRow** - An ear as a plate standing off the head, with an optional lobe and point.
+  - `height` *number* - metres, top to bottom
+  - `width` *number* - metres, front to back
+  - `[thickness=0.011]` *number* - metres
+  - `[flare=38]` *number* - degrees the plate stands off the head (its back edge out)
+  - `[lobe=true]` *boolean*
+  - `[point]` *?{length: number, back: number, radius: number}* - a tip drawn out of the top: metres up, metres towards the back of the head, and its radius where it leaves the plate
+
+## body-hair.js
+
+> Kit body hair: hair as a small vocabulary of shapes, as data. A style is a hairline (a painted, raised cap:
+> kit/region.js) plus a few primitives placed on the head by angle and height: a mass of volume, a lock, a
+> fringe of locks, a parting, a bun, a tail, a braid, sideburns, a fall of long hair. Each primitive is one or
+> more bone rows with a solid; a renderer that sculpts (kit/figure-sculpt.js) blends a style's solids into one
+> surface with creases between its clumps, and hangs a fall from the head, neck and spine.
+>
+> Owns:  `Kit.body.hair.on(head)` (the primitives, bound to a head's size and shape), `HEAD` (the reference
+>        head they default to) and `PRIMITIVES` (their names).
+> Does not own: hairlines (a part's region), which styles exist (a catalogue composes them: kit/body-wardrobe.js),
+>        how bones are sculpted or draped (`wear`, `hangs`: kit/figure-sculpt.js), or colours.
+>
+> Conventions: a place on the head is [azimuth, rise, out]: degrees round the head from the front towards the
+> body's left (180 is the back), `rise` from -1 (the chin) through 0 (the middle of the head) to 1 (the crown),
+> and metres out of the scalp. Rows are stated in the space of a socket at the middle of the head, in metres on
+> the reference head; a catalogue scales them with its other head-worn parts.
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-faces.js.
 
 ## body-samples.js
 
@@ -8357,6 +8431,8 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `[tone]` *number*
   - `[stamps]` *boolean* - the shape is of kind 'stamps' (flat polygons that carry their own paint): it is drawn in one call, never outlined, and hidden where the bone's regions occlude (hair over a brow)
   - `[outlined]` *boolean* - false: the piece gets no hull outline of its own (a nose inside a face)
+  - `[carve]` *boolean* - the solid is pressed into the bone's surface when the body is sculpted (an eye socket); it is never drawn as a piece
+  - `[blend]` *number* - metres: the fillet that joins the solid to its bone's surface when sculpted
 - **RegionLookup** - A point lookup `regionOf(plan, bone, x, y, z)` -> ramp index (`Kit.body.figureHooks(bake).regionOf`).
 - **FigureLayout**
   - `plan` *Object* - the bake's assembled `BodyPlan`
@@ -8378,6 +8454,12 @@ const free = Kit.look.panel.freeArea(ctx.size, true);
   - `centerZ` *number* - the middle of the footprint along Z
   - `reach` *number* - how far the body's footprint reaches from that middle (half its diagonal), metres: a figure turning about the middle stays inside it
   - `lowestPropY` *number* - the lowest point of a prop, or Infinity when none is worn
+- **SweptMeasure**
+  - `center` *number[]* - [x, y, z] the middle of the measured pieces' box, in the space of `world`
+  - `radius` *number* - the furthest any measured point is from `center`, metres: a ball that holds them however they are turned
+  - `sweep` *number* - the furthest any measured point is from the vertical axis through the origin, metres: what a figure turning about that axis sweeps
+  - `lowestY` *number*
+  - `highestY` *number*
 - **ViewWindow** - An orthographic camera's window onto a figure: the world point at its centre and its half extents.
   - `centerX` *number* - world units across the camera (0: the figure's vertical axis)
   - `centerY` *number* - world height of the centre
@@ -8709,6 +8791,28 @@ const { owners, weights } = Kit.sculpt.weights(skin.positions, field.solids);
 - **SkinArrays**
   - `owners` *Uint16Array* - 4 per vertex: owner ids (bone indices), strongest first; unused slots are 0
   - `weights` *Float32Array* - 4 per vertex: their shares, summing to 1
+
+## sculpt-relief.js
+
+> Kit sculpt relief: one solid modelled out of another. A base solid (a head) takes any number of marks, each a
+> small solid pressed on with its own fillet (a nose, a brow ridge, an ear) or pressed in (an eye socket, the
+> line of a gill), and the result is again one `Solid` of kit/sculpt.js: one distance, one owner, one set of
+> bounds. The sampler then sees a head, not a head and nine lumps, so every mark blends with every other where
+> they overlap (the sampler fillets only the two solids nearest a node), and a mark may be thinner than a grid
+> cell without being dropped.
+>
+> Owns:  `Kit.sculpt.relief` (a base and its marks -> a solid), `Kit.sculpt.smoothMax` and the `RELIEF` tunables.
+> Does not own: sampling or meshing (kit/sculpt.js), which features of a body are marks (kit/body-surface.js
+>        says so per feature; kit/figure-sculpt.js gathers them per bone), or what a face is (kit/body-face.js).
+>
+> Pure (no DOM, no THREE): runs in node and is unit-tested by tools/test-faces.js.
+
+### Types
+
+- **ReliefMark**
+  - `solid` *Object* - a `Solid` of kit/sculpt.js in the base's space (`Kit.sculpt.solid`)
+  - `[blend]` *number* - metres: how wide a fillet joins it to what is there (default: from its thickness, `RELIEF`)
+  - `[carve=false]` *boolean* - pressed in: the base loses what the mark holds, with the same fillet round the rim
 
 ## figure-sculpt.js
 
@@ -9813,7 +9917,7 @@ The cells of a suite for a catalogue.
 
 - `name` *string* - a key of `SUITES`
 - `catalog` *Object* - from `Kit.body.catalog`
-- `[options]` *{species?: string[], count?: number, acts?: string[]}* - `species`: which (default all)
+- `[options]` *{species?: string[], count?: number, acts?: string[], only?: string[]}* - `species`: which (default all); `only`: the socket paths (options) or dial ids (extremes) to show, default all
 
 **Returns** *ProofSheet*
 
