@@ -7389,7 +7389,9 @@ Kit.reach.follow(plan.parent, pose, world, tailBones, tail.positions);   // poin
 >
 > Owns:  `Kit.body.surfaceLayout(plan)` (validate and index a plan's features and regions; cached per plan) and
 >        `Kit.body.surfaceOf(...)` (one individual's placements and painted layers, with `regionAt`), plus the
->        `FeatureSpec` and `RegionSpec` shapes and `FRAME_SETS`.
+>        `FeatureSpec` and `RegionSpec` shapes and `FRAME_SETS`; and the figure renderer's two hooks for a bake,
+>        `Kit.body.FIGURE_HOOKS` (`featuresOf`: a bone's face as one stamps piece plus feature solids, kept per
+>        placed list; `regionMapOf`: a bone's regions baked to a small map, kept per outfit).
 > Does not own: the maths of placing on a solid (kit/surface.js), the predicates (kit/region.js), how features
 >        and regions travel with parts (kit/body-parts.js), or drawing them (renderers; kit/body-debug.js marks them).
 >
