@@ -910,7 +910,8 @@
               scratchArc
             );
             Kit.rig.turnWorld(plan.parent, motion.pose, world, last, scratchArc);
-            Kit.reach.clamp(motion.pose, last, plan.jointLimits);
+            // The world joint is refreshed too: what reads the pose after this stage sees the bone where its limits leave it.
+            if (Kit.reach.clamp(motion.pose, last, plan.jointLimits)) Kit.rig.worldTransforms(plan.parent, motion.pose, world, 0, 0, 0, 0, last, last + 1);
           }
           Kit.body.worldTransforms(plan, motion.pose, world, motion.x, motion.y, motion.z, motion.heading, joints[0] + 1, plan.subtreeEnd[joints[0]]);
         }

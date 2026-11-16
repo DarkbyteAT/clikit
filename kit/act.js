@@ -812,7 +812,8 @@
     while (next < keyCount && times[next] <= progress) next += 1;
     // A loop's last key leads back to its first; a one-shot's first and last keys are at 0 and 1.
     const from = next === 0 ? keyCount - 1 : next - 1;
-    const to = next === keyCount ? 0 : next;
+    // Only a loop leads from its last key back to its first: a one-shot at its very end is its last key (a held pose stays).
+    const to = next === keyCount ? (compiled.loop ? 0 : keyCount - 1) : next;
     const fromTime = next === 0 ? times[from] - 1 : times[from];
     const toTime = next === keyCount ? times[to] + 1 : times[to];
     const span = toTime - fromTime;

@@ -170,7 +170,7 @@
     tail: Object.freeze({ stiffness: 25, damping: 0.45 }),
     ear: Object.freeze({ stiffness: 60, damping: 0.6, limits: [[-25, 25], [-10, 10], [-25, 25]] }), // floppy, but it stays an ear
     scarf: Object.freeze({ stiffness: 22, damping: 0.45 }),
-    cloak: Object.freeze({ stiffness: 30, damping: 0.5, limits: [[-8, 115], [0, 0], [-85, 85]] }), // a panel hung from the shoulders: free to fall whichever way is down, kept out of the body by its solids
+    cloak: Object.freeze({ stiffness: 3, damping: 0.5, limits: [[-8, 115], [0, 0], [-60, 60]] }), // a panel hung from the shoulders: nearly limp, so it falls whichever way is down and lies where it lands; never round to the front
     hem: Object.freeze({ stiffness: 70, damping: 0.7, limits: [[-10, 10], [0, 0], [-10, 10]] }), // a skirt or a robe's hem: it sways as one piece, a little
   });
   const CYLINDER_AREA_FACTOR = Math.PI / 4;
