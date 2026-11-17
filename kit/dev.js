@@ -15,7 +15,7 @@
 (() => {
   // ---- tunables --------------------------------------------------------------------------------------------------------
 
-  /** Stats that fit the top row of a 390 px phone (tools/BRIEF.txt: "keep at most 3 stats"). */
+  /** Stats that fit the top row of a 390 px phone. */
   const MAX_STATS = 3;
   /** Real milliseconds after a game starts before its HUD is measured: fonts and the first layout have settled by then. */
   const HUD_CHECK_DELAY_MS = 1200;

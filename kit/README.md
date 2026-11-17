@@ -37,16 +37,16 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `lanes.js` | `Kit.lanes`: can a player get through rows of lanes |
 | `music.js` | `Kit.music`: note names, MIDI numbers, scales to frequencies |
 | `ballistics.js` | `Kit.ballistics`: aim vectors, trajectory traces, blast falloff |
-| `dice.js` | `Kit.dice`: dice notation to a structured, reproducible roll |
-| `sight.js` | `Kit.sight` (field of view, line of sight), `Kit.measure` (grid distances, cheapest routes) |
+| `flight.js` | `Kit.flight`: the flight of a spinning ball on a fixed step (gravity, drag, spin, wind, bounces off the ground and round bars); `trace`, `crossing` |
+| `netting.js` | `Kit.netting`: a sheet of knots joined by cords (a goal net, a banner) as points and distance links; `push` moves it out of a ball |
+| `slingshot.js` | `Kit.slingshot`: the pull-back-and-release aim gesture as numbers (pull, angle, curve) |
+| `seat.js` | `Kit.seat`: fixed camera seats as rules (`solve`), and promises about the picture counted per frame (`watch`) |
+| `pixel-grid.js` | `Kit.pixelGrid`: how fine a pixel-look picture should be (grain and subject size -> whole device pixels per texel) |
 | `net.js` | `Kit.net.session` (shared key -> value state over any transport, events, presence, rate-limited outbox), `Kit.net.loopback` |
 | `net-trust.js` | `Kit.net.guarded` (drop malformed and impossible-version messages), `Kit.net.withSender` (stamp senders locally), `Kit.net.checked` (hold your own writes to the table's rule), `Kit.net.remember` (keep a loopback table in storage), `Kit.net.isSaneEntry` |
-| `net-claude.js` | `Kit.net.open` (join a shared table in one call: hosted when the platform is there, single-player otherwise), `Kit.net.claude` (the hosted transport: room + database + user), `Kit.net.claude.capabilities` (what to publish with) |
+| `net-claude.js` | `Kit.net.open` (join a shared table in one call: hosted when the platform is there, single-player otherwise), `Kit.net.claude` (the hosted transport: room + database + user), `Kit.net.claude.capabilities` (what to publish with). One optional transport: a project with its own server writes its own to the same interface |
 | `dice.js` | `Kit.dice` (parse / roll / range / describe / check: notation such as `4d6kh3`, `d20 adv`, `3d6!`; seeded, every die listed) |
 | `sight.js` | `Kit.sight` (field of view by symmetric shadowcasting, line of sight), `Kit.measure` (distance rules, routes through terrain, area templates, labels) |
-| `tabletop.js` | `Kit.tabletop` (a shared tabletop as plain data over `Kit.net` keys: key scheme, value cleaning, who-may-change-what rules, `seat`, boards and fog, turn order, ink packing, scenes and travel, harm) |
-| `net-trust.js` | decorators that make a transport safer to listen to (`guarded`, `withSender`, `checked`, `remember`) |
-| `net-claude.js` | the hosted page's transport for `Kit.net` (room + shared database); owned by the multiplayer agent |
 | `scrub.js` | `Kit.scrub`: drive a CSS animation from the game clock |
 
 ### Generic subsystems behind `Kit.body` (pure; none knows about bodies)
@@ -95,6 +95,8 @@ primitives                    math, bus, pool, slot ring, clock, store, registry
 | `body-samples.js` | `Kit.body.samples`: a biped, a quadruped, a fish, four parts and a family of species, as data |
 | `body-wardrobe.js` | `Kit.body.wardrobe`: an original humanoid catalogue for a character creator (46 dials, 14 colour channels, 21 sockets, 4 species), as data |
 | `body-debug.js` | `Kit.body.debug`: a stick figure with socket markers on any 2D context (runs in node with a recorder) |
+| `body-proof.js` | `Kit.body.proof`: coverage sheets for judging bodies by eye (every species, option, dial end, roll and movement phase as cells) and the `proof` workbench screen |
+| `body-portrait.js` | needs a browser. The `portrait` screen: the default person and seeded rolls in three framings |
 | `body-sheet.js` | needs a browser. The `wardrobe` screen (`Kit.play('wardrobe')`): rolled wardrobe characters (the first is the base person at default dials) drawn in 3D by `Kit.figure`, faces through `Kit.body.figureHooks`; tap to roll more |
 | `body-gallery.js` | needs a browser. The `bodies` screen (`Kit.play('bodies')`) |
 
@@ -120,7 +122,7 @@ Kit.pack.toText(catalog.encode(recipe));                              // an 8-ch
 | `puzzle.js` | `Kit.beam` (light over a grid), `Kit.search` (fewest-moves solver, generate-and-verify), `Kit.levels` |
 | `place.js` | `Kit.placement`: drag-from-tray-to-grid as a pure state machine (plus one THREE helper) |
 | `touch.js` | finger-skill models: trace, stroke, lasso, zone, sweep, walker |
-| `tabletop.js` | the rules of a shared tabletop as data over `Kit.net` keys |
+| `tabletop.js` | `Kit.tabletop` (a shared tabletop as plain data over `Kit.net` keys: key scheme, value cleaning, who-may-change-what rules, `seat`, boards and fog, turn order, ink packing, scenes and travel, harm) |
 
 ### Presentation (needs a browser)
 
@@ -145,6 +147,9 @@ Kit.pack.toText(catalog.encode(recipe));                              // an 8-ch
 | `figure-layout.js` | pure. `Kit.figure.layout` (bake -> pieces with ramps and ink groups), `planUpdate` (what an edit changes), `measureRest` / `fitView` (grounding, framing) |
 | `sculpt.js` | pure. `Kit.sculpt`: solids -> a distance `Field` (`sample`), a field -> a mesh (`surface`, with `cover` / `under` so hidden surface is not meshed), `simplify` (edge collapse within an error, skin kept), `weights` |
 | `figure-sculpt.js` | pure. `Kit.figure.sculptLayers` / `sculptTask` (a bake -> its layers and the one `surface` a figure draws), `sculptCache` (bounded by count and bytes) |
+| `drape.js` | pure. `Kit.drape`: cloth that hangs on a body, as geometry: swung clear of what is under it, shelled, settled, and skinned to the bones beneath |
+| `paint.js` | pure but for `geometry`. `Kit.paint`: flat scenery painted in palette tones as data (quads, floors, walls, discs, pixel lettering), one mesh |
+| `stadium.js` | pure. `Kit.stadium`: a sports ground from data (an end, a playing surface, a crowd), painted through `Kit.paint` |
 | `figure-detail.js` | pure. `Kit.figure.detailFor` (height drawn -> level of detail, with hysteresis), `pixelsTall`, `DETAIL_BANDS` |
 | `figure.js` | `Kit.figure.build` (a bake drawn through `Kit.look`, posed in one pass, updated incrementally), `geometryCache`, `crowd` (instanced, one bake) |
 | `figure-show.js` | the `figures` screen (`Kit.play('figures')`): the body samples in 3D, live edits, a debug pose and the binding probe |

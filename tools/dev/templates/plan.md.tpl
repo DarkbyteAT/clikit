@@ -1,6 +1,6 @@
 # Plan: __NAME__ (`__ID__`)
 
-The lead's plan (AGENTS.md "How work is orchestrated"). Write every piece down before starting; prefer more,
+The plan for this game. Write every piece down before starting; prefer more,
 smaller pieces. A piece that cannot be described in a few lines is split again or kept by the lead.
 
 ## Depth plan (copied into the header of games/__ID__.js)

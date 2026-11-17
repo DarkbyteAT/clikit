@@ -8,7 +8,7 @@
  *       which wires the kit's models (wallet, stats, upgrades, inventory, synergy, profile) into one saved game.
  * Does not own: anything drawn, heard or tapped, real time (callers pass seconds in), or the kit models themselves.
  *
- * DEPTH PLAN (AGENTS.md principle 5)
+ * DEPTH PLAN (games/README.md: deep at three timescales)
  *   Seconds - mastery. (1) A weak point glows on the ore and moves; striking it multiplies the hit (WEAK_POINT), so aim
  *     beats mashing. (2) Fast tapping builds heat, which multiplies tap damage, but a full bar overheats the pick: heat
  *     is lost and taps are feeble while it vents (HEAT). The best play rides just under the top. Both are measured: the

@@ -1,7 +1,7 @@
 // Prism Garden: a calm, turn-based light-routing puzzle. Turn, carry and plant glass so the lanterns' light opens every
 // crystal flower. This file is the presenter: the board view, input, feedback, HUD and the modes around a bed.
 //
-// DEPTH PLAN (AGENTS.md principle 5; the numbers behind it are proved by scratch/prism/solve.js and pace.js)
+// DEPTH PLAN (games/README.md: deep at three timescales; the numbers behind it are proved by scratch/prism/solve.js and pace.js)
 //   Seconds - mastery. Every bed has three buds: open every flower; do it in par (the solver's proven minimum); and a
 //     laurel that asks for a harder route (wake the optional moonbloom, let no light leave the bed, or leave shelf
 //     pieces unplanted). On most beds the laurel route costs more moves than par, so one visit cannot take all three:
