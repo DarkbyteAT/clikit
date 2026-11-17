@@ -3,7 +3,7 @@
  * Scaffolded by `node tools/dev.js new game __ID__` - a working starting shape. Replace the rules, the tables,
  * the theme and this header with your own game, and delete this line when you do.
  *
- * Depth plan (AGENTS.md principle 5; `make sim GAME=__ID__` checks the pacing over hours):
+ * Depth plan (games/README.md: deep at three timescales; `make sim GAME=__ID__` checks the pacing over hours):
  *   Seconds (mastery):  timing. A tap only pays inside the hit window, and a streak of clean taps pays more.
  *   Minutes (decisions): two upgrades pull against each other: Steady widens the window, Stakes pays more per
  *                        hit but speeds the pulse up, so a greedy build needs a steadier hand.
@@ -203,7 +203,7 @@
     return round;
   };
 
-  /** The standard progression interface that tools/sim.js drives (see AGENTS.md "Headless model"). */
+  /** The standard progression interface that tools/sim.js drives (see games/README.md "Headless model"). */
   const PROGRESSION = {
     createState: () => createModels(),
     actions: ({ upgrades }) => [

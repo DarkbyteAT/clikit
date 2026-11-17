@@ -2,7 +2,7 @@
  * Spot Kick Showdown: a penalty shootout played from both ends. Drag back from the ball and let go to shoot;
  * when it is their turn you are in goal, and you tap where to dive.
  *
- * DEPTH PLAN (AGENTS.md principle 5)
+ * DEPTH PLAN (games/README.md: deep at three timescales)
  *   Seconds - mastery of one kick. Shooting: one drag sets the side and the power, and power is also height, so
  *     the top corners sit in a narrow band just under "over the bar". A sideways flick as you let go bends the
  *     ball, and the keeper reads the ball's first line, not its bend. Under pressure the aim sways like a held

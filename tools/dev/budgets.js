@@ -13,7 +13,7 @@
 'use strict';
 
 /**
- * Per-frame budgets for a phone. `meshes` is the brief's "keep live meshes under ~200"; the other two are
+ * Per-frame budgets for a phone. `meshes` keeps live meshes under about 200; the other two are
  * the usual mobile WebGL ceilings for a steady 60 fps with one shadow-casting light (the shadow pass draws
  * shadow casters a second time, so a scene of 150 meshes is already about 300 calls).
  */

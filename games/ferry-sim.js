@@ -7,7 +7,7 @@
  * Does not own: stroke clean-up and travel along a route (Kit.route / Kit.follow), countdowns (Kit.timer), costs and coins
  *       (Kit.upgrades / Kit.wallet / Kit.stats), the permanent record itself (Kit.profile), or anything drawn (games/ferry.js).
  *
- * DEPTH PLAN (AGENTS.md principle 5)
+ * DEPTH PLAN (games/README.md: deep at three timescales)
  *   Seconds - mastery of the stroke. A route is a shape, and the shape is the skill:
  *     - shorter is faster, but a route that crosses another makes the younger boat give way at every meeting;
  *     - a route drawn through several docks is a hub line (one boat serves them all) but each dock has one berth, so boats queue;

@@ -1,6 +1,6 @@
 // Tower Smash: pull back, launch, topple. Break every glowing target before the loadout runs out.
 //
-// DEPTH PLAN (AGENTS.md principle 5)
+// DEPTH PLAN (games/README.md: deep at three timescales)
 //   Seconds - mastery. One drag sets power, loft and turn; the dotted arc is exact up to the first obstacle and no
 //     further, so reading what happens after the hit is the skill: knock out a glass post or a base block and the
 //     tower does the work, light a keg and it chains, bank off a green bumper to reach a gem behind stone, lean into

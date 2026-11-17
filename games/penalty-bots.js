@@ -106,7 +106,7 @@
   /** Coins for the result of a match at a ladder index (the win prize grows with the rungs climbed). */
   const matchPrize = (won, index) => (won ? REWARDS.win + REWARDS.perRung * index : REWARDS.loss);
 
-  /** The standard progression interface that tools/sim.js drives (see AGENTS.md "Headless model"). */
+  /** The standard progression interface that tools/sim.js drives (see games/README.md "Headless model"). */
   const PROGRESSION = {
     createState: () => ({ progress: DATA.createProgress(), matches: 0, seed: 1 }),
     actions: ({ progress }) => [
