@@ -13,71 +13,104 @@ The games in `games/` and the demo page (`index.html`) exist to prove the kit an
 the product. Rules for building them, and the limits of where the demo page is served, are in `games/README.md`
 and bind nobody who imports the kit.
 
+## The idea
+
+Think of a language, not a box of bricks. Bricks only ever give you what you stack by hand. A language has
+letters, then words, then sentences, and each level lets you say things the level below could not. clikit is
+built the same way: each layer is a small platform with its own vocabulary, written in the layer beneath it,
+and it is what the next layer is written in.
+
+The kinds of piece, each named once:
+
+| Piece | What it is |
+|---|---|
+| Data model | Plain data and pure functions over it. Needs no browser, so it runs in a page, a server, a test or a simulation |
+| Interface | What a piece promises to whoever uses it: its calls and the shapes of data that cross them. The only thing another piece may depend on |
+| Subsystem | One job behind one interface, useful alone, knowing nothing about what uses it |
+| Platform | A layer: subsystems that share a vocabulary, composed from the layers below, that the layer above is written in |
+| Tool | One command that does a routine job for whoever is building: scaffold, check, simulate, preview, document |
+
+One real stack, from the bottom up:
+
+| Layer | Its vocabulary | What it lets the layer above say |
+|---|---|---|
+| `Kit.sculpt` | Shapes that answer "how far is this point from my surface" | A body part is a row of data, not a mesh |
+| `Kit.figure` | Bones, layers, detail levels | A whole dressed character is one recipe |
+| `Kit.act` | Channels, marks, reach rules | "Meet the ball with your hands at this moment" is one call |
+| The save family | Five rows of data | A keeper picks catch, smother or dive from where the ball is going |
+| The football game | Rules and a stage | The game never contains dive code |
+
+This holds everywhere: in the kit, in its tools, in its documents, and in anything built with clikit. A
+project that imports the kit is the next layer up, and should itself be small platforms stacked the same way.
+
+## Judging a piece
+
+- **Ask which layer is missing.** If a feature needs a one-off, stop. The right fix is usually the layer that
+  would have made it a few lines of data.
+- **Look for emergence.** The test of a good layer is that pieces not written for each other combine and
+  something useful appears. A cloak (the cloth layer) riding a loose bone (the movement layer) trails behind
+  a diving keeper, and nobody wrote "cloak in a dive". Judge a piece by what it lets the layer above express
+  that could not be expressed before.
+- **A layer uses only the layers below it**, and only through their interfaces. Rules are separate from
+  drawing and input, so they run and are tested without a browser.
+- **Know the warning signs** that two pieces do not fit: a wrapper between two pieces you own; a piece that
+  knows who is calling it; an option that exists for one caller; a private copy of something generic; a
+  caller that has to read a piece's insides to use it. Each means an interface is in the wrong place. Move
+  the interface; do not add the wrapper.
+- **Prefer plain shapes.** Functions that take and return plain data, and functions that take and return
+  functions, compose without ceremony (`upgrades` is `table` + `curve` + `stats` + `wallet`).
+
 ## Principles
 
-1. **Tooling and platform co-evolve, at every layer.** Each thing built on the kit teaches the kit what it
-   lacks; each kit improvement makes the next thing cheaper; each tool makes the next kit improvement safer.
-   Treat every piece of work as a chance to grow the framework: when something was slow, awkward or had to be
-   written twice, the fix belongs in the kit or its tooling, and you either make it or record it. The proof is
-   three numbers for work held to the same bar: cost (tokens), time (wall clock) and quality (defects and
-   rework rounds). They are kept in `METRICS.md`, with a friction log beside them: what slowed you down, what
-   tool or kit piece would have saved the time, and what the framework learned.
+- **Tooling and platform co-evolve, at every layer.** Each thing built on the kit teaches the kit what it
+  lacks; each kit improvement makes the next thing cheaper; each tool makes the next kit improvement safer.
+  Treat every piece of work as a chance to grow the framework: when something was slow, awkward or had to be
+  written twice, the fix belongs in the kit or its tooling, and you either make it or record it. The proof is
+  three numbers for work held to the same bar: cost (tokens), time (wall clock) and quality (defects and
+  rework rounds). They are kept in `METRICS.md`, with a friction log beside them: what slowed you down, what
+  tool or kit piece would have saved the time, and what the framework learned.
 
-2. **Tools first.** Before writing code for one use, ask what reusable piece is missing and build that. Code
-   written on the kit should be mostly data tables plus the little that is unique to it. If you wrote something
-   another project could use, it belongs in the kit.
+- **Tools first.** Before writing code for one use, ask what reusable piece is missing and build that. Code
+  written on the kit should be mostly data tables plus the little that is unique to it. If you wrote something
+  another project could use, it belongs in the kit.
 
-3. **Small pieces, composed.** Each kit piece does one thing, is useful alone, and knows nothing about the
-   pieces above it. Every feature is composed from, or broken down into, smaller subsystems that are each
-   reusable on their own (`upgrades` is `table` + `curve` + `stats` + `wallet`). Prefer functions that take and
-   return plain data, and functions that take and return functions.
+- **Data over code.** Every tunable number, piece of content and rule lives in a named table or curve.
+  Adding content means adding a row. One source of truth per fact.
 
-4. **Stacked platforms, not a box of bricks.** Each layer is a small platform in its own right: it has its own
-   vocabulary, composes the layers under it, and is what the next layer is written in (signed-distance shapes,
-   then a sculpt kernel, then body plans, then a wardrobe, then a character maker). Judge a piece by what it
-   lets the layer above express that could not be expressed before, and by behaviour that emerges from
-   combining pieces that were not written for each other. If a feature needs a one-off, ask which missing
-   layer would have made it a few lines of data.
+- **Make the right thing the easy thing.** Every layer automates the good outcome for whoever builds on it:
+  defaults that already look and behave well, views that wire themselves to models and stay in sync, errors
+  that name the cause and the fix at the moment of the mistake, and one command for each routine job. If
+  using a piece correctly takes boilerplate, the piece is unfinished. An abstraction ships with its
+  defaults, its validation and its tooling.
 
-5. **Layers only look down.** primitives (math, bus, pool, clock, save) → presentation (render, input, fx,
-   sound, HUD, theme) and models (curve, table, stats, wallet, grid, line, path, rng, net) → compositions
-   (upgrades, goals, loot, inventory) → adapters (model in, view out). Simulation is separate from rendering
-   and input, so rules run and are tested without a browser.
+- **Fix systems, never the example.** When one character, screen or run looks wrong, the fault is in a rule,
+  a table or a layer, and the fix goes there, so every case improves. Tuning one example until it looks right
+  is optimising the measure instead of the thing.
 
-6. **Data over code.** Every tunable number, piece of content and rule lives in a named table or curve.
-   Adding content means adding a row. One source of truth per fact.
+- **Look at the result.** Passing tests do not show that something looks right or works for a person. Run
+  it, look at what it produced, and say what you see, including what is wrong.
 
-7. **Make the right thing the easy thing.** Every layer automates the good outcome for whoever builds on it:
-   defaults that already look and behave well, views that wire themselves to models and stay in sync, errors
-   that name the cause and the fix at the moment of the mistake, and one command for each routine job. If
-   using a piece correctly takes boilerplate, the piece is unfinished. An abstraction ships with its
-   defaults, its validation and its tooling.
+- **Report what is true.** A check that could not have failed proves nothing. Say what you ran, what you saw
+  and what you did not verify.
 
-8. **Fix systems, never the example.** When one character, screen or run looks wrong, the cause is in a module
-   and the fix goes there, so every case improves. Tuning one example until it looks right is optimising the
-   measure instead of the thing.
+- **Performance is designed in, and measured.** State the time and space complexity in the docstring of
+  anything whose cost grows with entities, cells or messages (`@complexity O(n log n) time, O(n) space`),
+  choose the data structure for the access pattern, and measure before and after a change you call an
+  optimisation.
 
-9. **Performance is designed in, and measured.** State the time and space complexity in the docstring of
-   anything whose cost grows with entities, cells or messages (`@complexity O(n log n) time, O(n) space`),
-   choose the data structure for the access pattern, and measure before and after a change you call an
-   optimisation.
+- **Decide deliberately.** For any choice with real alternatives, weigh at least two options and record the
+  choice in `DECISIONS.md` in a few lines. Prefer tools that are robust, lightweight, portable and standard,
+  and build only what is missing on top of them.
 
-10. **Decide deliberately.** For any choice with real alternatives, weigh at least two options and record the
-    choice in `DECISIONS.md` in a few lines. Prefer tools that are robust, lightweight, portable and standard,
-    and build only what is missing on top of them.
+- **One well-made piece at a time.** Finish a piece (defaults, validation, docs, tests, cost stated) before
+  building on it.
 
-11. **One well-made brick at a time.** Finish a piece (defaults, validation, docs, tests, cost stated) before
-    building on it.
+- **Contribute; do not fork and do not break.** Extend the kit with small, additive, documented, tested
+  changes. Never keep a private copy of something generic, and never change the meaning of an existing call
+  unless it is broken (then say so).
 
-12. **Contribute; do not fork and do not break.** Extend the kit with small, additive, documented, tested
-    changes. Never keep a private copy of something generic, and never change the meaning of an existing call
-    unless it is broken (then say so).
-
-13. **Write for the next reader.** Names say what things are, every shared function has a docstring, comments
-    explain the logic and the reason, and nothing dead remains.
-
-14. **Report what is true.** A check that could not have failed proves nothing. Say what you ran, what you saw
-    and what you did not verify.
+- **Write for the next reader.** Names say what things are, every shared function has a docstring, comments
+  explain the logic and the reason, and nothing dead remains.
 
 Two principles apply to particular layers:
 
